@@ -27,6 +27,7 @@ import (
 // fakeQdisc is an interface's root qdisc; nil means the kernel's default.
 type fakeQdisc struct {
 	kind, handle  string
+	prioOptions   map[string]any
 	delay, jitter time.Duration
 	loss          float64 // fraction
 	// rate is in bytes per second, as the kernel keeps it; limit is the
@@ -90,6 +91,9 @@ func fakeNetemQdisc(handle string, args []string) *fakeQdisc {
 // fakeNetemOptions prints a netem qdisc's options as tc does: no delay
 // member for a zero delay, the loss as a fraction.
 func fakeNetemOptions(q *fakeQdisc) map[string]any {
+	if q.kind == "prio" {
+		return q.prioOptions
+	}
 	options := map[string]any{"limit": q.limit}
 	if q.rate > 0 {
 		options["rate"] = map[string]any{"rate": q.rate, "packetoverhead": 0, "cellsize": 0, "celloverhead": 0}
@@ -589,7 +593,13 @@ func (n *fakeNetem) run(ctx context.Context, ctr testcontainers.Container, label
 			if link.root != nil {
 				return supervised.Report{ExitCode: 2, Stderr: []byte("Error: Exclusivity flag on, cannot modify.")}, nil
 			}
-			link.root = &fakeQdisc{kind: "prio", handle: argv[7]}
+			bands, _ := strconv.Atoi(argv[10])
+			var priomap []int
+			for _, value := range argv[12:] {
+				band, _ := strconv.Atoi(value)
+				priomap = append(priomap, band)
+			}
+			link.root = &fakeQdisc{kind: "prio", handle: argv[7], prioOptions: map[string]any{"bands": bands, "priomap": priomap}}
 		}
 		return supervised.Report{}, nil
 	}

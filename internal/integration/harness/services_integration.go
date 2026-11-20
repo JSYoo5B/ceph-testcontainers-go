@@ -161,32 +161,8 @@ func newServiceCluster(t *testing.T, run ClusterRun, image, clientImage string, 
 	cluster, err := run(t.Context(), image, opts...)
 	if cluster != nil {
 		t.Cleanup(func() {
-			if t.Failed() {
-				// The diagnostics share one bounded context of their own,
-				// so a stalled state or log read cannot leave the
-				// termination an expired context.
-				ctx, cancelDiagnostics := context.WithTimeout(context.Background(), time.Minute)
-				defer cancelDiagnostics()
-				serviceCtx, cancelServices := context.WithTimeout(context.Background(), 5*time.Second)
-				services, inventoryErr := ObserveCluster(cluster).ServiceContainers(serviceCtx)
-				cancelServices()
-				if inventoryErr != nil {
-					t.Logf("service inventory unavailable: %v", inventoryErr)
-				}
-				ctrs := append([]testcontainers.Container{cluster.Container, clusteraccess.ControlContainer(t, cluster)}, services...)
-				for _, monitor := range clusteraccess.Monitors(t, cluster) {
-					if monitor != nil && monitor.Container != nil {
-						ctrs = append(ctrs, monitor.Container)
-					}
-				}
-				ctrs = append(ctrs, OSDContainers(t, cluster)...)
-				// A MGR that did not register is a common partial bootstrap.
-				ctrs = append(ctrs, clusteraccess.InitialManager(t, cluster))
-				for _, mgr := range clusteraccess.Managers(t, cluster) {
-					if mgr != nil && mgr.Container != nil {
-						ctrs = append(ctrs, mgr.Container)
-					}
-				}
+			ReleaseAfterDiagnostics(t, 2*time.Minute, func(ctx context.Context) {
+				ctrs := diagnosticContainers(t, ctx, cluster)
 				seen := make(map[string]bool)
 				for _, ctr := range ctrs {
 					if ctr == nil {
@@ -211,12 +187,11 @@ func newServiceCluster(t *testing.T, run ClusterRun, image, clientImage string, 
 					}
 					t.Logf("container %s logs:\n%s", ctr.GetContainerID(), data)
 				}
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cancel()
-			if err := cluster.Terminate(ctx); err != nil {
-				t.Errorf("terminate service cluster: %v", err)
-			}
+			}, func(ctx context.Context) {
+				if err := cluster.Terminate(ctx); err != nil {
+					t.Errorf("terminate service cluster: %v", err)
+				}
+			})
 		})
 	}
 	if err != nil {

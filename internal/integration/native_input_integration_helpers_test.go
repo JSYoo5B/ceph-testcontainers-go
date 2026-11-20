@@ -234,7 +234,7 @@ func testNativeCommandInputCancellation(t *testing.T) {
 	case <-time.After(time.Minute):
 		t.Fatal("the writer did not return after the call was canceled")
 	}
-	if code, _, err := harness.SessionExec(ctx, client, "kill", "-0", pid); err != nil || code == 0 {
+	if code, _, err := harness.SessionExec(ctx, client, "python3", "-c", requireProcessAbsent, pid); err != nil || code != 0 {
 		t.Fatalf("the canceled command %s still runs: %d, %v", pid, code, err)
 	}
 	t.Logf("NATIVE_INPUT canceled sleeper pid=%s is gone and the writer returned closed input (reached MaxInput first: %t)", pid, limited)
@@ -277,8 +277,8 @@ func joinNativeInputAtCleanup(t *testing.T, ctx context.Context, stop context.Ca
 // ctr.
 func checkNoSupervisedLeftovers(t *testing.T, ctx context.Context, ctr testcontainers.Container) {
 	t.Helper()
-	code, out, err := harness.SessionExec(ctx, ctr, "sh", "-c", "ls -A /tmp/tc-supervised 2>/dev/null")
-	if err != nil || strings.TrimSpace(out) != "" {
+	code, out, err := harness.SessionExec(ctx, ctr, "python3", "-c", listSupervisedMarkers, "/tmp/tc-supervised")
+	if err != nil || code != 0 || strings.TrimSpace(out) != "" {
 		t.Fatalf("supervisor markers remain: %d %q %v", code, out, err)
 	}
 }

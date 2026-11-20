@@ -3,6 +3,7 @@ package ceph
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/netip"
 	"testing"
 
@@ -18,11 +19,13 @@ import (
 // Docker, it assigns the address when the container starts: the requested
 // one, or the lowest free one for a dynamic endpoint.
 type monitorEndpointModel struct {
-	running     bool
-	endpoint    *dockernetwork.EndpointSettings
-	taken       map[netip.Addr]bool
-	connects    int
-	disconnects int
+	running                             bool
+	endpoint                            *dockernetwork.EndpointSettings
+	taken                               map[netip.Addr]bool
+	connects                            int
+	disconnects                         int
+	disconnectError, connectError       error
+	disconnectNoEffect, connectNoEffect bool
 }
 
 func (m *monitorEndpointModel) ContainerInspect(context.Context, string, mobycl.ContainerInspectOptions) (mobycl.ContainerInspectResult, error) {
@@ -37,14 +40,18 @@ func (m *monitorEndpointModel) ContainerInspect(context.Context, string, mobycl.
 
 func (m *monitorEndpointModel) NetworkDisconnect(context.Context, string, mobycl.NetworkDisconnectOptions) (mobycl.NetworkDisconnectResult, error) {
 	m.disconnects++
-	m.endpoint = nil
-	return mobycl.NetworkDisconnectResult{}, nil
+	if !m.disconnectNoEffect {
+		m.endpoint = nil
+	}
+	return mobycl.NetworkDisconnectResult{}, m.disconnectError
 }
 
 func (m *monitorEndpointModel) NetworkConnect(_ context.Context, _ string, opts mobycl.NetworkConnectOptions) (mobycl.NetworkConnectResult, error) {
 	m.connects++
-	m.endpoint = opts.EndpointConfig.Copy()
-	return mobycl.NetworkConnectResult{}, nil
+	if !m.connectNoEffect {
+		m.endpoint = opts.EndpointConfig.Copy()
+	}
+	return mobycl.NetworkConnectResult{}, m.connectError
 }
 
 func (m *monitorEndpointModel) Close() error { return nil }
@@ -166,5 +173,61 @@ func TestMonitorAddressLeavesARunningMonitorAlone(t *testing.T) {
 	model, pin := startedMonitor(t)
 	if err := pin(); err != nil || model.connects != 0 || model.disconnects != 0 {
 		t.Fatalf("Start on a running MON touched its endpoint: %v, %d connects, %d disconnects", err, model.connects, model.disconnects)
+	}
+}
+
+func TestMonitorAddressRetriesItsOwnUncertainReconnect(t *testing.T) {
+	for _, step := range []string{"disconnect", "connect"} {
+		for _, applied := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/applied=%t", step, applied), func(t *testing.T) {
+				model, pin := startedMonitor(t)
+				model.stop()
+				injected := errors.New("Docker reply unavailable")
+				if step == "disconnect" {
+					model.disconnectError, model.disconnectNoEffect = injected, !applied
+				} else {
+					model.connectError, model.connectNoEffect = injected, !applied
+				}
+				if err := pin(); !errors.Is(err, injected) {
+					t.Fatalf("lost operation error: %v", err)
+				}
+				wantDetached := step == "connect" && !applied || step == "disconnect" && applied
+				if (model.endpoint == nil) != wantDetached {
+					t.Fatalf("unexpected endpoint after failed dispatch: %+v", model.endpoint)
+				}
+				model.disconnectError, model.connectError = nil, nil
+				model.disconnectNoEffect, model.connectNoEffect = false, false
+				if err := pin(); err != nil {
+					t.Fatalf("fresh Start could not recover: %v", err)
+				}
+				model.start()
+				if model.endpoint.IPAddress != netip.MustParseAddr("172.19.0.2") {
+					t.Fatalf("MON address changed: %+v", model.endpoint)
+				}
+				model.stop()
+				model.endpoint = nil
+				if err := pin(); !errors.Is(err, ErrInvalidRequest) {
+					t.Fatalf("completed recovery retained authority to attach: %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestMonitorAddressForeignReconnectEndsRecoveryAuthority(t *testing.T) {
+	model, pin := startedMonitor(t)
+	model.stop()
+	model.connectError, model.connectNoEffect = errors.New("connect failed"), true
+	if err := pin(); err == nil {
+		t.Fatal("failed connect accepted")
+	}
+	model.endpoint = &dockernetwork.EndpointSettings{IPAMConfig: &dockernetwork.EndpointIPAMConfig{IPv4Address: netip.MustParseAddr("172.19.0.9")}}
+	model.connectError, model.connectNoEffect = nil, false
+	if err := pin(); err == nil {
+		t.Fatal("foreign explicit endpoint accepted")
+	}
+	model.endpoint = nil
+	if err := pin(); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("foreign endpoint detachment inherited recovery authority: %v", err)
 	}
 }

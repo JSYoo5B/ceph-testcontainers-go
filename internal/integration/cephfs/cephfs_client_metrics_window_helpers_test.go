@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -38,7 +39,7 @@ type clientMetricsSection struct {
 // A missing section is reported as Section=false without an error, because the
 // section appears only once the first client report arrives. Everything that
 // is present must be well formed: a section that is not an array, a row
-// without object "labels" and "counters", labels that are not strings, a
+// without object "labels" and "counters", labels that are not nonempty strings, a
 // selected row without both write counters, a counter that is not an unsigned
 // decimal integer, or two rows for one selected client/rank is an error. Rows
 // of other clients are checked for their labels only, so a row that cannot be
@@ -104,8 +105,8 @@ func labelString(labels map[string]json.RawMessage, name string) (string, error)
 		return "", fmt.Errorf("label %q is missing", name)
 	}
 	var s string
-	if err := json.Unmarshal(raw, &s); err != nil {
-		return "", fmt.Errorf("label %q is not a string: %.64s", name, raw)
+	if err := json.Unmarshal(raw, &s); err != nil || strings.TrimSpace(s) == "" {
+		return "", fmt.Errorf("label %q is not a nonempty string: %.64s", name, raw)
 	}
 	return s, nil
 }

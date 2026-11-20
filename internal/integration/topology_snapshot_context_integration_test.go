@@ -62,11 +62,11 @@ func TestMultiClusterTopologySnapshotsHonorBusyOwners(t *testing.T) {
 	}
 	for index, busy := range clusters {
 		t.Run([]string{"source", "destination"}[index], func(t *testing.T) {
-			releaseOwner, finish, wrappers := topologySnapshotHoldOwner(t, ctx, clusters, busy)
+			releaseOwner, finish, wrappers, pending := topologySnapshotHoldOwner(t, ctx, clusters, busy)
 			defer finish()
 			for _, kind := range []string{"rbd", "cephfs", "rgw", "rgw-topology"} {
 				t.Run(kind, func(t *testing.T) {
-					topologySnapshotQueue(t, releaseOwner, func(callCtx context.Context) (topologySnapshotPartial, error) {
+					topologySnapshotQueue(t, releaseOwner, pending, func(callCtx context.Context) (topologySnapshotPartial, error) {
 						switch kind {
 						case "rbd":
 							result, err := rbdmirror.Run(callCtx, harness.NativeMirrorImage(t, "rbd-aux", harness.StaticFacts(source).Images.RBDAux), rbdmirror.WithConfig(rbdmirror.Config{Source: source, Destination: destination, Pool: pool}))

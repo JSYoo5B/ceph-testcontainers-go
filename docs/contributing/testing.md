@@ -151,7 +151,7 @@ required and optional profile, which takes several minutes. See
 | `hostnetwork` | Host-network-only scenarios. |
 | `diagnostics` | Diagnostics collection. |
 | `all` | The whole normal suite, regardless of capability or CI tags. |
-| `native_regression` | Strict tests for known upstream Ceph defects. Not part of `all`. |
+| `native_regression` | Opt-in experiments for known upstream Ceph defects. Pair it with `all` to compile these cases. |
 | `goceph` | The Linux go-ceph consumer test. Not part of `all`. |
 | `cephfs_fuse` | The `ceph-fuse` mount and fcntl lock tests. Not part of `all`. |
 | `cephfs_fscrypt` | The CephFS fscrypt experiment case (kernel and `ceph-fuse` clients). Not part of `all`. |
@@ -270,9 +270,10 @@ python3 .github/scripts/tag_scenarios.py optional \
 ```
 
 Other optional batches include `native_shuffle`, `cephfs_fuse`,
-`cephfs_fscrypt` and `osd_encrypted_store`. The native
-batches assert behaviour that the unpatched default image lacks, so they fail
-there; they exist to verify a patched image. `cephfs_fuse` needs `/dev/fuse`,
+`cephfs_fscrypt` and `osd_encrypted_store`. Native experiments report
+`REPRODUCED` or `NOT_REPRODUCED` after their prerequisites and observations
+succeed. See [Experiment result lines](#experiment-result-lines) for how to
+interpret the result. `cephfs_fuse` needs `/dev/fuse`,
 `CAP_SYS_ADMIN` and `apparmor=unconfined`, which a rootful engine whose kernel
 has FUSE allows: a Linux Docker Engine, or Docker Desktop (see
 [Native regressions](ci.md#native-regressions)). `cephfs_fscrypt` needs the same
@@ -453,6 +454,15 @@ CEPH_TEST_GOCEPH_CLIENT_IMAGE=ceph-testcontainers-goceph:20.2.4-client \
 CEPH_TEST_GOCEPH_RUNNER_IMAGE=ceph-testcontainers-goceph:20.2.4-runner \
 make goceph-linux
 ```
+
+The default selection requires completed `TestGoCephLinux/bridge` and
+`TestGoCephLinux/host` runs and a passing parent test. A custom `--test-run`
+selection must complete at least one supported mode and every mode it starts.
+Its result covers only the modes in `execution.completed_modes`, recorded
+alongside the selection. A missing test or wrong build tag is `no_execution`;
+skipped modes, an empty mode selection and unfinished runs are `incomplete`;
+a failing scenario is `native_failure`. These outcomes cannot report PASS,
+even when Docker exits zero and container cleanup succeeds.
 
 The harness compares the probe's linked go-ceph version with the probe
 module's `go.mod`, so rebuild the client image after a go-ceph update.
@@ -691,9 +701,10 @@ differs from the source. Code checks runs it for every pull request.
 
 ### Optional tests
 
-A test for a known upstream defect must fail on the unpatched default image.
-It requires `native_regression`, never compiles under plain `all`, uses the
-`ci_optional` category and keeps strict assertions:
+An optional known-defect experiment uses `native_regression` and
+`ci_optional`. Require successful setup and trigger controls, and report the
+observed defect outcome with an experiment result line. Declare an opt-in
+build constraint:
 
 ```golang
 //go:build (all || (integration && multicluster)) && native_regression && (!ci || (ci_optional && (!ci_batch || ci_batch_my_regression)))
@@ -729,7 +740,7 @@ Each case has a tier that decides where it runs (see
 | --- | --- | --- |
 | Docker-free unit tests of a case (judgement, readers) | the `code` category, batch `pure` | Code checks, every change |
 | Cheap deterministic case, a characterization or a reproducer | a required batch of a non-`short` category | a pull request that changes a file of the case, `ci:full`, Periodic |
-| Known-defect reproducer that is expensive or fails on the published images | an optional `native_regression` batch | only on request |
+| Known-defect reproducer reserved for explicitly requested runs | an optional `native_regression` batch | only on request |
 | Case with privileges or host prerequisites no required runner has | an optional batch with its own opt-in tag (`cephfs_fscrypt`) | only on request |
 
 - Its `_test.go` files keep the usual build constraints, `//ci:` lines and

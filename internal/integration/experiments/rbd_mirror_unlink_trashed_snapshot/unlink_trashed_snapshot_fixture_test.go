@@ -69,6 +69,36 @@ func TestJudgeUnlinkReportsOnlyTheRefusedTrashedSnapshot(t *testing.T) {
 	}
 }
 
+func TestFinalUnlinkSymptomsChecksTheAccumulatedLog(t *testing.T) {
+	prefix := unlinkLog(logStart, logSkipped)
+	if _, ready, err := judgeUnlink(5, readUnlinkOutcome(prefix, 5)); err != nil || !ready {
+		t.Fatalf("skip prefix did not admit later replication: ready %t, error %v", ready, err)
+	}
+	nextUnlink := strings.ReplaceAll(logStart, "=5", "=15")
+	for _, tc := range []struct {
+		name, log, wantError string
+		symptoms             int
+	}{
+		{name: "delayed failure after skip", log: prefix + unlinkLog(logInvalid), wantError: "another fault"},
+		{name: "complete contradictory log", log: unlinkLog(logStart, logSkipped, logInvalid), wantError: "another fault"},
+		{name: "later unlink failure belongs to another snapshot", log: prefix + unlinkLog(nextUnlink, logInvalid)},
+		{name: "confirmed skip", log: prefix + unlinkLog(nextUnlink)},
+		{name: "refused", log: unlinkLog(logStart, logRefused, logInvalid, nextUnlink), symptoms: 2},
+		{name: "outcome missing from final log", log: unlinkLog(nextUnlink), wantError: "no outcome"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			symptoms, err := finalUnlinkSymptoms(5, tc.log)
+			if tc.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+					t.Fatalf("got %q and %v, want an error containing %q", symptoms, err, tc.wantError)
+				}
+			} else if err != nil || len(symptoms) != tc.symptoms {
+				t.Fatalf("got %q and %v, want %d symptoms", symptoms, err, tc.symptoms)
+			}
+		})
+	}
+}
+
 func TestReadUnlinkOutcomeAcceptsCarriageReturns(t *testing.T) {
 	got := readUnlinkOutcome(strings.ReplaceAll(unlinkLog(logStart, logRefused, logInvalid), "\n", "\r\n"), 5)
 	if !got.Started || !got.Refused || len(got.FailedErrnos) != 1 || got.FailedErrnos[0] != 22 {

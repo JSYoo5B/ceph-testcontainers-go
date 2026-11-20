@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rbd/internal/lockcookie"
 	"slices"
 	"strings"
 )
@@ -37,7 +38,10 @@ const (
 // handoff an observation can report the new owner without its watch, so an
 // owner-watch mismatch is a possible observed state, not proof of a fault;
 // the test decides whether and when to read again. A match does not prove
-// that the owner can write.
+// that the owner can write. OwnerWatches does not compare watch cookies: two
+// image handles on the same client connection can watch at the same address
+// with different cookies. Matching a specific watch instance requires comparing
+// the managed lock ID with the watcher cookie in the observed records.
 type ImageClients struct {
 	Lock         ExclusiveLock
 	Owner        string
@@ -155,7 +159,7 @@ func (e ImageClientsEvaluation) String() string {
 // empty or repeated Departed address, and Unwatched together with
 // OwnerWatches or Departed are ceph.ErrInvalidRequest. An observation with a
 // watcher lacking its address or client ID, a lock lacking its ID, locker or
-// address, a Managed flag that disagrees with the lock ID, or more than one
+// address, a managed lock lacking an encoded watch cookie, or more than one
 // managed lock is a malformed observation, never a mismatch. The result
 // shares no slice with its arguments.
 //
@@ -220,7 +224,7 @@ func validateImageClientObservation(observed rbd.ImageClientStatus) (*rbd.ImageL
 		if lock.ID == "" || lock.Locker == "" || lock.Address == "" {
 			return nil, fmt.Errorf("malformed image clients observation: a lock lacks its ID, locker or address")
 		}
-		if lock.Managed != strings.HasPrefix(lock.ID, "auto ") {
+		if lock.Managed && !lockcookie.Valid(lock.ID) {
 			return nil, fmt.Errorf("malformed image clients observation: lock %q has a managed flag that its ID contradicts", lock.ID)
 		}
 		if !lock.Managed {

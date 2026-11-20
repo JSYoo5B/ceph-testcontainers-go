@@ -126,8 +126,8 @@ func readUnlinkOutcome(log string, snap uint64) unlinkOutcome {
 }
 
 // judgeUnlink turns the receiver's unlink from the trashed snapshot into the
-// symptoms of the defect. ready is false while the outcome is still
-// incomplete. It returns symptoms when the unlink request refused the
+// symptoms of the defect in the current log snapshot. ready reports whether
+// the scenario can proceed to its later-payload control. It returns symptoms when the unlink request refused the
 // trashed snapshot as not a mirror snapshot and the replayer failed with
 // EINVAL, and none when the request skipped it as missing or trashed and
 // the replayer did not fail. It is not ready while the replayer has not
@@ -160,4 +160,18 @@ func judgeUnlink(snap uint64, got unlinkOutcome) (symptoms []string, ready bool,
 		return nil, true, nil
 	}
 	return nil, false, nil
+}
+
+// finalUnlinkSymptoms adjudicates the accumulated log after the next write
+// reached the destination. A skip prefix alone cannot exclude a failure from
+// the replayer's separate logging thread.
+func finalUnlinkSymptoms(snap uint64, log string) ([]string, error) {
+	symptoms, ready, err := judgeUnlink(snap, readUnlinkOutcome(log, snap))
+	if err != nil {
+		return nil, err
+	}
+	if !ready {
+		return nil, fmt.Errorf("the final log has no outcome for unlink from snapshot %d", snap)
+	}
+	return symptoms, nil
 }

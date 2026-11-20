@@ -2,9 +2,11 @@ package ceph
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 )
@@ -110,5 +112,37 @@ func TestMonitorSettlingRefusesABarrierThatReachedAnotherMON(t *testing.T) {
 	err := f.settling().settle(t.Context(), []string{"/tmp/a.nonce"})
 	if err == nil || !strings.Contains(err.Error(), "did not reach mon.a alone") {
 		t.Fatalf("a barrier that reached a second MON proves nothing, got %v", err)
+	}
+}
+
+// Incomplete native replies cannot advance to an auth barrier. A later
+// complete observation may settle the same stopped client.
+func TestMonitorSettlingRequiresCompleteSessionEvidence(t *testing.T) {
+	for _, data := range []string{`null`, `[{}]`, `[null]`, `[{"entity_name":"client.probe","con_type":"client","global_id":7,"addrs":{"addrvec":[{"nonce":"7"}]}}]`, `[{"entity_name":"client.probe","con_type":"client","global_id":7,"addrs":{"addrvec":[{"nonce":7}]}}]`} {
+		t.Run(data, func(t *testing.T) {
+			f := &settlingFake{t: t, nonce: "7", elections: []int{5, 5, 5}, barrierReaches: map[string][]string{"a": {"a"}, "b": {"b"}}}
+			m := f.settling()
+			command := m.command
+			m.command = func(ctx context.Context, args ...string) ([]byte, error) {
+				if strings.Contains(strings.Join(args, " "), " sessions ") {
+					return []byte(data), nil
+				}
+				return command(ctx, args...)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+			defer cancel()
+			if err := m.settle(ctx, []string{"nonce"}); !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("incomplete/live session settled: %v", err)
+			}
+			for _, cmd := range f.commands {
+				if strings.Contains(cmd, "auth add") {
+					t.Fatal("barrier ran without complete closed sessions")
+				}
+			}
+			m.command = command
+			if err := m.settle(t.Context(), []string{"nonce"}); err != nil {
+				t.Fatalf("valid empty observation did not recover: %v", err)
+			}
+		})
 	}
 }

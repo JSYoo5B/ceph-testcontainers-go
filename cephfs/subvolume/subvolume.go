@@ -190,15 +190,15 @@ func createGroup(ctx context.Context, fs *fsbase.Core, config GroupConfig) (*Gro
 		return nil, err
 	}
 	defer done()
-	if err := fs.CheckSubvolumeDataPool(ctx, config.DataPool); err != nil {
-		return nil, err
-	}
 	names, err := fs.Volumes().SubvolumeGroupNames(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if slices.Contains(names, config.Name) {
 		return nil, servicehook.Invalid(fmt.Errorf("subvolume group %q already exists", config.Name))
+	}
+	if err := fs.CheckSubvolumeDataPool(ctx, config.DataPool); err != nil {
+		return nil, err
 	}
 	group := &Group{Name: config.Name, FilesystemName: fs.Name(),
 		identity: &volumeRecord{Volume: volbase.Volume{Core: fs, FilesystemID: fsID, Name: config.Name}}}
@@ -238,15 +238,15 @@ func create(ctx context.Context, fs *fsbase.Core, config Config) (*Subvolume, er
 		return nil, err
 	}
 	defer done()
-	if err := fs.CheckSubvolumeCreationPool(ctx, config.DataPool, config.GroupName); err != nil {
-		return nil, err
-	}
 	names, err := fs.Volumes().SubvolumeNames(ctx, config.GroupName)
 	if err != nil {
 		return nil, err
 	}
 	if slices.Contains(names, config.Name) {
 		return nil, servicehook.Invalid(fmt.Errorf("subvolume %q in group %q already exists", config.Name, config.GroupName))
+	}
+	if err := fs.CheckSubvolumeCreationPool(ctx, config.DataPool, config.GroupName); err != nil {
+		return nil, err
 	}
 	subvolume := newSubvolume(&volumeRecord{Volume: volbase.Volume{Core: fs, FilesystemID: fsID, Name: config.Name, Group: config.GroupName}})
 	args := fsbase.AppendGroup([]string{"fs", "subvolume", "create", fs.Name(), config.Name}, config.GroupName)

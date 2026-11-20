@@ -8,7 +8,6 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
-	"io"
 	"slices"
 	"strconv"
 	"strings"
@@ -93,7 +92,7 @@ func clientAuthenticates(t *testing.T, ctx context.Context, cluster *ceph.Contai
 	if err != nil {
 		t.Fatal(err)
 	}
-	output, _ := io.ReadAll(reader)
+	output := readNativeEvidence(t, reader)
 	if code != 0 && !strings.Contains(string(output), "Permission denied") && !strings.Contains(string(output), "permission denied") {
 		t.Fatalf("%s failed for another reason than authentication: exit %d: %s", client.Name(), code, output)
 	}
@@ -137,8 +136,7 @@ func keyTypeOption(t *testing.T, ctx context.Context, cluster *ceph.Container) b
 	if err != nil {
 		t.Fatal(err)
 	}
-	usage, _ := io.ReadAll(reader)
-	return strings.Contains(string(usage), "--key-type")
+	return keyTypesFromHelp(t, reader)
 }
 
 // runAuthCiphers starts a cluster of image whose keys are all AES with
@@ -197,9 +195,8 @@ func runAuthCiphers(t *testing.T, image string, imageOpts []testcontainers.Conta
 			refusal.Version != harness.StaticFacts(cluster).CephVersion || !strings.HasPrefix(refusal.Image, "sha256:") {
 			t.Fatalf("an image without --key-type created an AES256K client: %v", err)
 		}
-		if _, err := cluster.Ceph(ctx, "auth", "get", "client.aes256k-reader"); err == nil {
-			t.Fatal("the refused AES256K client exists")
-		}
+		_, absentErr := cluster.Ceph(ctx, "auth", "get", "client.aes256k-reader")
+		requireAuthAbsent(t, absentErr)
 		started := time.Now()
 		refused, err := ceph.Run(ctx, image, append(slices.Clone(base), ceph.WithAuth(ceph.AuthConfig{KeyType: ceph.CipherAES256K}))...)
 		testcontainers.CleanupContainer(t, refused)

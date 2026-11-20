@@ -51,9 +51,8 @@ func testClientRevocation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := cluster.Ceph(ctx, "auth", "get", client.Name()); err == nil {
-				t.Fatal("the revoked identity is still in the auth database")
-			}
+			_, absentErr := cluster.Ceph(ctx, "auth", "get", client.Name())
+			requireAuthAbsent(t, absentErr)
 			if code, out := clientCommand(t, ctx, holder, client, "mon", "stat"); code == 0 {
 				t.Fatalf("a fresh client of the revoked identity authenticated: %s", out)
 			}

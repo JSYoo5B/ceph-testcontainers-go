@@ -189,7 +189,7 @@ func (r NativeCommandResult) Complete() bool {
 }
 
 // NativeCommandUnstoppedError reports a native command that RunNativeCommand,
-// or rgw.Gateway.Admin, could not confirm as stopped after its call ended
+// a daemon AdminSocket, or rgw.Gateway.Admin, could not confirm as stopped after its call ended
 // early: it may still run in its container. Stop retries the confirmation;
 // Terminate also tries it.
 type NativeCommandUnstoppedError struct {
@@ -237,7 +237,7 @@ type nativeInvocation struct {
 	label    string
 	cancel   context.CancelCauseFunc
 	// stopCommand confirms that the command of marker no longer runs:
-	// supervised.Cancel, or supervised.CancelShell for a shell supervisor.
+	// supervised.Cancel.
 	stopCommand func(ctx context.Context, ctr testcontainers.Container, label, marker string) error
 	// done is closed when the call has returned. It then has set marker if
 	// it could not confirm that its command stopped.
@@ -484,7 +484,7 @@ func (c *Container) RunNativeCommand(ctx context.Context, target testcontainers.
 	switch {
 	case unstopped != "":
 		return NativeCommandResult{}, &NativeCommandUnstoppedError{invocation: inv, err: err}
-	case errors.As(err, &exit) && (exit.Code == 126 || exit.Code == 127):
+	case supervised.MissingPython(err):
 		return NativeCommandResult{}, &OperationError{Kind: ErrImageCapability, Op: label, Capability: "python3",
 			Err: fmt.Errorf("the container cannot run python3, which the supervisor needs: %w", err)}
 	case errors.As(err, &exit) && exit.Code == supervised.LaunchFailedExit:

@@ -62,10 +62,20 @@ func New(ctx context.Context) (*testcontainers.DockerNetwork, error) {
 	return NewFamily(ctx, IPv4Only)
 }
 
+// NewInternal creates an IPv4 bridge for traffic between its members only.
+// Docker does not publish a container's host ports through this bridge.
+func NewInternal(ctx context.Context) (*testcontainers.DockerNetwork, error) {
+	return newBridge(ctx, IPv4Only, true)
+}
+
 // NewFamily is New for the given family. A DualStack bridge keeps both
 // allocated subnets explicitly, so endpoints can be restored at both
 // addresses. An Engine without an IPv6 address pool fails the allocation.
 func NewFamily(ctx context.Context, family Family) (*testcontainers.DockerNetwork, error) {
+	return newBridge(ctx, family, false)
+}
+
+func newBridge(ctx context.Context, family Family, internal bool) (*testcontainers.DockerNetwork, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -78,6 +88,9 @@ func NewFamily(ctx context.Context, family Family) (*testcontainers.DockerNetwor
 	}
 	return newNetwork(ctx, docker, family, func(ctx context.Context, ipam *dockernetwork.IPAM) (*testcontainers.DockerNetwork, error) {
 		var opts []tcnetwork.NetworkCustomizer
+		if internal {
+			opts = append(opts, tcnetwork.WithInternal())
+		}
 		if family == DualStack {
 			opts = append(opts, tcnetwork.WithEnableIPv6())
 		}

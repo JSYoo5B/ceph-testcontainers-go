@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"slices"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwtest"
 	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -23,10 +25,12 @@ import (
 // and fails the step named by fail.
 type rgwTLSGatewayContainer struct {
 	testcontainers.Container
-	state  container.State
-	fail   string
-	steps  []string
-	copied map[string][]byte
+	state    container.State
+	fail     string
+	steps    []string
+	copied   map[string][]byte
+	listener *tlsListener
+	readFail bool
 }
 
 func (c *rgwTLSGatewayContainer) GetContainerID() string { return "rgw-tls" }
@@ -49,11 +53,29 @@ func (c *rgwTLSGatewayContainer) CopyToContainer(_ context.Context, content []by
 
 func (c *rgwTLSGatewayContainer) Exec(_ context.Context, cmd []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
 	c.steps = append(c.steps, strings.Join(cmd, " "))
-	if len(cmd) == 4 && cmd[0] == "mv" {
-		c.copied[cmd[3]] = c.copied[cmd[2]]
-		delete(c.copied, cmd[2])
+	if cmd[0] == "cat" {
+		if c.readFail {
+			return 0, nil, errors.New("read unavailable")
+		}
+		data, ok := c.copied[cmd[1]]
+		if !ok {
+			return 1, nil, errors.New("completion record missing")
+		}
+		return gwtest.Reply(cmd, 0, gwtest.Stream(false, data))
 	}
-	return 0, strings.NewReader(""), nil
+	if len(cmd) == 7 && cmd[3] == "rgw-tls-install" {
+		if c.fail != "rename-before" && c.fail != "rename-pending" {
+			c.copied[cmd[5]] = c.copied[cmd[4]]
+			delete(c.copied, cmd[4])
+		}
+		if c.fail != "rename-pending" {
+			c.copied[cmd[6]] = []byte("0\n")
+		}
+		if strings.HasPrefix(c.fail, "rename-") {
+			return 0, nil, errors.New("rename reply lost")
+		}
+	}
+	return gwtest.Reply(cmd, 0, gwtest.Stream(false, nil))
 }
 
 func (c *rgwTLSGatewayContainer) Stop(context.Context, *time.Duration) error {
@@ -61,13 +83,26 @@ func (c *rgwTLSGatewayContainer) Stop(context.Context, *time.Duration) error {
 	if c.fail == "stop" {
 		return errors.New("stop refused")
 	}
+	c.state.Running = false
+	if c.fail == "stop-complete" {
+		return errors.New("stop reply lost")
+	}
 	return nil
 }
 
-func (c *rgwTLSGatewayContainer) Start(context.Context) error {
+func (c *rgwTLSGatewayContainer) Start(ctx context.Context) error {
 	c.steps = append(c.steps, "start")
 	if c.fail == "start" {
 		return errors.New("readiness failed")
+	}
+	c.state.Running, c.state.StartedAt = true, "next"
+	if c.listener != nil {
+		if err := c.listener.reconcile(ctx); err != nil {
+			return err
+		}
+		if !bytes.Equal(c.copied[rgwTLSFile], rgwTLSFileContent(c.listener.material())) {
+			return errors.New("start expected a different certificate")
+		}
 	}
 	return nil
 }
@@ -81,7 +116,13 @@ func tlsReplacementGateway(t *testing.T, ctr testcontainers.Container, material 
 	if err != nil {
 		t.Fatal(err)
 	}
-	return registerTestGateway(newGateway(cluster, ctr, config, 7480, 7481, newTLSListener(config.TLS), "", ""))
+	gateway := registerTestGateway(newGateway(cluster, ctr, config, 7480, 7481, newTLSListener(config.TLS), "", ""))
+	if model, ok := ctr.(*rgwTLSGatewayContainer); ok {
+		model.copied = map[string][]byte{rgwTLSFile: rgwTLSFileContent(material)}
+		model.listener = gateway.tls
+		model.state.StartedAt = "first"
+	}
+	return gateway
 }
 
 func TestRGWReplaceTLSInstallsMaterialAndRestarts(t *testing.T) {
@@ -93,9 +134,9 @@ func TestRGWReplaceTLSInstallsMaterialAndRestarts(t *testing.T) {
 	if err := copied.ReplaceTLS(t.Context(), *second); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"copy /tc/rgw-tls.pem.next", "mv -f /tc/rgw-tls.pem.next /tc/rgw-tls.pem", "stop", "start"}
-	if !slices.Equal(ctr.steps, want) {
-		t.Fatalf("replacement steps %q, want %q", ctr.steps, want)
+	if len(ctr.steps) != 4 || !strings.HasPrefix(ctr.steps[0], "copy /tc/rgw-tls.pem.") ||
+		!strings.Contains(ctr.steps[1], "rgw-tls-install /tc/rgw-tls.pem.") || ctr.steps[2] != "stop" || ctr.steps[3] != "start" {
+		t.Fatalf("replacement steps %q", ctr.steps)
 	}
 	if !bytes.Equal(ctr.copied[rgwTLSFile], rgwTLSFileContent(second)) {
 		t.Fatal("the gateway file does not hold the new material")
@@ -109,16 +150,18 @@ func TestRGWReplaceTLSInstallsMaterialAndRestarts(t *testing.T) {
 	}
 }
 
-func TestRGWReplaceTLSRestoresMaterialWhenTheGatewayDoesNotStop(t *testing.T) {
+func TestRGWReplaceTLSRetainsInstalledMaterialWhenStopIsUnconfirmed(t *testing.T) {
 	first, second := testRGWTLSMaterial(t), testRGWTLSMaterial(t)
 	ctr := &rgwTLSGatewayContainer{state: container.State{Running: true}, fail: "stop"}
 	gateway := tlsReplacementGateway(t, ctr, first)
-	before := gateway.tls.fingerprint()
 	if err := gateway.ReplaceTLS(t.Context(), *second); err == nil || !strings.Contains(err.Error(), "stop refused") {
 		t.Fatalf("a failed stop was not reported: %v", err)
 	}
-	if !bytes.Equal(ctr.copied[rgwTLSFile], rgwTLSFileContent(first)) || gateway.tls.fingerprint() != before {
-		t.Fatal("the previous material was not put back")
+	if !bytes.Equal(ctr.copied[rgwTLSFile], rgwTLSFileContent(second)) || gateway.tls.fingerprint() != newTLSListener(second).fingerprint() {
+		t.Fatal("installed material and expected certificate disagree")
+	}
+	if err := gateway.ReplaceTLS(t.Context(), *second); err == nil || !strings.Contains(err.Error(), "unconfirmed") {
+		t.Fatalf("unconfirmed stop retry: %v", err)
 	}
 	if slices.Contains(ctr.steps, "start") {
 		t.Fatal("a gateway that did not stop was started")
@@ -204,5 +247,79 @@ func TestRGWTLSReadinessExpectsTheCurrentCertificateAtEveryStart(t *testing.T) {
 	want := []string{newTLSListener(first).fingerprint(), newTLSListener(second).fingerprint()}
 	if !slices.Equal(control.pinned, want) || want[0] == want[1] {
 		t.Fatalf("readiness pinned %q, want %q", control.pinned, want)
+	}
+}
+
+func TestRGWTLSInstallationReplyLossRecoversExpectedMaterial(t *testing.T) {
+	for _, tc := range []struct {
+		fail     string
+		readFail bool
+	}{{"rename-before", false}, {"rename-after", false}, {"rename-after", true}} {
+		t.Run(fmt.Sprintf("%s/readFailure=%v", tc.fail, tc.readFail), func(t *testing.T) {
+			first, second := testRGWTLSMaterial(t), testRGWTLSMaterial(t)
+			ctr := &rgwTLSGatewayContainer{state: container.State{Running: true}, fail: tc.fail, readFail: tc.readFail}
+			gateway := tlsReplacementGateway(t, ctr, first)
+			if err := gateway.ReplaceTLS(t.Context(), *second); err == nil {
+				t.Fatal("lost reply was hidden")
+			}
+			if slices.Contains(ctr.steps, "stop") {
+				t.Fatal("installation error dispatched Stop")
+			}
+			if tc.readFail && gateway.tls.pending == nil {
+				t.Fatal("unknown readback was discarded")
+			}
+			ctr.fail, ctr.readFail = "", false
+			if err := ctr.Start(t.Context()); err != nil {
+				t.Fatalf("ordinary start: %v", err)
+			}
+			want := second
+			if tc.fail == "rename-before" {
+				want = first
+			}
+			if gateway.tls.fingerprint() != newTLSListener(want).fingerprint() {
+				t.Fatal("wrong expected fingerprint")
+			}
+			if err := gateway.ReplaceTLS(t.Context(), *second); err != nil {
+				t.Fatalf("replacement retry: %v", err)
+			}
+		})
+	}
+}
+
+func TestRGWTLSCompletedStopReplyLossResumesSameReplacement(t *testing.T) {
+	first, second := testRGWTLSMaterial(t), testRGWTLSMaterial(t)
+	ctr := &rgwTLSGatewayContainer{state: container.State{Running: true}, fail: "stop-complete"}
+	gateway := tlsReplacementGateway(t, ctr, first)
+	if err := gateway.ReplaceTLS(t.Context(), *second); err == nil || ctr.state.Running {
+		t.Fatalf("completed Stop: %v", err)
+	}
+	if err := gateway.ReplaceTLS(t.Context(), *second); err != nil || !ctr.state.Running {
+		t.Fatalf("retry: %v", err)
+	}
+}
+
+func TestRGWTLSUnfinishedInstallerKeepsReadinessUnconfirmed(t *testing.T) {
+	first, second := testRGWTLSMaterial(t), testRGWTLSMaterial(t)
+	ctr := &rgwTLSGatewayContainer{state: container.State{Running: true}, fail: "rename-pending"}
+	gateway := tlsReplacementGateway(t, ctr, first)
+	if err := gateway.ReplaceTLS(t.Context(), *second); err == nil || gateway.tls.pending == nil {
+		t.Fatalf("uncertain installer: %v", err)
+	}
+	if err := ctr.Start(t.Context()); err == nil {
+		t.Fatal("readiness ignored unfinished installer")
+	}
+	if err := gateway.ReplaceTLS(t.Context(), *second); err == nil {
+		t.Fatal("retry bypassed unfinished installer")
+	}
+	// The original delayed command finishes after both refusals. A later
+	// startup now has completion evidence before it reads the live PEM.
+	pending := gateway.tls.pending
+	ctr.copied[rgwTLSFile] = rgwTLSFileContent(second)
+	ctr.copied[pending.receipt] = []byte("0\n")
+	if err := ctr.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if gateway.tls.fingerprint() != newTLSListener(second).fingerprint() {
+		t.Fatal("completed installer did not reconcile material")
 	}
 }

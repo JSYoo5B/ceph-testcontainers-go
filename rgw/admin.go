@@ -84,7 +84,8 @@ func (u User) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, u.String())
 
 // Quota uses bytes, matching modern radosgw-admin output. For each limit,
 // -1 disables that limit; zero is an actual zero limit. Enabled controls whether
-// the configured limits are enforced. Native RGW quota caches and asynchronous
+// the configured limits are enforced. Positive byte limits must be multiples
+// of 1024, the native quota precision. Native RGW quota caches and asynchronous
 // accounting can delay enforcement; reading this policy does not flush caches.
 type Quota struct {
 	Enabled      bool
@@ -151,9 +152,11 @@ type UserInfo struct {
 // request it already sent: the outcome of a stopped mutation is unknown and
 // Admin never repeats it.
 //
-// A failure keeps a *ceph.NativeFailure with the exit code and errno but no
-// reason, so errors.Is(err, fs.ErrNotExist) works; run the same command with
-// Exec to see the native text. When radosgw-admin reports a fatal signal, the
+// A native exit failure keeps a *ceph.NativeFailure with the exit code and no
+// reason. When native output identifies an errno, Errno records it and
+// errors.Is can match its standard error (for example ENOENT matches
+// fs.ErrNotExist). Exit code 2 alone leaves Errno empty. Run the same command
+// with Exec to see the native text. When radosgw-admin reports a fatal signal, the
 // error text also names the signal, its thread and the first backtrace
 // frames, and says how many bytes of standard output it wrote and whether
 // they are one complete JSON document, never what they say.
@@ -348,6 +351,9 @@ func (u *User) SetBucketQuota(ctx context.Context, quota Quota) error {
 func (u *User) setQuota(ctx context.Context, scope string, quota Quota) error {
 	if quota.MaxSizeBytes < -1 || quota.MaxObjects < -1 {
 		return errors.New("RGW quota limits must be -1, zero or positive")
+	}
+	if quota.MaxSizeBytes > 0 && quota.MaxSizeBytes%1024 != 0 {
+		return servicehook.Invalid(errors.New("positive RGW quota byte limits must be multiples of 1024"))
 	}
 	return u.withGateway(ctx, func(ctx context.Context, g *gwbase.Core, user *gwbase.User, native *gwbase.NativeUser) error {
 		if native.Info.AccountID != "" {

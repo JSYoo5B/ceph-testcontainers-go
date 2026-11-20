@@ -57,7 +57,12 @@ func Filesystems(c *ceph.Container) []*Filesystem {
 // ceph.Pool.Remove (see ceph.Container.Pool). File data in the removed pools is destroyed. Stop
 // clients, CephFS mirrors and subvolume operations on the filesystem first;
 // their handles fail afterwards. A retry after an error continues with
-// whatever remains. If graceful shutdown cannot complete within the caller or
+// whatever remains. After a partial Start, Remove cleans the resources of
+// attempted pool creations, preserving pools that Start found pre-existing.
+// If a partially created pool could not be identified, Remove refuses to
+// delete a live pool with that name. An unconfirmed filesystem creation also
+// refuses removal of a live same-named filesystem. If graceful shutdown
+// cannot complete within the caller or
 // startup timeout, removal returns an error without forcing the MDSs to fail.
 // The filesystem may remain marked down and stays owned for a later retry.
 //

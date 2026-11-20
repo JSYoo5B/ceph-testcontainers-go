@@ -277,6 +277,9 @@ Ceph's Tentacle documentation also marks deployments with several CephFS
 mirror daemons as untested upstream.
 
 - Affected: Tentacle 20.2.4, 20.2.5 and Umbrella 21.2.0.
+- Historical control: Pacific 16.2.6 redistributed the directories after
+  the replacement joined. This release is outside the support matrix and
+  the run used temporary compatibility adjustments described in the evidence.
 - Guidance: call `cephfsmirror.Container.RebalanceDirectories` after
   `AddDaemon`; see [`cephfs/mirror`](../../cephfs/mirror/README.md).
 - Evidence: [`cephfs_mirror_daemon_redistribution`](../../internal/integration/experiments/cephfs_mirror_daemon_redistribution/README.md).
@@ -289,8 +292,11 @@ daemons joining or leaving, can trigger it.
 
 - Affected: Squid and Tentacle; the patches that were run are not recorded,
   and Umbrella was not run.
-- Guidance: `cephfsmirror.Container.RebalanceDirectories` waits for an idle
-  policy, plain removals do not, and `ceph mgr fail` recovers; see
+- Guidance: `cephfsmirror.Container.RebalanceDirectories`, `RemoveDirectory`
+  and `BeginDirectoryRemoval` wait up to two minutes for an idle native policy
+  before dispatching a removal. This admission neither proves daemon release
+  nor fences independent native topology/policy changes. `ceph mgr fail`
+  recovers a hung MGR; see
   [`cephfs/mirror`](../../cephfs/mirror/README.md).
 
 ### CephFS mirror of a file whose object stayed empty

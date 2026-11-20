@@ -660,6 +660,64 @@ func TestUpgradeMonStepReceiptPrecedesCleanupAndKeepsFailuresApart(t *testing.T)
 	}
 }
 
+func TestUpgradeMonStepReceiptWorkloadSnapshotsAreIndependent(t *testing.T) {
+	mutate := func(r upgradeMonReceipt) {
+		r.Workload.Classes["upgrade-mixed-003"] = "changed"
+		r.Workload.Violations[0] = "changed violation"
+		r.Workload.Inconclusive[0] = "changed inconclusive"
+		r.Workload.Unknown[0] = "changed unknown"
+	}
+	check := func(t *testing.T, name string, r upgradeMonReceipt) {
+		t.Helper()
+		v := r.Workload
+		if v.Classes["upgrade-mixed-003"] != "acknowledged-corrupt" ||
+			strings.Join(v.Violations, ",") != "upgrade-mixed-003: acknowledged object differs from what was written" ||
+			strings.Join(v.Inconclusive, ",") != "upgrade-mixed-004: no route" ||
+			strings.Join(v.Unknown, ",") != "upgrade-mixed-005" {
+			t.Errorf("%s lost workload evidence: %+v", name, v)
+		}
+	}
+	for _, boundary := range []string{"callback", "run result", "first receipt"} {
+		t.Run(boundary, func(t *testing.T) {
+			env := newStepEnv(t)
+			env.workload.mutate = func(object string, data []byte, present bool) ([]byte, bool) {
+				if object == "upgrade-mixed-003" {
+					return []byte("wrong content"), true
+				}
+				return data, present
+			}
+			env.workload.readErr["upgrade-mixed-004"] = errors.New("no route")
+			env.workload.writeErr[5] = errors.New("write outcome unknown")
+			s := env.step(func(c *upgradeMonStepConfig) {
+				c.Mixed = 3
+				if boundary == "callback" {
+					c.OnReceipt = mutate
+				}
+			})
+			result := s.run(t.Context())
+			first, ok := s.firstReceipt()
+			if !ok {
+				t.Fatal("first receipt missing")
+			}
+			switch boundary {
+			case "callback":
+				check(t, "run result", result)
+				check(t, "first receipt", first)
+			case "run result":
+				mutate(result)
+				check(t, "callback", env.receipts[0])
+				check(t, "earlier first receipt", first)
+			case "first receipt":
+				mutate(first)
+				check(t, "callback", env.receipts[0])
+				check(t, "run result", result)
+			}
+			saved, _ := s.firstReceipt()
+			check(t, "retained receipt", saved)
+		})
+	}
+}
+
 func TestUpgradeMonStepCleanupSurvivesCancellation(t *testing.T) {
 	env := newStepEnv(t)
 	ctx, cancel := context.WithCancel(context.Background())

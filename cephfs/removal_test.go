@@ -2,7 +2,11 @@ package cephfs
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -40,7 +44,18 @@ func cephFSRemovalClusterWithControl(t *testing.T, present bool, wrap func(*ceph
 	if err != nil {
 		t.Fatal(err)
 	}
-	filesystems(cluster).byName = map[string]*Filesystem{"app": newFilesystem(cluster, config, nil)}
+	fs := newFilesystem(cluster, config, nil)
+	fs.fsNewAttempted = true
+	fs.base().ReplaceNative(&fsbase.NativeIdentity{ID: 41, MetadataPool: 4, DefaultPool: 5, Attachments: make(map[string]*fsbase.PoolAttachment)})
+	for _, name := range []string{"app-metadata", "app-data"} {
+		pool, err := cluster.Pool(t.Context(), name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pool.CRUSHRule = "tc-" + name + "-replicated"
+		fs.createdPools = append(fs.createdPools, pool)
+	}
+	filesystems(cluster).byName = map[string]*Filesystem{"app": fs}
 	return cluster, f
 }
 
@@ -130,10 +145,12 @@ func TestRemoveRetryContinuesAfterNativeRemoval(t *testing.T) {
 	if len(f.Filesystems) != 0 || !f.HasPool("app-data") || filesystems(cluster).byName["app"] == nil {
 		t.Fatalf("unexpected state after partial removal: %s", f)
 	}
+	f.AddFixturePool("app-metadata", false) // Reuses the name cleaned by the first call.
+	f.Pools[len(f.Pools)-1].ID = 100
 	if err := app.Remove(t.Context()); err != nil {
 		t.Fatal("retry:", err)
 	}
-	if f.HasPool("app-metadata") || f.HasPool("app-data") || !f.HasPool("attached") || filesystems(cluster).byName["app"] != nil {
+	if !f.HasPool("app-metadata") || f.HasPool("app-data") || !f.HasPool("attached") || filesystems(cluster).byName["app"] != nil {
 		t.Fatalf("retry left %s", f)
 	}
 }
@@ -218,5 +235,154 @@ func TestRemoveRetryRechecksSurvivorAffinity(t *testing.T) {
 	}
 	if filesystems(cluster).byName["app"] != nil || filesystems(cluster).byName["keep"] != keep {
 		t.Fatal("the retried removal did not finish, or touched the survivor")
+	}
+}
+
+// poolSetupModel extends the removal model with the replicated pool creation
+// commands used by Start before an injected failure or a name collision.
+type poolSetupModel struct{ *cephStateFake }
+
+func (m poolSetupModel) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	names := make([]string, 0, len(m.Pools))
+	for _, pool := range m.Pools {
+		names = append(names, pool.Name)
+	}
+	m.Output["osd pool ls --format json"] = string(mustEncodeNames(names))
+	m.Output["osd crush rule ls --format json"] = string(mustEncodeNames(slices.Collect(maps.Values(m.Rules))))
+	code, output, err := m.cephStateFake.Exec(ctx, args, opts...)
+	if code == 0 && err == nil {
+		words := clustertest.ModuleArgs(args)
+		switch {
+		case len(words) >= 5 && slices.Equal(words[:4], []string{"osd", "crush", "rule", "create-replicated"}):
+			m.Rules[len(m.Rules)] = words[4]
+		case len(words) >= 8 && slices.Equal(words[:3], []string{"osd", "pool", "create"}):
+			for id, name := range m.Rules {
+				if name == words[7] {
+					m.Pools = append(m.Pools, clustertest.FakePool{ID: len(m.Pools) + 2, Name: words[3], Rule: id})
+				}
+			}
+		}
+	}
+	return code, output, err
+}
+
+func mustEncodeNames(names []string) []byte {
+	b, err := json.Marshal(names)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
+func TestRemoveAfterPartialStartKeepsUnacquiredPools(t *testing.T) {
+	for _, tt := range []struct{ name, collision, failure string }{
+		{"first pool already exists", "app-metadata", ""},
+		{"second pool already exists", "app-data", ""},
+		{"additional pool already exists", "extra", ""},
+		{"only rule created", "", "osd pool create app-data 8 8 replicated tc-app-data-replicated --autoscale-mode=off"},
+		{"created pool failed configuration", "", "osd pool application enable app-data cephfs"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newCephStateFake()
+			f.Output["fs dump --format json"] = `{"filesystems":[]}`
+			if tt.collision != "" {
+				f.AddFixturePool(tt.collision, false)
+			}
+			f.AddFixturePool("untouched", false)
+			f.Rules[12] = "tc-app-data-ec"
+			f.Profiles = append(f.Profiles, "tc-app-data-ec")
+			before := f.Snapshot()
+			if tt.failure != "" {
+				f.FailNext(tt.failure, 1)
+			}
+			cluster := poolFixtureCluster(poolSetupModel{f}, 3)
+			app, err := Start(t.Context(), cluster, Config{Name: "app", AdditionalDataPools: []ceph.PoolConfig{{Name: "extra"}, {Name: "untouched"}}})
+			if app == nil || err == nil {
+				t.Fatalf("Start = %v, %v", app, err)
+			}
+			if tt.collision != "" && !strings.Contains(err.Error(), tt.collision+`" already exists`) {
+				t.Fatal(err)
+			}
+			if tt.failure != "" && !strings.Contains(err.Error(), "injected command failure") {
+				t.Fatal(err)
+			}
+			if err := app.Remove(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if after := f.Snapshot(); before != after {
+				t.Fatalf("Remove changed prior state or left setup resources:\nbefore %s\nafter %s", before, after)
+			}
+		})
+	}
+}
+
+func TestRemoveRefusesUnconfirmedPartialPoolIdentity(t *testing.T) {
+	f := newCephStateFake()
+	f.Output["fs dump --format json"] = `{"filesystems":[]}`
+	f.FailNext("osd pool application enable app-metadata cephfs", 1)
+	f.FailNext("osd pool ls detail --format json", 1)
+	cluster := poolFixtureCluster(poolSetupModel{f}, 3)
+	app, err := Start(t.Context(), cluster, Config{Name: "app"})
+	if err == nil || app == nil || !f.HasPool("app-metadata") {
+		t.Fatalf("Start = %v, %v, state %s", app, err, f)
+	}
+	before := f.Snapshot()
+	if err := app.Remove(t.Context()); err == nil || !strings.Contains(err.Error(), "unconfirmed native ID") {
+		t.Fatalf("Remove = %v", err)
+	}
+	if f.Snapshot() != before {
+		t.Fatalf("Remove changed the unconfirmed pool: %s", f)
+	}
+}
+
+func TestRemovalRefusesUnconfirmedFilesystemBeforeShutdown(t *testing.T) {
+	cluster, model := cephFSRemovalCluster(t, true)
+	fs := ownedFilesystem(t, cluster, "app")
+	fs.base().ReplaceNative(nil)
+	before := model.Snapshot()
+	if err := fs.Remove(t.Context()); err == nil || !strings.Contains(err.Error(), "unconfirmed") {
+		t.Fatalf("Remove = %v", err)
+	}
+	if model.Snapshot() != before {
+		t.Fatal("uncertain cleanup mutated native state")
+	}
+	for _, call := range model.Calls {
+		if len(call) > 1 && call[0] == "fs" && (call[1] == "set" || call[1] == "rm") {
+			t.Fatalf("dispatched %v", call)
+		}
+	}
+}
+
+// filesystemSetupModel publishes an FSMap and pool IDs when fs new applies.
+type filesystemSetupModel struct{ poolSetupModel }
+
+func (m filesystemSetupModel) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	code, out, err := m.poolSetupModel.Exec(ctx, args, opts...)
+	words := clustertest.ModuleArgs(args)
+	if code == 0 && err == nil && len(words) > 4 && words[0] == "fs" && words[1] == "new" {
+		m.Filesystems = []clustertest.FakeFilesystem{{Name: words[2], Metadata: words[3], Data: []string{words[4]}}}
+		ids := map[string]int{}
+		for _, pool := range m.Pools {
+			ids[pool.Name] = pool.ID
+		}
+		m.Output["fs dump --format json"] = fmt.Sprintf(`{"filesystems":[{"id":41,"mdsmap":{"fs_name":"%s","metadata_pool":%d,"data_pools":[%d]}}]}`, words[2], ids[words[3]], ids[words[4]])
+		m.Output["fs get app --format json"] = shutdownMap(41, 0, `{}`)
+	}
+	return code, out, err
+}
+func TestPartialStartWithCapturedFilesystemCanBeRemoved(t *testing.T) {
+	model := newCephStateFake()
+	model.Output["fs dump --format json"] = `{"filesystems":[]}`
+	model.FailNext("fs set app allow_standby_replay false", 1)
+	cluster := poolFixtureCluster(filesystemSetupModel{poolSetupModel{model}}, 3)
+	fs, err := Start(t.Context(), cluster, Config{Name: "app"})
+	if err == nil || fs == nil || fs.base().Native() == nil {
+		t.Fatalf("partial Start=%v, %v", fs, err)
+	}
+	if err := fs.Remove(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(model.Filesystems) != 0 || model.HasPool("app-metadata") || model.HasPool("app-data") || model.HasRule("tc-app-metadata-replicated") || model.HasRule("tc-app-data-replicated") {
+		t.Fatal("original partial resources remain", model)
 	}
 }

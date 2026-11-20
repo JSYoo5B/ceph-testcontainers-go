@@ -68,7 +68,7 @@ func (w *CloneWatch) Events() <-chan CloneWatchEvent {
 // watch: nil when Stop ended it or a terminal status was delivered, the
 // context's error when the Clone.Watch context ended, a ceph.ErrWatchOverflow
 // error, or the ceph.ErrInvalidRequest read error that ended it (a terminated
-// cluster, a filesystem that is no longer active, or a replaced or removed
+// cluster, a filesystem that is no longer active, or a changed or fixture-removed
 // target), which names the clone and keeps the refusal. A failed or
 // canceled clone is not an error of Stop; its event carries the outcome.
 // Buffered events stay readable after Stop. Stop is safe to call more than
@@ -94,7 +94,7 @@ type cloneStatusRead func(context.Context) (*CloneStatus, error)
 //
 // Before it returns, Watch makes one read under ctx and QueryTimeout, with
 // the checks of Clone.Status: the request must be one this filesystem
-// submitted, and the target's native UUID, inode and birth time, its source
+// submitted, and the target's native UUID, inode, birth time and source names
 // and the filesystem's FSMap ID must still be the ones captured at
 // submission. A failed first read returns its error and starts nothing. That
 // read is the baseline: the first event, already buffered. Receive it before
@@ -115,8 +115,10 @@ type cloneStatusRead func(context.Context) (*CloneStatus, error)
 // instead: ctx ending, a terminated cluster, a filesystem
 // that is no longer the active one created by this cluster or whose FSMap ID
 // or original pools changed, a target removed by Clone.RemovePartial, a target
-// or source replaced outside this fixture, and a full buffer
-// (ceph.ErrWatchOverflow).
+// with a changed native incarnation or changed source names, and a full buffer
+// (ceph.ErrWatchOverflow). A missing native target produces a read gap. Samples
+// do not revalidate the source snapshot incarnation under unchanged names, so
+// a completed target remains observable after its source is removed.
 //
 // The watch is read-only: stopping it neither cancels the clone nor removes
 // partial data, and a complete status is not a usable subvolume; Clone.Wait

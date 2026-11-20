@@ -49,6 +49,25 @@ class WorkflowPhaseTests(unittest.TestCase):
         self.assertIn("do not establish its root cause", text)
         self.assertNotIn("passed", result)
 
+    def test_retried_first_native_failure_stays_failed_and_becomes_a_warning(self):
+        result = reporter.report(environment(SCENARIO_NATIVE_OUTCOME="failure", SCENARIO_NATIVE_RETRY_OUTCOME="success"))
+        # The first run's failure is kept for the history row.
+        self.assertEqual(result["failed_phases"], ["native"])
+        self.assertEqual(result["native_retry"], "success")
+        self.assertIn("| Release retry of the failed tests | success |", reporter.summary(result))
+        for retry, level in (("success", "::warning "), ("failure", "::error "), ("", "::error ")):
+            with self.subTest(retry=retry), temporary_working_directory(), \
+                    patch.dict(os.environ, environment(SCENARIO_NATIVE_OUTCOME="failure",
+                                                       SCENARIO_NATIVE_RETRY_OUTCOME=retry), clear=True), \
+                    patch("sys.stdout", new_callable=io.StringIO) as output:
+                self.assertEqual(reporter.main(), 0)
+                native = [line for line in output.getvalue().splitlines() if "Native assertions" in line]
+                self.assertEqual(len(native), 1)
+                self.assertTrue(native[0].startswith(level), native[0])
+        self.assertEqual(reporter.report(environment())["native_retry"], "not run")
+        with self.assertRaises(ValueError):
+            reporter.report(environment(SCENARIO_NATIVE_RETRY_OUTCOME="passed"))
+
     def test_runner_storage_refusals_are_failed_phases(self):
         result = reporter.report(environment(
             SCENARIO_STORAGE_OUTCOME="failure", SCENARIO_DOCKER_OUTCOME="skipped",

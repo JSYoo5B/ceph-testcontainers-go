@@ -50,8 +50,8 @@ Upstream references:
 
 Known-defect reproducer, optional batch `mon_log_ack` with a 20-minute
 budget; no automatic run includes it. The default image is Tentacle 20.2.4.
-It is an `Experiments` case (`case=mon_log_ack_peon`) without a fixed image:
-no release fixes the defect yet. The parser tests in `log_ack_fixture_test.go`
+The case identifier is `mon_log_ack_peon`. The recorded runs cover affected
+images and a Squid image that predates the defect. The parser tests in `log_ack_fixture_test.go`
 are the `code/pure` batch of this package and run in Code checks for every
 change. The triggers, the result checks and the image injection are the
 shared ones of
@@ -59,15 +59,14 @@ shared ones of
 
 ## Running it
 
-On the default image, which must print `result=REPRODUCED`:
+Run the default Tentacle image to check for the discarded-route symptom:
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
   -run '^TestMONLogAckThroughPeon$' ./internal/integration/experiments/mon_log_ack_peon
 ```
 
-On another image. No release fixes the defect yet (Umbrella 21.2.0 reproduces it too); Squid 19.2.2,
-which predates the introducing change, must print `result=NOT_REPRODUCED`:
+Use Squid 19.2.2, which predates the introducing change, as a comparison:
 
 ```sh
 CGO_ENABLED=0 go test -tags all,native_regression -count=1 -v -timeout=20m \
@@ -99,18 +98,21 @@ The test prints one
 [result line](../../../../docs/contributing/testing.md#experiment-result-lines), `case=mon_log_ack_peon`.
 
 - **REPRODUCED:** the leader-connected control is acknowledged, a
-  peon-connected OSD is not, and the symptom names the peons' discarded
-  routes ("don't have routed request").
+  peon-connected OSD has an observed outstanding send, and its peon log
+  ties a forwarded request from that OSD to a covering MLogAck discarded
+  under the same route ID ("don't have routed request").
 - **NOT_REPRODUCED:** every OSD was acknowledged in a stable window, each
   peon-connected one through its own peon.
 - **Test failure (no result):** three MONs or OSDs do not start, no layout
   with a leader and a peon session is reached, the entries do not reach the
   cluster log, the leader-connected control is not acknowledged, the window
   is rejected for a leader, epoch or session change, or a peon-connected OSD
-  is acknowledged other than through its peon. A plain timeout is not a
-  reproduction.
+  lacks send evidence or a route attributable to its observed outcome.
+  A timeout without an attributed discarded acknowledgement leaves the
+  outcome inconclusive.
 
-Native results (Linux amd64 host, Docker, aggregate images, one run each):
+Historical results with the original oracle (Linux amd64, Docker, aggregate
+images, one run each). The discarded-route counts served as diagnostics:
 
 | Image | Result | Time |
 | --- | --- | --- |

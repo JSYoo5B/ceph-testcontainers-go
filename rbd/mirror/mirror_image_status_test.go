@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"io"
 	"slices"
 	"strings"
@@ -16,6 +15,8 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/rbdobservation"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
@@ -90,7 +91,7 @@ func (d *rbdImageStatusDaemon) State(context.Context) (*container.State, error) 
 	if d.state != nil || d.stateErr != nil {
 		return d.state, d.stateErr
 	}
-	return &container.State{Running: d.running}, nil
+	return &container.State{Running: d.running, Status: container.StateRunning, Pid: 42, StartedAt: "2026-10-07T09:00:00Z"}, nil
 }
 
 func (d *rbdImageStatusDaemon) Exec(context.Context, []string, ...tcexec.ProcessOption) (int, io.Reader, error) {
@@ -106,7 +107,8 @@ func newRBDImageStatusFixture(t *testing.T, mode Mode, sourceNS, destinationNS s
 	if err := link.pair.provisionPolicies(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	daemon := &rbdImageStatusDaemon{running: true, status: `{"pool_replayers":[{"pool":"images","peer":"peer","state":"running","instance_id":"123"}]}`}
+	link.receiver.peer = &rbdReceiverPeerIdentity{uuid: receiverPeerUUID, site: "source", client: receiverPeerClient}
+	daemon := &rbdImageStatusDaemon{running: true, status: receiverTestStatus(destinationNS, sourceNS, "123", "123", true, []string{"123"})}
 	link.roster.daemons = []*Daemon{{Container: daemon, DaemonName: "a", ClientName: "client.rbd-mirror.tc-owned"}}
 	return link, source, destination, daemon
 }
@@ -817,4 +819,47 @@ func TestRBDMirrorWaitReplayReadyStopsOnDisabledSource(t *testing.T) {
 	if !errors.As(err, &observation) || !observation.permanent || attempt != 1 {
 		t.Fatalf("a disabled source did not stop the wait: %v attempts=%d", err, attempt)
 	}
+}
+
+func TestRBDMirrorImageStatusObservationTiming(t *testing.T) {
+	link, source, _, _ := newRBDImageStatusFixture(t, ModeSnapshot, "", "")
+
+	t.Run("deadline while waiting for the owner", func(t *testing.T) {
+		link.mu.Lock()
+		defer link.mu.Unlock()
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+		defer cancel()
+		var sample rbdobservation.Sample
+		ctx = rbdobservation.WithRecorder(ctx, func(record rbdobservation.Sample) { sample = record })
+		if _, err := link.ImageStatus(ctx, "volume"); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("expected admission deadline: %v", err)
+		}
+		if sample.Operation != "owner-image" || sample.Stage != "admission" ||
+			sample.Started.IsZero() || sample.Finished.Before(sample.Started) ||
+			!sample.Acquired.IsZero() || !sample.Released.IsZero() ||
+			sample.Outcome != "deadline-exceeded" || sample.CallerContext != "deadline-exceeded" || sample.AttemptContext != "deadline-exceeded" {
+			t.Fatalf("unexpected admission sample: %+v", sample)
+		}
+	})
+
+	t.Run("failure after owner admission", func(t *testing.T) {
+		source.imageInfo = "{"
+		var sample rbdobservation.Sample
+		ctx := rbdobservation.WithRecorder(t.Context(), func(record rbdobservation.Sample) {
+			if !link.mu.TryLock() {
+				t.Fatal("recorder ran under the owner mutex")
+			}
+			link.mu.Unlock()
+			sample = record
+		})
+		if _, err := link.ImageStatus(ctx, "volume"); err == nil {
+			t.Fatal("malformed source image info was accepted")
+		}
+		if sample.Operation != "owner-image" || sample.Stage != "read-source-image-info" ||
+			sample.Acquired.IsZero() || sample.Acquired.Before(sample.Started) ||
+			sample.Released.Before(sample.Acquired) || sample.Finished.Before(sample.Released) ||
+			sample.Outcome != "error" || sample.CallerContext != "ok" || sample.AttemptContext != "ok" {
+			t.Fatalf("unexpected native read sample: %+v", sample)
+		}
+	})
 }

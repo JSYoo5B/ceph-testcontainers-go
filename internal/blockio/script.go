@@ -20,6 +20,21 @@ node = "/dev/mapper/" + name
 def run(*argv):
     r = subprocess.run(argv, capture_output=True, text=True, timeout=20)
     return r.returncode, r.stdout.strip(), r.stderr.strip()[-400:]
+def creation_path(token):
+    return "%s/ctl-create-%s-%s.json" % (work, name, token)
+def save_creation(token):
+    if token:
+        path = creation_path(token)
+        with open(path + ".tmp", "w") as f:
+            json.dump(dict(out, done=True), f)
+        os.replace(path + ".tmp", path)
+def remove_backing(path, inode):
+    rc, links, err = run("losetup", "--list", "--associated", path, "--noheadings", "--output", "NAME")
+    if rc != 0 or links:
+        raise RuntimeError("backing associations not confirmed absent: " + (err or links))
+    if os.stat(path, follow_symlinks=False).st_ino != inode:
+        raise RuntimeError("backing file identity changed")
+    os.unlink(path)
 def rcfile(tag):
     return "%s/ctl-%s-%s.rc" % (work, name, tag)
 def detached(tag, argv):
@@ -51,6 +66,14 @@ const scriptActions = `if action == "create":
     uuid, lower, sectors = sys.argv[3], sys.argv[4], int(sys.argv[5])
     rc, _, err = run("dmsetup", "create", "--verifyudev", name, "--uuid", uuid, "--table", "0 %d linear %s 0" % (sectors, lower))
     out["created"], out["error"] = rc == 0, err
+    save_creation(sys.argv[6] if len(sys.argv) > 6 else "")
+elif action == "creation":
+    try:
+        with open(creation_path(sys.argv[3])) as f:
+            out.update(json.load(f))
+        out["action"] = action
+    except FileNotFoundError:
+        out["done"] = False
 elif action == "observe":
     rc, info, err = run("dmsetup", "info", name)
     out["exists"] = rc == 0
@@ -87,26 +110,43 @@ elif action == "step":
     if op == "load":
         argv += ["--table", sys.argv[6]]
     elif op == "remove":
+        if len(sys.argv) > 6:
+            selector = ["--uuid", sys.argv[6]]
         argv = ["dmsetup", "remove", "--verifyudev"] + selector
     out["op"], out["id"] = op, sid
     # Claimed before launch: a stopped dispatch without this marker never ran.
-    os.close(os.open(rcfile("step-" + sid) + ".started", os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
-    detached("step-" + sid, argv)
-    out.update(settled("step-" + sid, wait))
+    tag = "step-" + sid
+    status = rcfile(tag)
+    os.close(os.open(status + ".started", os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+    try:
+        detached(tag, argv)
+    except OSError as exc:
+        # Launch failed before a child could publish its exit status.
+        with open(status + ".err", "w") as f:
+            f.write("cannot launch step: " + str(exc))
+        with open(status + ".tmp", "w") as f:
+            f.write("1\n")
+        os.replace(status + ".tmp", status)
+    out.update(settled(tag, wait))
 elif action == "settled":
     out["id"] = sys.argv[3]
     out["started"] = os.path.exists(rcfile("step-" + sys.argv[3]) + ".started")
     out.update(settled("step-" + sys.argv[3], 0))
 elif action == "loop":
     path, size = sys.argv[3], int(sys.argv[4])
-    with open(path, "xb") as f:
-        f.truncate(size)
-    rc, loop, err = run("losetup", "--find", "--show", path)
-    out["loop"], out["error"], out["file"] = loop if rc == 0 else "", err, path
-    out["inode"] = os.stat(path).st_ino
-    if rc == 0:
-        st = os.stat(loop)
-        out["major"], out["minor"] = os.major(st.st_rdev), os.minor(st.st_rdev)
+    out.update(loop="", file="", inode=0, error="")
+    try:
+        with open(path, "xb") as f:
+            out["file"], out["inode"] = path, os.fstat(f.fileno()).st_ino
+            f.truncate(size)
+        rc, loop, err = run("losetup", "--find", "--show", path)
+        out["loop"], out["error"] = loop if rc == 0 else "", err
+        if rc == 0:
+            st = os.stat(loop)
+            out["major"], out["minor"] = os.major(st.st_rdev), os.minor(st.st_rdev)
+    except OSError as e:
+        out["major"], out["minor"], out["error"] = 0, 0, str(e)
+    save_creation(sys.argv[5] if len(sys.argv) > 5 else "")
 elif action == "loopid":
     loop = sys.argv[3]
     try:
@@ -118,27 +158,35 @@ elif action == "loopid":
         out["error"] = str(e)
 elif action == "rmfile":
     path, inode = sys.argv[3], int(sys.argv[4])
-    if os.stat(path).st_ino != inode:
-        raise SystemExit("%s is not inode %d" % (path, inode))
-    os.unlink(path)
+    remove_backing(path, inode)
     out["file_removed"] = True
 elif action == "unloop":
-    loop, path = sys.argv[3], sys.argv[4]
+    loop, path, inode = sys.argv[3], sys.argv[4], int(sys.argv[5])
     base = os.path.basename(loop)
-    holders = sorted(os.listdir("/sys/block/%s/holders" % base))
-    out["holders"] = holders
-    if holders:
-        out["detached"], out["error"] = False, "held by " + " ".join(holders)
-    else:
+    out.update(holders=[], detached=False, error="")
+    try:
+        with open("/sys/block/%s/loop/backing_file" % base) as f:
+            backing = f.read().strip()
+        if backing != path or os.stat(backing, follow_symlinks=False).st_ino != inode:
+            raise RuntimeError("loop backing identity changed")
+        holders = sorted(os.listdir("/sys/block/%s/holders" % base))
+        out["holders"] = holders
+        if holders:
+            raise RuntimeError("held by " + " ".join(holders))
         rc, _, err = run("losetup", "-d", loop)
-        out["error"] = err
-        # losetup -d on a busy loop only sets autoclear and succeeds; the
-        # loop is released once its backing file is gone from sysfs.
-        released = rc == 0 and not os.path.exists("/sys/block/%s/loop/backing_file" % base)
-        out["detached"], out["lazy"] = released, rc == 0 and not released
-        if released:
-            os.unlink(path)
+        if rc != 0:
+            raise RuntimeError("loop detach: " + err)
+        # A busy loop uses lazy detach. Only an empty successful kernel
+        # association query permits removal of the backing file.
+        rc, links, err = run("losetup", "--list", "--associated", path, "--noheadings", "--output", "NAME")
+        if rc != 0:
+            raise RuntimeError("loop association: " + err)
+        out["detached"], out["lazy"] = not links, bool(links)
+        if not links:
+            remove_backing(path, inode)
             out["file_removed"] = True
+    except (OSError, RuntimeError) as e:
+        out["error"] = str(e)
 `
 
 const scriptTestPrelude = `def pattern(seed, blocks):

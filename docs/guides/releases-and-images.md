@@ -325,10 +325,11 @@ slot needs the `mgr-modules` role or another image that ships them.
 - telegraf (`TestManagerTelegrafDelivery`): the module reads `address` and
   `interval` once when it starts, so set them before enabling it and change
   the address only while it is disabled. Its first pass comes about ten
-  seconds after the start. Over UDP every line is its own datagram, over TCP
-  every pass is one connection, and the lines of one pass share one
-  timestamp. Match the cluster by the `fsid` tag, never by the sender, which
-  changes on a failover. A send failure appears only in the active
+  seconds after the start. The scenario checks one newline-terminated line
+  per observed UDP datagram or one cleanly closed TCP connection per observed
+  timestamp. A quiet UDP sample establishes the lines received, with no count
+  of the lines sent. Match the cluster by the `fsid` tag, never by the
+  sender, which changes on a failover. A send failure appears only in the active
   manager's container log: health stays unchanged, `ceph telegraf send`
   still reports success, and the passes of an outage are lost.
 
@@ -351,9 +352,9 @@ never installs packages at run time. This has visible consequences:
   libcephfs in user space.
 - No privileged containers, host disks or LVM: OSDs default to sparse
   BlueStore files; MemStore and memory-backed BlueStore are opt-in alternatives.
-- Operation-only components of the official image, such as the dashboard,
-  cephadm, ceph-volume, NFS Ganesha and iSCSI gateways, are never used, so
-  custom images may omit them.
+- The default cluster can run without the Dashboard, cephadm, ceph-volume,
+  NFS Ganesha and iSCSI gateways. Include the Dashboard module in the MGR
+  image when using the explicit [Dashboard fixture](../../dashboard/README.md).
 
 Extra tools and services for your own tests (go-ceph programs, S3 SDKs, a
 Vault server for RGW server-side encryption, and so on) belong in their own

@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/netip"
 	"slices"
 	"strings"
@@ -57,7 +56,7 @@ func (client policyClient) run(t *testing.T, ctx context.Context, args ...string
 	if err != nil {
 		t.Fatal(err)
 	}
-	output, _ := io.ReadAll(reader)
+	output := readNativeEvidence(t, reader)
 	return code, string(output)
 }
 
@@ -317,11 +316,11 @@ func imageHasKeyTypes(t *testing.T, ctx context.Context, image string) bool {
 	if err != nil {
 		t.Fatal(err)
 	}
-	usage, _ := io.ReadAll(reader)
+	supported := keyTypesFromHelp(t, reader)
 	if err := ctr.Terminate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	return strings.Contains(string(usage), "--key-type")
+	return supported
 }
 
 // messengerEstablishedClient keeps one MON session open while the test

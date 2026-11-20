@@ -246,9 +246,9 @@ func TestFullnessLiveVerifyDoesNotPromoteUnknowns(t *testing.T) {
 		{Name: "c", Bytes: 4, SHA256: "hc", Outcome: opUnknown},
 	}
 	whole := func(op secondFaultOp) secondFaultObject {
-		return secondFaultObject{Present: true, Size: op.Bytes, SHA256: op.SHA256, DataLen: op.Bytes}
+		return secondFaultObject{Present: new(true), Size: op.Bytes, SHA256: op.SHA256, DataLen: op.Bytes}
 	}
-	read := map[string]secondFaultObject{"a": whole(ops[0]), "b": whole(ops[1]), "c": {}}
+	read := map[string]secondFaultObject{"a": whole(ops[0]), "b": whole(ops[1]), "c": {Present: new(false)}}
 	got, err := fullnessLiveVerify(ops, read)
 	if err != nil || got.AckedVerified != 1 || got.UnknownPresent != 1 || got.UnknownAbsent != 1 {
 		t.Fatalf("readback %+v: %v", got, err)

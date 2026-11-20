@@ -80,7 +80,7 @@ func (p *CephFSOriginalProcessPolicy) Capture(ctx context.Context) error {
 				Pool *int64 `json:"metadata_pool"`
 			} `json:"mdsmap"`
 		}
-		if json.Unmarshal(data, &fs) != nil || fs.MDSMap == nil || fs.MDSMap.Pool == nil || *fs.MDSMap.Pool <= 0 {
+		if json.Unmarshal(data, &fs) != nil || fs.MDSMap == nil || fs.MDSMap.Pool == nil || *fs.MDSMap.Pool < 0 {
 			return errors.New("independent native metadata pool identity unavailable")
 		}
 		p.Pools[i] = *fs.MDSMap.Pool

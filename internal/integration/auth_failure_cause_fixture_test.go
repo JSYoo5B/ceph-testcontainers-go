@@ -125,7 +125,7 @@ func TestClassifyAuthCause(t *testing.T) {
 // another entity, operation or time makes it incomplete without changing
 // its -13.
 func TestAuthBundleCause(t *testing.T) {
-	bundle := retainedBundle(t)
+	bundle := modeledRetainedBundle(t)
 	if verdict := classifyAuthBundle(bundle); verdict.Cause != authCauseUnavailable || !verdict.Complete {
 		t.Fatalf("without a record: %+v", verdict)
 	}

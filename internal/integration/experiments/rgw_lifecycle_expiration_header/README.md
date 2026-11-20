@@ -116,7 +116,7 @@ request.
 
 ## Result line
 
-The test passes whatever the gateway did and prints one
+With the prerequisites and controls established, the test prints one
 [result line](../../../../docs/contributing/testing.md#experiment-result-lines),
 `case=rgw_lifecycle_expiration_header`.
 
@@ -137,26 +137,14 @@ Standalone runs, Linux amd64 host, Docker, bridge, one run each:
 | 20.2.4 aggregate `ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all`, the default image when recorded | `REPRODUCED`: six symptoms, every `docs/` request carries the noncurrent days (30, or 90 instead of 7) | 30.9 s |
 | 21.2.0 official `quay.io/ceph/ceph:v21.2.0` | `NOT_REPRODUCED` | 30.8 s |
 
-## Reading the result
+## Earlier shared recipe observations
 
-The results below ran on the images of the shared recipe: the 20.2.4
-role images (`official-20.2.4-essential`, `official-20.2.4-client`, `official-20.2.4-rgw`), the 20.2.5 aggregate `quay.io/ceph/ceph:v20.2.5`, the 21.2.0
-role images (`official-21.2.0-essential`, `official-21.2.0-client`, `official-21.2.0-rgw`) and the 19.2.5 role images (`official-19.2.5-essential`,
-`official-19.2.5-client`, `official-19.2.5-rgw`).
-
-- **Pass:** every request followed the table. Tentacle 20.2.5 and Umbrella
-  21.2.0 pass.
-- **Observed bug:** every request for a `docs/` key, plain or explicit,
-  carries a header with the rule ID whose date is the modification time plus
-  the `NoncurrentVersionExpiration` days (30 on the first bucket, 90 instead
-  of 7 on the second); the key outside the prefix has none. Tentacle 20.2.4
-  and Squid 19.2.5 do this.
-- **Not reproduced:** a pass on a build claimed to be affected.
-- **Unavailable prerequisite:** the cluster or the gateway does not start, or
-  the lifecycle configuration is refused.
-- **Condition not established:** versioning, a version ID, the read-back
-  rules, or a version's bytes do not match. The test fails with
-  `condition not established`.
+The shared recipe ran on the 19.2.5, 20.2.4 and 21.2.0 role sets
+(`essential`, `client`, `rgw`) and the 20.2.5 official aggregate. On 19.2.5
+and 20.2.4 every request for a `docs/` key returned an expiration date
+computed with the noncurrent rule's days, even on an explicit-version
+request. The key outside the prefix had no header. The 20.2.5 and 21.2.0
+runs followed the request table.
 
 ## Cleanup and limits
 

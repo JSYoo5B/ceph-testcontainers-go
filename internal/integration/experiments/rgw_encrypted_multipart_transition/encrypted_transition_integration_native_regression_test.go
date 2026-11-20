@@ -97,14 +97,18 @@ func (c *etCase) get(t *testing.T, kind, path string, headers http.Header, want 
 	return observe(kind, want, response.StatusCode, response.Header.Get("Content-Range"), body, err)
 }
 
-// inexact sends a full GET and a GET across the part boundary of the
-// object, logs each answer and returns those that are not the expected one.
-func (c *etCase) inexact(t *testing.T, stage, path string, headers http.Header) []string {
+type etReading struct {
+	got  etRead
+	want etWant
+}
+
+// readObject observes a full GET and a ranged GET across the part boundary.
+func (c *etCase) readObject(t *testing.T, stage, path string, headers http.Header) []etReading {
 	t.Helper()
 	first, last := etFirstPart-etBeforeBoundary, etFirstPart+etAfterBoundary
 	ranged := headers.Clone()
 	ranged.Set("Range", fmt.Sprintf("bytes=%d-%d", first, last))
-	var bad []string
+	var readings []etReading
 	for _, read := range []struct {
 		kind    string
 		headers http.Header
@@ -112,18 +116,18 @@ func (c *etCase) inexact(t *testing.T, stage, path string, headers http.Header) 
 	}{{"full", headers, fullWant(c.whole)}, {"range", ranged, rangeWant(c.whole, first, last)}} {
 		got := c.get(t, read.kind, path, read.headers, read.want)
 		t.Logf("RGW_ET %s %s %s exact=%t", stage, path, got, got.exact(read.want))
-		if !got.exact(read.want) {
-			bad = append(bad, fmt.Sprintf("%s %s", path, got))
-		}
+		readings = append(readings, etReading{got: got, want: read.want})
 	}
-	return bad
+	return readings
 }
 
-// requireExact fails the test unless every read of the object is exact.
+// requireExact fails the test unless every control read is exact.
 func (c *etCase) requireExact(t *testing.T, stage, path string, headers http.Header) {
 	t.Helper()
-	if bad := c.inexact(t, stage, path, headers); len(bad) > 0 {
-		t.Fatalf("control failed %s: %s", stage, strings.Join(bad, "; "))
+	for _, read := range c.readObject(t, stage, path, headers) {
+		if !read.got.exact(read.want) {
+			t.Fatalf("control failed %s: %s %s", stage, path, read.got)
+		}
 	}
 }
 
@@ -296,7 +300,16 @@ func TestRGWEncryptedMultipartTransition(t *testing.T) {
 
 	// Then: the transitioned encrypted object must still return its
 	// plaintext, in full and across the part boundary.
-	symptoms := c.inexact(t, "after", etSubject, sse)
+	var symptoms []string
+	for _, read := range c.readObject(t, "after", etSubject, sse) {
+		mismatch, err := judgeTransitionRead(read.got, read.want)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if mismatch {
+			symptoms = append(symptoms, fmt.Sprintf("%s %s", etSubject, read.got))
+		}
+	}
 	result := "NOT_REPRODUCED"
 	if len(symptoms) > 0 {
 		result = "REPRODUCED"

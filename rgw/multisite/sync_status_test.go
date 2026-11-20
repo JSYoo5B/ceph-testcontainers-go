@@ -11,6 +11,32 @@ import (
 )
 
 const rgwReadyMetadata = `{"sync_status":{"info":{"status":"sync","num_shards":2,"period":"period-original","realm_epoch":1},"markers":[{"key":0,"val":{"state":1}},{"key":1,"val":{"state":1}}]},"full_sync":{"total":0,"complete":0}}`
+
+func TestMetadataLogComparisonRequiresEveryShard(t *testing.T) {
+	empty, current := "", "marker-2"
+	local := map[int]*string{0: &empty, 1: &current}
+	for _, tt := range []struct {
+		name, remote string
+		caughtUp     bool
+		bad          bool
+	}{
+		{"current, including empty shard", `{"num_objects":2} {"marker":""} {"marker":"marker-2"}`, true, false},
+		{"behind on populated shard", `{"num_objects":2} {"marker":""} {"marker":"marker-3"}`, false, false},
+		{"behind on previously empty shard", `{"num_objects":2} {"marker":"marker-1"} {"marker":"marker-2"}`, false, false},
+		{"unexpected inventory", `{"num_objects":1} {"marker":""}`, false, true},
+		{"missing shard", `{"num_objects":2} {"marker":""}`, false, true},
+		{"null marker", `{"num_objects":2} {"marker":null} {"marker":"marker-2"}`, false, true},
+		{"extra shard", `{"num_objects":2} {"marker":""} {"marker":"marker-2"} {"marker":""}`, false, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := compareMetadataLog([]byte(tt.remote), local)
+			if got != tt.caughtUp || (err != nil) != tt.bad {
+				t.Fatalf("caught up = %t, error = %v", got, err)
+			}
+		})
+	}
+}
+
 const rgwReadyText = `          realm realm (fixture)
       zonegroup group-id (group)
            zone dest-id (destination)
@@ -74,7 +100,7 @@ func TestRGWSyncStatusRejectsIncompleteAndMisleadingNativeReadiness(t *testing.T
 		}
 	}
 	for _, metadata := range []string{strings.Replace(rgwReadyMetadata, `"key":1`, `"key":0`, 1), strings.Replace(rgwReadyMetadata, `"key":1`, `"key":2`, 1), "{}", "not json"} {
-		if _, err := decodeSyncMetadata([]byte(metadata)); err == nil {
+		if _, _, err := decodeSyncMetadata([]byte(metadata)); err == nil {
 			t.Fatal("invalid native metadata shard state was accepted")
 		}
 	}
@@ -144,5 +170,32 @@ func TestRGWSyncReadyStdoutDoesNotHideFailedRemoteComparisonOnStderr(t *testing.
 	defer cancel()
 	if _, err := f.WaitSyncReady(ctx, "destination", "source"); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal("stderr comparison error satisfied readiness")
+	}
+}
+
+func TestRGWCombinedStatusScopesDataComparisonFailure(t *testing.T) {
+	for _, test := range []struct {
+		name, metadata, text, stderr string
+		sources                      []string
+		ready                        bool
+	}{
+		{name: "healthy", metadata: rgwReadyMetadata, text: rgwReadyText, ready: true},
+		{name: "unavailable data source", metadata: rgwReadyMetadata, text: strings.Replace(rgwReadyText, "data is caught up with source", "failed to fetch source sync status: Connection refused", 1), ready: true},
+		{name: "selected unavailable source", metadata: rgwReadyMetadata, text: strings.Replace(rgwReadyText, "data is caught up with source", "failed to fetch source sync status: Connection refused", 1), sources: []string{"source"}},
+		{name: "stale metadata period", metadata: strings.Replace(rgwReadyMetadata, "period-original", "old-period", 1), text: rgwReadyText},
+		{name: "metadata behind master", metadata: rgwReadyMetadata, text: strings.Replace(rgwReadyText, "metadata is caught up with master", "metadata is behind on 1 shards", 1)},
+		{name: "ambiguous comparison stderr", metadata: rgwReadyMetadata, text: rgwReadyText, stderr: "ERROR: could not find remote sync shard status for shard_id=17\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f, cli, _, _ := newRGWSyncTestFixture()
+			cli.metadataOutput, cli.humanOutput, cli.stderrOutput = test.metadata, test.text, test.stderr
+			status, err := f.SyncStatus(t.Context(), "destination")
+			if (err != nil) != (test.stderr != "") || syncStatusReady(status, test.sources) != test.ready {
+				t.Fatalf("combined status gave the wrong readiness: %+v, %v", status, err)
+			}
+			if test.name == "unavailable data source" && (len(status.DataSources) != 1 || status.DataSources[0].CaughtUp) {
+				t.Fatalf("data failure became readiness: %+v", status.DataSources)
+			}
+		})
 	}
 }

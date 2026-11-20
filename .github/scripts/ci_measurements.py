@@ -77,7 +77,7 @@ PHASES = (
     ("docker", ("Docker baseline",)),
     ("images", ("Resolve native published Ceph roles",)),
     ("test_images", ("Prepare Ryuk and the test images",)),
-    ("native", ("Native assertions",)),
+    ("native", ("Native assertions", "Retry the failed tests once")),
     ("cleanup", ("Verify owned Docker resource cleanup",)),
     ("plan_modules", ("Download every Go module",)),
     ("plan_build_cache", ("Compile one profile of each package into the build cache",)),

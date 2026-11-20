@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/moby/moby/api/types/container"
 )
 
 func testMaterial(t *testing.T) (TLSConfig, []byte) {
@@ -126,7 +127,7 @@ func TestFormattingHidesSecrets(t *testing.T) {
 const summaryBody = `{"health_status": "HEALTH_WARN", "mgr_id": "a", "mgr_host": "https://172.18.0.3:8443/", "have_mon_connection": true}`
 
 func readyReport() probeReport {
-	return probeReport{Rejected: probeResult{Status: 400, Body: `{"detail": "Invalid credentials", "code": "invalid_credentials", "component": "auth"}`},
+	return probeReport{Rejected: probeResult{Status: 401, Body: `{"detail": "Invalid credentials", "code": "invalid_credentials", "component": "auth"}`},
 		Login: probeResult{Status: 201}, Token: "token", Results: []probeResult{{Path: summaryPath, Status: 200, Body: summaryBody}}}
 }
 
@@ -140,7 +141,7 @@ func TestCheckReadiness(t *testing.T) {
 			r.Rejected = probeResult{Error: "ConnectionRefusedError: [Errno 111] Connection refused"}
 		},
 		"standby redirect": func(r *probeReport) { r.Rejected = probeResult{Status: 303, Location: "https://172.18.0.5:8443/"} },
-		"wrong password accepted": func(r *probeReport) {
+		"unauthenticated request accepted": func(r *probeReport) {
 			r.Rejected = probeResult{Status: 201}
 		},
 		"login refused":   func(r *probeReport) { r.Login, r.Token = probeResult{Status: 400}, "" },
@@ -160,7 +161,7 @@ func TestCheckReadiness(t *testing.T) {
 }
 
 func TestDecodeProbeReport(t *testing.T) {
-	report, err := decodeProbeReport([]byte(`{"results": [{"status": 200, "location": "", "body": "[]", "path": "/api/rgw/user"}], "rejected": {"status": 400}, "login": {"status": 201}, "token": "t"}`))
+	report, err := decodeProbeReport([]byte(`{"finished": true, "login_pending": false, "results": [{"status": 200, "location": "", "body": "[]", "path": "/api/rgw/user"}], "rejected": {"status": 401}, "login": {"status": 201}, "token": "t"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,6 +194,42 @@ func TestBackendError(t *testing.T) {
 	}
 	if err := backendError(probeResult{Path: rgwUserPath, Status: 500, Body: `{"detail": "something else"}`}); err == nil || errors.Is(err, ErrGatewayRefused) || errors.Is(err, ErrGatewayUnreachable) {
 		t.Fatalf("unclassified failure: %v", err)
+	}
+}
+
+// An HTTP failure whose message names no cause is attributed to the gateway
+// only by the state of its container.
+func TestUnattributedBackendFailureFollowsTheGatewayContainer(t *testing.T) {
+	generic := probeResult{Path: rgwUserPath, Status: 500, Body: `{"detail": "The server encountered an unexpected condition which prevented it from fulfilling the request."}`}
+	err := backendError(generic)
+	if !unattributed(generic, err) {
+		t.Fatalf("generic 500 attributed: %v", err)
+	}
+	for _, attributed := range []probeResult{
+		{Path: rgwUserPath, Status: 200, Body: `["tc-owner"]`},
+		{Path: rgwDaemonPath, Error: "timeout"},
+		{Path: rgwUserPath, Error: "ConnectionRefusedError: [Errno 111] Connection refused"},
+		{Path: rgwUserPath, Status: 404, Body: `{"detail": "RGW REST API failed request with status code 403\n(b'{\"Code\":\"UserSuspended\"}')"}`},
+		{Path: rgwDaemonPath, Status: 404, Body: `{"detail": "HTTPConnectionPool(host='172.18.0.7', port=7480): Max retries exceeded with url"}`},
+	} {
+		if unattributed(attributed, backendError(attributed)) {
+			t.Errorf("%+v is treated as unattributed", attributed)
+		}
+	}
+	for name, state := range map[string]*container.State{
+		"absent":     nil,
+		"stopped":    {Running: false, Status: "exited"},
+		"paused":     {Running: true, Paused: true},
+		"restarting": {Running: true, Restarting: true},
+	} {
+		got := gatewayNotServing(err, state)
+		if !errors.Is(got, ErrGatewayUnreachable) || !strings.Contains(got.Error(), "HTTP 500") {
+			t.Errorf("%s gateway: %v", name, got)
+		}
+	}
+	running := gatewayNotServing(err, &container.State{Running: true, Status: "running"})
+	if running != err || errors.Is(running, ErrGatewayUnreachable) || errors.Is(running, ErrGatewayRefused) {
+		t.Fatalf("running gateway: %v", running)
 	}
 }
 

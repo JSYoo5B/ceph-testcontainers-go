@@ -113,7 +113,7 @@ These commands do not give usable JSON:
 | --- | --- | --- |
 | `rados listwatchers` | Always text: `watcher=IP:port/nonce client.<id> cookie=<n>` | `Observer.ObjectWatchers` |
 | `radosgw-admin bucket sync status` on Squid | Text; `--format json` is ignored | `multisite.SyncGroup.BucketSyncStatus`, `WaitBucketSyncReady` |
-| `radosgw-admin sync status` | The comparison with remote logs appears only in the text output | `multisite.Fixture.SyncStatus`, `WaitSyncReady` |
+| `radosgw-admin sync status` | Combined metadata and data comparisons use the text output. A metadata-only wait can read the master metadata log directly. | `multisite.Fixture.SyncStatus`, `WaitSyncReady` |
 | `rbd mirror pool info` on Squid | JSON without `mirror_uuid` and `remote_namespace` | `rbdmirror.Container.PolicyStatus` |
 
 ## Bounded commands with confirmed cleanup
@@ -487,6 +487,12 @@ owned daemon whatever its image, without the Messenger or Cephx:
 status, err := osd.AdminSocket(ctx, "status") // osd is the *ceph.OSDContainer of osd.0
 ```
 
+The handle keeps topology admission until the admin command returns.
+A command whose termination cannot be confirmed remains registered against
+the daemon instance. Its error contains `*ceph.NativeCommandUnstoppedError`;
+call `Stop` with a fresh context to retry cleanup. Removal, MON replacement
+and cluster termination also settle registered commands before proceeding.
+
 `ceph tell` from the control container works for MON, MGR, OSD and MDS
 daemons, but travels over the Messenger like any client request:
 
@@ -584,7 +590,9 @@ Commands that RBD and RBD mirroring tests commonly need:
 rbd create --size 64M --image-feature layering,exclusive-lock volumes/disk
 rbd snap create volumes/disk@before
 rbd status volumes/disk --format json          # watchers
-rbd lock ls volumes/disk --format json
+rbd lock ls volumes/disk --format json        # locker identities and IDs
+rbd info volumes/disk --format json           # format and image ID
+rados -p volumes lock info "rbd_header.${image_id}" rbd_lock --format json  # includes type and tag
 rbd namespace list --pool volumes --format json
 rbd trash list --pool volumes --namespace tenant-a --format json
 
@@ -671,6 +679,9 @@ stats, err := gateways[0].Admin(ctx, "bucket", "stats", "--bucket", "photos")
   uses them. A role created with `CreateRole` may be edited natively, for
   example to revoke a permission, but `Role.Remove` refuses it until the
   role is back as the fixture created it.
+- Gateway-local administration requires `python3` with Linux process group
+  support in the gateway image. Missing support is reported as
+  `ceph.ErrImageCapability` when the command is requested.
 - The call is bounded by `ctx` alone, not by the cluster's startup timeout.
   Give a slow maintenance command, such as `user stats --sync-stats` or
   `reshard process`, a deadline that fits it. When the deadline is near, the

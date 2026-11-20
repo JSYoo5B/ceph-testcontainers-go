@@ -36,7 +36,7 @@ func heldConfig(c *ceph.Container) map[string]any {
 
 // configFixture is a fake control container that answers config dump, set and
 // rm like the monitors' configuration database. failAfter names the command
-// ("set", "set --force" or "rm") whose reply is lost after it was applied.
+// ("set", "set --force" or "rm") that reports a terminal EINVAL reply after it was applied.
 type configFixture struct {
 	testcontainers.Container
 	entries                    []ceph.ConfigEntry
@@ -82,7 +82,7 @@ func (ctr *configFixture) Exec(_ context.Context, args []string, _ ...tcexec.Pro
 		}
 		if command == ctr.failAfter {
 			code = 1
-			output = "PRIVATE-ERROR injected uncertain reply"
+			output = "Error EINVAL: PRIVATE-ERROR injected native failure"
 		}
 	} else {
 		return 0, nil, fmt.Errorf("unexpected command %v", args)

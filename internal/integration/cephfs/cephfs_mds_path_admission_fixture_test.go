@@ -84,7 +84,11 @@ func TestCephFSMDSPathAdmitsOnlyThePendingMkdir(t *testing.T) {
 		"operation case differs": `{"requests":[{"tid":4,"op":"MKDIR"}]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			if request, err := admitPendingMkdir(pending(body)); err == nil {
+			requests, parseErr := parseClientMDSRequests([]byte(body))
+			if parseErr != nil {
+				return
+			}
+			if request, err := admitPendingMkdir(requests); err == nil {
 				t.Fatalf("admitted %+v", request)
 			}
 		})

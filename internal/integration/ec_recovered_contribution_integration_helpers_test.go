@@ -233,7 +233,7 @@ func testECRecoveredContribution(t *testing.T) {
 	degraded := ecObserve(t, ctx, cluster, name, "degraded")
 	deg, degClone := ecClassify(t, degraded, overwritten.Writer, overwritten.Snap, true)
 	for _, c := range []ecClassification{deg, degClone} {
-		ecExpect(t, "degraded", c, ecSufficient, ecUnobserved, []int{restoredIndex})
+		ecExpect(t, "degraded", c, ecSufficient, ecAbsent, []int{restoredIndex})
 	}
 	recoveredBefore := degraded.After.Info.Stats.StatSum.Recovered
 

@@ -706,14 +706,30 @@ func TestMonStoreEndpointValidation(t *testing.T) {
 }
 
 func TestMonStoreHoldRefusesATypedNilAndAFailingHold(t *testing.T) {
-	r, _, g := monStoreRunningFixture(t)
-	g.holdErr = errors.New("no allocator")
-	if _, err := r.ReplaceGeneration(t.Context(), g, "new"); err == nil || len(g.launches) != 1 {
-		t.Fatalf("a failing hold: %v", err)
-	}
-	g.holdErr, g.nilHold = nil, true
-	if _, err := r.ReplaceGeneration(t.Context(), g, "new"); err == nil || r.hold != nil {
-		t.Fatalf("a typed nil hold was accepted: %v", err)
+	for _, typedNil := range []bool{false, true} {
+		t.Run(fmt.Sprintf("typed-nil=%t", typedNil), func(t *testing.T) {
+			r, _, g := monStoreRunningFixture(t)
+			injected := errors.New("no allocator")
+			g.nilHold = typedNil
+			if !typedNil {
+				g.holdErr = injected
+			}
+			before := len(g.events)
+			id, err := r.ReplaceGeneration(t.Context(), g, "new")
+			if typedNil {
+				if err == nil || !strings.Contains(err.Error(), "the container side returned no hold") {
+					t.Fatalf("typed-nil refusal: %v", err)
+				}
+			} else if !errors.Is(err, injected) {
+				t.Fatalf("hold error was lost: %v", err)
+			}
+			if id != "" || g.holdCalls != 1 || len(g.launches) != 1 || r.hold != nil || r.Attachment != nil {
+				t.Fatalf("hold refusal dispatched a generation: id=%q calls=%d launches=%d hold=%v attachment=%+v", id, g.holdCalls, len(g.launches), r.hold, r.Attachment)
+			}
+			if want := []string{"remove ctr-1", "hold [3300 6789]"}; !slices.Equal(g.events[before:], want) {
+				t.Fatalf("hold refusal events %v, want %v", g.events[before:], want)
+			}
+		})
 	}
 }
 

@@ -8,6 +8,8 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	tcexec "github.com/testcontainers/testcontainers-go/exec"
+	"io"
 	"net"
 	"net/http"
 	"testing"
@@ -16,6 +18,7 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/account"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -36,6 +39,30 @@ func testRGWTLSReplacement(t *testing.T, opts ...testcontainers.ContainerCustomi
 	if err != nil {
 		t.Fatal(err)
 	}
+	plain, err := rgw.Start(ctx, cluster, rgw.Config{Name: "plain-sibling", SkipUserCreation: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkAccounts := func(stage string) {
+		t.Helper()
+		for _, g := range []*rgw.Gateway{plain, gateway} {
+			name := g.GatewayName + "-" + stage
+			createCtx, stop := context.WithTimeout(ctx, 40*time.Second)
+			a, err := account.Create(createCtx, g, account.Config{Name: name})
+			stop()
+			if err != nil {
+				t.Fatalf("create account %s: %v", name, err)
+			}
+			info, err := a.Info(ctx)
+			if err != nil || info.Name != name || info.ID != a.ID() {
+				t.Fatalf("account %s readback ID=%q name=%q error=%v", name, info.ID, info.Name, err)
+			}
+			if err := a.Remove(ctx); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	checkAccounts("before")
 	user, err := gateway.CreateUser(ctx, rgw.UserConfig{ID: "tc-tls-replace"})
 	if err != nil {
 		t.Fatal(err)
@@ -109,6 +136,41 @@ func testRGWTLSReplacement(t *testing.T, opts ...testcontainers.ContainerCustomi
 	successor := harness.NewRGWTestAuthority(t)
 	moved := successor.Issue(t)
 	endpoint = replace(moved, authority.Roots, successor.Roots)
+	// A completed filesystem mutation with a lost reply must still bind a
+	// later ordinary Start to the certificate actually installed.
+	renamed := successor.Issue(t)
+	actual := gateway.Container
+	lost := &lostTLSReply{Container: actual, rename: true}
+	gateway.Container = lost
+	if err := gateway.ReplaceTLS(ctx, *renamed); err == nil {
+		t.Fatal("lost rename reply was hidden")
+	}
+	graceLost := 3 * time.Second
+	if err := gateway.Stop(ctx, &graceLost); err != nil {
+		t.Fatal(err)
+	}
+	if err := gateway.Start(ctx); err != nil {
+		t.Fatalf("ordinary start after lost installation reply: %v", err)
+	}
+	endpoint = secureEndpoint()
+	if !bytes.Equal(rgwServedLeaf(t, endpoint, successor.Roots), rgwLeaf(t, renamed)) {
+		t.Fatal("lost installation used a stale certificate expectation")
+	}
+	stopped := successor.Issue(t)
+	lost.stop = true
+	if err := gateway.ReplaceTLS(ctx, *stopped); err == nil {
+		t.Fatal("lost Stop reply was hidden")
+	}
+	if err := gateway.ReplaceTLS(ctx, *stopped); err != nil {
+		t.Fatalf("resume completed Stop: %v", err)
+	}
+	gateway.Container = actual
+	moved = stopped
+	endpoint = secureEndpoint()
+	if !bytes.Equal(rgwServedLeaf(t, endpoint, successor.Roots), rgwLeaf(t, moved)) {
+		t.Fatal("Stop retry served the wrong certificate")
+	}
+	checkAccounts("after")
 	var unknown x509.UnknownAuthorityError
 	if _, err := rgwDialTLS(t, endpoint, authority.Roots); !errors.As(err, &unknown) {
 		t.Fatalf("a client that trusts only the previous CA was not refused for its CA: %v", err)
@@ -130,4 +192,33 @@ func testRGWTLSReplacement(t *testing.T, opts ...testcontainers.ContainerCustomi
 		t.Fatal("the restarted gateway serves other bytes")
 	}
 	t.Log("same-CA renewal and CA change through ReplaceTLS: fresh handshakes present each new leaf at the endpoint read again, earlier connections closed, exact bytes kept, previous CA refused, later restart ready with the replaced certificate")
+}
+
+// lostTLSReply loses the acknowledgement only after the real mutation
+// completes. The retained container runs the production install script.
+type lostTLSReply struct {
+	testcontainers.Container
+	rename, stop bool
+}
+
+func (c *lostTLSReply) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	code, out, err := c.Container.Exec(ctx, args, opts...)
+	if c.rename && err == nil && code == 0 && len(args) > 3 && args[3] == "rgw-tls-install" {
+		c.rename = false
+		if _, err := io.Copy(io.Discard, out); err != nil {
+			return code, nil, err
+		}
+		return code, nil, errors.New("injected lost completed TLS rename reply")
+	}
+	return code, out, err
+}
+func (c *lostTLSReply) Stop(ctx context.Context, grace *time.Duration) error {
+	if err := c.Container.Stop(ctx, grace); err != nil {
+		return err
+	}
+	if c.stop {
+		c.stop = false
+		return errors.New("injected lost completed TLS stop reply")
+	}
+	return nil
 }

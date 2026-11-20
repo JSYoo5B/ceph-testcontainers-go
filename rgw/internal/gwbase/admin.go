@@ -84,7 +84,7 @@ func RedactAdminFailure(err error) error {
 // standard error. With such a report it also describes the shape of its
 // standard output, but never its content, which tells a command that crashed
 // after it wrote its result from one that crashed before.
-func adminRunFailure(report supervised.ShellReport) error {
+func adminRunFailure(report supervised.Report) error {
 	err := servicehook.NativeFailure("radosgw-admin", report.ExitCode, report.Stdout, report.Stderr)
 	var failure *ceph.NativeFailure
 	if !errors.As(err, &failure) {
@@ -318,7 +318,7 @@ func (c *Core) supervisedPrefix(ctx context.Context, target testcontainers.Conta
 		return nil, false, servicehook.Invalid(errors.New("RGW gateway is no longer owned by this cluster"))
 	}
 	limit := adminLimit(ctx)
-	report, err := servicehook.RunOwnedShell(ctx, c.cluster, target, "radosgw-admin", limit, maxBytes, argv...)
+	report, err := servicehook.RunOwnedRoleCommand(ctx, c.cluster, target, "radosgw-admin", limit, maxBytes, argv...)
 	var unstopped *ceph.NativeCommandUnstoppedError
 	switch {
 	case errors.As(err, &unstopped):
@@ -326,16 +326,19 @@ func (c *Core) supervisedPrefix(ctx context.Context, target testcontainers.Conta
 		return nil, false, err
 	case err != nil && ctx.Err() != nil:
 		return nil, false, fmt.Errorf("radosgw-admin: the call ended before the command, which was stopped: %w", ctx.Err())
+	case errors.Is(err, ceph.ErrImageCapability):
+		return nil, false, err
 	case err != nil:
+		var exit *supervised.ExitError
+		if errors.As(err, &exit) && exit.Code == supervised.LaunchFailedExit {
+			return nil, false, &ceph.OperationError{Kind: ceph.ErrImageCapability, Op: "radosgw-admin", Capability: "radosgw-admin",
+				Err: errors.New("the gateway image cannot run radosgw-admin")}
+		}
 		// The command may have run: its outcome is unknown.
 		return nil, false, servicehook.ClassifyExec(ctx, err)
-	case report.Stopped:
+	case report.TimedOut:
 		return nil, false, &ceph.OperationError{Kind: ceph.ErrNativeFailure, Op: "radosgw-admin",
 			Err: fmt.Errorf("radosgw-admin still ran after %ds and was stopped", limit)}
-	case report.ExitCode == 127:
-		// The gateway's sh found no radosgw-admin, which never exits 127 itself.
-		return nil, false, &ceph.OperationError{Kind: ceph.ErrImageCapability, Op: "radosgw-admin", Capability: "radosgw-admin",
-			Err: errors.New("the gateway image has no radosgw-admin")}
 	case report.ExitCode != 0:
 		return nil, false, adminRunFailure(report)
 	}

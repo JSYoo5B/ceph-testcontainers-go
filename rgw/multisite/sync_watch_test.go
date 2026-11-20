@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -40,8 +41,8 @@ func underTopology(f *Fixture, change func()) {
 
 func nextPeriod(cli *rgwSyncCLI) {
 	cli.current = syncJSONClone(cli.current)
-	cli.current["id"], cli.current["realm_epoch"] = "period-next", json.Number("2")
-	cli.current["period_map"].(map[string]any)["id"] = "period-next"
+	epoch, _ := cli.current["epoch"].(json.Number).Int64()
+	cli.current["epoch"] = json.Number(fmt.Sprint(epoch + 1))
 }
 
 func TestRGWWatchSyncReportsLagGapAndRecovery(t *testing.T) {
@@ -528,5 +529,33 @@ func TestRGWWatchBucketPolicyStartsBeforeTheDestinationImportsTheBucket(t *testi
 	}
 	if err := w.Stop(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSyncWatchPinsIncludePeriodEpochAndRealmTransitions(t *testing.T) {
+	baseline := SyncStatus{RealmID: "realm", PeriodID: "period", RealmEpoch: 1, periodEpoch: 7, Zone: "destination", ZoneID: "dest", ZonegroupID: "group"}
+	for _, change := range []func(*SyncStatus){
+		func(s *SyncStatus) { s.periodEpoch++ },
+		func(s *SyncStatus) { s.RealmEpoch++; s.PeriodID = "new-period"; s.periodEpoch = 1 },
+	} {
+		current := baseline
+		change(&current)
+		if err := syncWatchPinned(baseline, current); !errors.Is(err, errSyncPeriodChanged) {
+			t.Fatalf("changed committed version accepted: %+v, %v", current, err)
+		}
+	}
+	if err := syncWatchPinned(baseline, baseline); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCommittedPeriodEpochRequiresPositiveNativeEvidence(t *testing.T) {
+	for _, value := range []any{nil, "", "0", "-1", "1.5", "invalid"} {
+		if _, err := syncCommittedPeriodEpoch(map[string]any{"epoch": value}); err == nil {
+			t.Fatalf("unusable epoch %v accepted", value)
+		}
+	}
+	if epoch, err := syncCommittedPeriodEpoch(map[string]any{"epoch": json.Number("7")}); epoch != 7 || err != nil {
+		t.Fatalf("valid epoch: %d %v", epoch, err)
 	}
 }

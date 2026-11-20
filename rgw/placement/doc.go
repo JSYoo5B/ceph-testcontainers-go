@@ -7,7 +7,8 @@
 // actual native zone and zonegroup. An operation on an owned placement is a
 // method of its handle, which records the native IDs, pool IDs and zone
 // documents it created and refuses a replaced pool or a changed zone. Apply
-// and Reload restart the gateway they are given. These functions act on a
+// restarts a standalone gateway and publishes a period in a realm. Reload
+// restarts the gateway to load already published configuration. They act on a
 // gateway that rgw.Run, rgw.Start or rgw.WithGateways started; they start no
 // container.
 package placement

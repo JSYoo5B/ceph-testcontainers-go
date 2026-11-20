@@ -37,9 +37,13 @@ func jsonFileFixtureID(role string, n int) string {
 }
 
 func jsonFileFixtureFinding(id, expectation string) finalize.VerificationFinding {
+	stamp := jsonFileFixtureBase.Add(2 * time.Second)
+	if strings.HasPrefix(id, "jfr-tail-") {
+		stamp = jsonFileFixtureBase.Add(8 * time.Second)
+	}
 	return finalize.VerificationFinding{
-		Source: "mon.a", ContainerID: "container-mon-a", Event: string(finalize.LogClusterWarning), Time: jsonFileFixtureBase.Add(2 * time.Second).Format(time.RFC3339Nano),
-		Text:        "cluster 2026-10-26T10:00:02.000000+0000 mon.a (mon.0) 7 : cluster [WRN] " + id,
+		Source: "mon.a", ContainerID: "container-mon-a", Event: string(finalize.LogClusterWarning), Time: stamp.Format(time.RFC3339Nano),
+		Text:        "cluster " + stamp.Format("2006-01-02T15:04:05.000000-0700") + " mon.a (mon.0) 7 : cluster [WRN] " + id,
 		Expectation: expectation,
 	}
 }
@@ -254,6 +258,26 @@ func TestJSONFileReceiptRefusesMissingOrBrokenEvidence(t *testing.T) {
 		{"early finding without expectation", func(r *jsonFileReceipt) { r.Report.Logs.Findings[0].Expectation = "" }, "finding of " + early},
 		{"early finding truncated", func(r *jsonFileReceipt) { r.Report.Logs.Findings[0].Truncated = true }, "finding of " + early},
 		{"early finding without time", func(r *jsonFileReceipt) { r.Report.Logs.Findings[0].Time = "" }, "finding of " + early},
+		{"finding malformed nonempty timestamp", func(r *jsonFileReceipt) { r.Report.Logs.Findings[0].Time = "not-a-timestamp" }, "invalid engine timestamp"},
+		{"finding timestamp without timezone", func(r *jsonFileReceipt) { r.Report.Logs.Findings[0].Time = "2026-10-26T10:00:02" }, "invalid engine timestamp"},
+		{"finding before window", func(r *jsonFileReceipt) {
+			r.Report.Logs.Findings[0].Time = r.Report.Window.StartedAt.Add(-time.Nanosecond).Format(time.RFC3339Nano)
+		}, "finding engine timestamp"},
+		{"finding after window", func(r *jsonFileReceipt) {
+			r.Report.Logs.Findings[1].Time = r.Report.Window.EndedAt.Add(time.Nanosecond).Format(time.RFC3339Nano)
+		}, "finding engine timestamp"},
+		{"unrelated truncated finding", func(r *jsonFileReceipt) {
+			finding := jsonFileFixtureFinding("ordinary-warning", "")
+			finding.Truncated = true
+			r.Report.Logs.Findings = append(r.Report.Logs.Findings, finding)
+			r.Report.Logs.Unexpected++
+		}, "retained log finding is truncated"},
+		{"unrelated finding malformed timestamp", func(r *jsonFileReceipt) {
+			finding := jsonFileFixtureFinding("ordinary-warning", "")
+			finding.Time = "unavailable"
+			r.Report.Logs.Findings = append(r.Report.Logs.Findings, finding)
+			r.Report.Logs.Unexpected++
+		}, "invalid engine timestamp"},
 		{"early expectation unsatisfied", func(r *jsonFileReceipt) { r.Report.Logs.Expectations[0].Satisfied = false }, jsonFileEarlyName},
 		{"early expectation missing", func(r *jsonFileReceipt) { r.Report.Logs.Expectations = r.Report.Logs.Expectations[1:] }, "no expectation " + jsonFileEarlyName},
 		{"tail expectation matched differently", func(r *jsonFileReceipt) { r.Report.Logs.Expectations[1].Matched = 2 }, jsonFileTailName},
@@ -297,6 +321,7 @@ func TestJSONFileReceiptRefusesMissingOrBrokenEvidence(t *testing.T) {
 		{"no raw lines", func(r *jsonFileReceipt) { r.RawLines = 0 }, "independent read"},
 		{"no tail requested", func(r *jsonFileReceipt) { r.Tail.Requested = 0 }, "no diagnostic tail was requested"},
 		{"tail failed", func(r *jsonFileReceipt) { r.Tail.Error = "container was not created" }, "diagnostic tail failed"},
+		{"tail truncated", func(r *jsonFileReceipt) { r.Tail.Truncated = true }, "diagnostic tail was truncated"},
 		{"tail empty", func(r *jsonFileReceipt) { r.Tail.Lines = 0 }, "holds 0 lines"},
 		{"tail longer than requested", func(r *jsonFileReceipt) { r.Tail.Lines = 25 }, "holds 25 lines"},
 		{"tail holds the early sentinel", func(r *jsonFileReceipt) { r.Tail.Holds[early] = true }, "noise did not overflow"},
@@ -470,5 +495,29 @@ func TestJSONFileReceiptRefusesTheFirstNativeShape(t *testing.T) {
 	err := judgeJSONFileReceipt(r)
 	if err == nil || !strings.Contains(err.Error(), `disposition is "gapped"`) || !strings.Contains(err.Error(), "reports those as a gap") {
 		t.Fatalf("the judge did not refuse the first native shape: %v", err)
+	}
+}
+
+func TestJSONFileReceiptFindingTimeUsesTheEngineWindow(t *testing.T) {
+	for _, name := range []string{"native-shaped", "inclusive-start", "inclusive-end", "daemon-clock-differs", "same-instant-offset", "unrelated-complete"} {
+		t.Run(name, func(t *testing.T) {
+			r := jsonFileFixtureReceipt()
+			switch name {
+			case "inclusive-start":
+				r.Report.Logs.Findings[0].Time = r.Report.Window.StartedAt.Format(time.RFC3339Nano)
+			case "inclusive-end":
+				r.Report.Logs.Findings[1].Time = r.Report.Window.EndedAt.Format(time.RFC3339Nano)
+			case "daemon-clock-differs":
+				r.Report.Logs.Findings[0].Text = strings.Replace(r.Report.Logs.Findings[0].Text, "2026-10-26T10:00:02", "2026-10-25T10:00:02", 1)
+			case "same-instant-offset":
+				r.Report.Logs.Findings[0].Time = "2026-10-26T11:00:02+01:00"
+			case "unrelated-complete":
+				r.Report.Logs.Findings = append(r.Report.Logs.Findings, jsonFileFixtureFinding("ordinary-warning", ""))
+				r.Report.Logs.Unexpected++
+			}
+			if err := judgeJSONFileReceipt(r); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

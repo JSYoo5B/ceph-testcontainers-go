@@ -93,19 +93,8 @@ func (c *lockCase) must(zone, method, path string, payload []byte, headers http.
 
 // read is one GET ?object-lock of a bucket in a zone.
 func (c *lockCase) read(ctx context.Context, zone, bucket string) lockRead {
-	read := lockRead{Zone: zone, Bucket: bucket}
 	status, body, err := c.do(ctx, zone, http.MethodGet, "/"+bucket+"?object-lock", nil, nil)
-	if err != nil {
-		read.Err = err.Error()
-		return read
-	}
-	read.Status, read.Code, read.Raw = status, harness.RGWBackendErrorCode(body), rawBody(body)
-	if status == http.StatusOK {
-		if read.Config, err = parseLockConfig(body); err != nil {
-			read.Unparsed = err.Error()
-		}
-	}
-	return read
+	return observeLockRead(zone, bucket, status, body, err)
 }
 
 // stored reports whether the bucket instance metadata that a zone's

@@ -79,7 +79,9 @@ func TestJudgeResumedCopyReportsOnlyTheCheckpointObject(t *testing.T) {
 		err        string
 	}{
 		{name: "checkpoint object skipped", checkpoint: 2, final: "nnonnn", symptom: "object 2, at checkpoint last_copied_object_number=2"},
-		{name: "checkpoint object and another skipped", checkpoint: 2, final: "nnonon", symptom: "old=[2 4]"},
+		{name: "checkpoint object and another skipped", checkpoint: 2, final: "nnonon", err: "another fault"},
+		{name: "checkpoint skipped with unrelated bytes", checkpoint: 2, final: "nnonxn", err: "another fault"},
+		{name: "unrelated bytes at checkpoint", checkpoint: 2, final: "nnxnnn", err: "another fault"},
 		{name: "exact bytes", checkpoint: 2, final: "nnnnnn"},
 		{name: "another object old", checkpoint: 2, final: "nnnnon", err: "another fault"},
 		{name: "other bytes", checkpoint: 2, final: "nnnxnn", err: "another fault"},

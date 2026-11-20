@@ -989,3 +989,64 @@ type quorumlessMonCluster struct{ *fakeMonCluster }
 func (quorumlessMonCluster) QuorumStatus(context.Context) (ceph.QuorumStatus, error) {
 	return ceph.QuorumStatus{}, errors.New("quorum_status: timed out")
 }
+
+// unavailableMonMembership retains the warm-daemon fixture while quorum and
+// membership reads fail before the first replacement operation can start.
+type unavailableMonMembership struct {
+	*fakeMonCluster
+}
+
+func (f unavailableMonMembership) QuorumStatus(context.Context) (ceph.QuorumStatus, error) {
+	return ceph.QuorumStatus{}, errors.New("baseline quorum unavailable")
+}
+
+func (f unavailableMonMembership) Monitors(ctx context.Context) ([]*ceph.MonitorContainer, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestMonReplacementReportsFailureBeforeFirstPhase(t *testing.T) {
+	f := newFakeMonCluster()
+	r := newMonReplacementRecorder("source", unavailableMonMembership{f}, fakeMonReplacementBounds)
+	reporter := &fakeReporter{}
+	start := time.Now()
+	runMonReplacement(reporter, t.Context(), r, fakeMonReplacementPairs)
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("bounded setup failure took %s", elapsed)
+	}
+	const failure = "list monitors before the replacement: context deadline exceeded"
+	if !reporter.failed || len(reporter.entries) != 2 || !strings.Contains(reporter.entries[1], failure) {
+		t.Fatalf("original setup failure lost: %q", reporter.entries)
+	}
+	var bundle monReplacementBundle
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(reporter.entries[0], "log MON_REPLACEMENT_BUNDLE ")), &bundle); err != nil {
+		t.Fatal(err)
+	}
+	if bundle.Token != r.Token || bundle.Cluster != "source" || bundle.Failed.Seq != 0 ||
+		bundle.Failed.Name != "before replacement" || bundle.Failed.Error != failure ||
+		bundle.Failed.Started.IsZero() || bundle.Failed.Ended.Before(bundle.Failed.Started) ||
+		!bundle.Failed.OperationEnded.IsZero() || bundle.Failed.Handle != "" ||
+		len(bundle.Phases) != 0 || len(r.Phases) != 0 {
+		t.Fatalf("setup failure invented a membership operation: %+v", bundle)
+	}
+	if bundle.Baseline.QuorumError != "baseline quorum unavailable" || len(bundle.Baseline.MonMap) != 0 ||
+		len(f.adds) != 0 || len(f.removes) != 0 {
+		t.Fatalf("unexpected baseline or membership mutation: %+v adds=%v removes=%v", bundle.Baseline, f.adds, f.removes)
+	}
+	if len(f.diagnostics) != 1 || bundle.Diagnostics == nil || len(bundle.Debug) != 2 {
+		t.Fatalf("missing diagnostic collection or debug windows: %+v", bundle)
+	}
+	for _, window := range bundle.Debug {
+		if !window.Set || window.Restored != "ok" {
+			t.Fatalf("debug window not restored: %+v", window)
+		}
+	}
+	if f.debug["mgr.x"] != "1/5" || f.debug["osd.0"] != "0/10" {
+		t.Fatalf("debug state leaked: %v", f.debug)
+	}
+	finishMonReplacement(reporter, r)
+	if len(f.diagnostics) != 1 || len(reporter.entries) != 3 ||
+		!strings.Contains(reporter.entries[2], "debug_monc_restored=2/2") {
+		t.Fatalf("cleanup did not finish the existing bundle: %q", reporter.entries)
+	}
+}

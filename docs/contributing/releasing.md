@@ -91,14 +91,35 @@ described above.
    [release candidate validation](ci.md#release-candidate-validation),
    including native execution on every supported Ceph release. A canceled,
    skipped or missing required scenario cannot qualify a candidate.
-5. Review failed attempts, not just their latest conclusion. Keep fixed
+5. Review failed attempts, not just their latest conclusion, and the first
+   failures that a [release retry](ci.md#release-retry) passed. Keep fixed
    cases linked to their correction and regression. Unresolved cases need
-   a disposition and live owner.
+   a disposition and live owner; classify each as described in
+   [Candidate failures](#candidate-failures).
 6. Confirm native completion and cleanup for the claimed profiles. Strict
    upstream-defect tests under `native_regression` are opt-in, outside
    `all`; document their limits instead of counting them as required passes.
 7. If the candidate changes, repeat candidate verification at the new SHA,
-   including for a documentation-only change.
+   including for a documentation-only change. Change the candidate only for a
+   failure that blocks it.
+
+## Candidate failures
+
+Every failure of a candidate's validation is recorded in an issue with its
+run, job, release, images and the first run's receipts, whether or not a
+retry passed. The kind of failure decides whether it blocks the candidate:
+
+| Failure | Example | Candidate |
+| --- | --- | --- |
+| Execution environment | A registry or runner error before any Ceph assertion ran | Not blocked. Re-run the failed jobs once the run completes. |
+| A test's intermittent failure that its retry passed | An oracle or timing defect of the test, or an undiagnosed single failure | Not blocked. Fix it on `develop`; it reaches the next patch release. |
+| A test that failed in its retry too | The same test failed twice in one job | Blocked until it is diagnosed. |
+| A defect of the library's behaviour | A public function returns a wrong result or leaks a resource | Blocked, unless the release notes name it as a known issue with its limit. |
+
+A fix of a test or of CI alone does not change the candidate: the release
+line keeps the validated commit and the fix lands on `develop` only. A
+library fix that blocks the candidate lands on `develop`, the release line
+follows `develop` again, and the new commit is validated anew.
 
 Do not dispatch duplicate native runs merely because a release is being
 prepared, and do not cancel existing main CI as part of documentation work.

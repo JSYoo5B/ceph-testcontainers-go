@@ -21,6 +21,22 @@ import (
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
+// ExecEnv returns the value of an environment variable in Docker exec options.
+//
+//testdouble:shared-double
+func ExecEnv(opts []tcexec.ProcessOption, name string) string {
+	options := tcexec.NewProcessOptions(nil)
+	for _, opt := range opts {
+		opt.Apply(options)
+	}
+	for _, value := range options.ExecConfig.Env {
+		if value, ok := strings.CutPrefix(value, name+"="); ok {
+			return value
+		}
+	}
+	return ""
+}
+
 // Quorum reports a supervised quorum read: a Python supervisor that runs
 // "ceph --connect-timeout 5 quorum_status --format json" with bounded output.
 //

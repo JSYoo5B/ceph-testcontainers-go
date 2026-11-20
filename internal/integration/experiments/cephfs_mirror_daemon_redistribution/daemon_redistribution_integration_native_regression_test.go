@@ -9,7 +9,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -29,8 +28,8 @@ import (
 //
 //	go test -ldflags "-X github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/experiments/cephfs_mirror_daemon_redistribution_test.image=<image>"
 //
-// No fixed release is known: no upstream fix is recorded, and Tentacle
-// 20.2.5 and Umbrella 21.2.0 reproduce it too.
+// Tentacle 20.2.5 and Umbrella 21.2.0 reproduce it too. The case README
+// records the historical Pacific control and its setup adjustments.
 var image = "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-all"
 
 // Tentacle describes multiple mirror instances but still labels that deployment
@@ -49,8 +48,10 @@ func TestMultiClusterCephFSMirrorDaemonTopology(t *testing.T) {
 // stops, its directories move to the survivor and new snapshots arrive),
 // when the stopped daemon is removed and a replacement joins, which the MGR
 // sees registered with the peer, then the defect is REPRODUCED if the MGR
-// does not spread the directories over both daemons within three minutes,
-// and NOT_REPRODUCED if it does and the next snapshots arrive. The case never
+// keeps all directories on the survivor three minutes after registration,
+// and NOT_REPRODUCED if it assigns directories to both and the next
+// snapshots arrive. Each distribution read requires the admitted service
+// registrations, filesystem watcher IDs, and a count for every directory. The case never
 // calls RebalanceDirectories. Tentacle 20.2.4 reproduces it.
 //
 // A failure of the given or when steps fails the test, and so does a
@@ -225,13 +226,40 @@ func testDaemonRedistribution(t *testing.T, network string, host bool) {
 	harness.CephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "owner-stopped")
 	t.Logf("native CephFS mirror owner %s stopped: four directories reassigned to the surviving instance; new snapshots and exact bytes arrived", stoppedID)
 
-	// When: the stopped daemon is removed and a replacement joins.
-	registeredBefore := registeredServices(t, ctx, source, sourceFS.FilesystemName, peerID)
+	// The service registration and the dirmap owner's filesystem watcher
+	// are different RADOS sessions. Admit the sole survivor in both sets
+	// before starting a replacement.
+	survivor := owners[directories[0]]
 	if err := daemons[0].Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if mirror.Container != nil || len(mirror.Daemons()) != 1 {
 		t.Fatal("removing initial daemon did not clear its compatibility handle")
+	}
+	sample := func(owned ...*cephfsmirror.Daemon) (redistributionMembership, error) {
+		return sampleRedistributionMembership(ctx, source, sourceFS.FilesystemName, sourceFS.MetadataPool,
+			filesystem.ID, peerID, strings.TrimPrefix(mirror.SourceClientEntity, "client."), owned)
+	}
+	waitMembership := func(condition string, owned []*cephfsmirror.Daemon, accept func(redistributionMembership) bool) redistributionMembership {
+		t.Helper()
+		deadline := time.Now().Add(3 * time.Minute)
+		for {
+			member, err := sample(owned...)
+			if err == nil && accept(member) {
+				return member
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("condition not established: %s; last membership %+v: %v", condition, member, err)
+			}
+			waitRedistributionSample(t, ctx)
+		}
+	}
+	prior := waitMembership("survivor registered with its original watcher", []*cephfsmirror.Daemon{daemons[1]}, func(m redistributionMembership) bool {
+		return len(m.services) == 1 && len(m.watchers) == 1 && m.watchers[survivor]
+	})
+	var survivorService string
+	for id := range prior.services {
+		survivorService = id
 	}
 	replacement, err := mirror.AddDaemon(ctx, "a")
 	if err != nil {
@@ -241,39 +269,51 @@ func testDaemonRedistribution(t *testing.T, network string, host bool) {
 		t.Fatal("replacement reused the removed process or reassigned the legacy handle")
 	}
 
-	// Then: within the wait that the fixture gives an assignment, the MGR
-	// spreads the four directories over both daemons, or it keeps them on
-	// the survivor although the replacement registered with the peer.
-	joined, spread, distribution := false, false, ""
+	var replacementID string
+	expectedMembership := waitMembership("replacement registered with a new service and watcher", []*cephfsmirror.Daemon{daemons[1], replacement}, func(m redistributionMembership) bool {
+		replacementID = redistributionCandidate(prior.watchers, m.watchers, survivor)
+		return replacementID != "" && redistributionCandidate(prior.services, m.services, survivorService) != ""
+	})
+
 	deadline := time.Now().Add(3 * time.Minute)
-	for !spread && time.Now().Before(deadline) {
-		if !joined {
-			for id := range registeredServices(t, ctx, source, sourceFS.FilesystemName, peerID) {
-				joined = joined || !registeredBefore[id]
-			}
+	var spread bool
+	var distribution []byte
+	for {
+		sampled := time.Now()
+		before, err := sample(daemons[1], replacement)
+		if err != nil {
+			t.Fatalf("redistribution membership before distribution: %v", err)
 		}
-		spread, distribution = spreadOverTwo(t, ctx, source, sourceFS.FilesystemName)
-		if !spread {
-			select {
-			case <-ctx.Done():
-				t.Fatalf("wait for the redistribution: %v", ctx.Err())
-			case <-time.After(time.Second):
-			}
+		distribution, err = source.Ceph(ctx, "fs", "snapshot", "mirror", "show", "distribution", sourceFS.FilesystemName)
+		if err != nil {
+			t.Fatalf("mirror distribution: %v", err)
 		}
+		after, err := sample(daemons[1], replacement)
+		if err != nil {
+			t.Fatalf("redistribution membership after distribution: %v", err)
+		}
+		spread, err = judgeRedistribution(distribution, expectedMembership, before, after, survivor, replacementID, len(directories))
+		if err != nil {
+			t.Fatalf("redistribution evidence unavailable: %v; distribution: %s", err, distribution)
+		}
+		if spread || !sampled.Before(deadline) {
+			break
+		}
+		waitRedistributionSample(t, ctx)
 	}
-	t.Logf("CEPHFS_MIRROR_DAEMON_REDISTRIBUTION_RECEIPT replacement registered: %t; directories spread over two instances: %t; distribution: %s", joined, spread, distribution)
+	t.Logf("CEPHFS_MIRROR_DAEMON_REDISTRIBUTION_RECEIPT survivor_watcher=%s replacement_watcher=%s services=%v distributed=%t distribution=%s",
+		survivor, replacementID, expectedMembership.services, spread, distribution)
 	var symptoms []string
-	switch {
-	case spread:
+	if spread {
 		owners = harness.CephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, peerID, directories, 2)
 		replacementSnapshots := checkpoint("replacement")
 		waitCheckpoints(replacementSnapshots, owners, "")
 		harness.CephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "replacement")
-	case !joined:
-		t.Fatalf("condition not established: the replacement daemon did not register with peer %s within three minutes (registered before: %v)", peerID, registeredBefore)
-	default:
-		symptoms = append(symptoms, "after the replacement joined, the MGR kept the directories as "+distribution)
-		symptoms = append(symptoms, managerErrors(t, source)...)
+	} else {
+		symptoms = append(symptoms, fmt.Sprintf("the MGR kept all directories on the survivor after the replacement joined: %s", distribution))
+		for _, message := range managerErrors(t, source) {
+			t.Log(message)
+		}
 	}
 	if t.Failed() {
 		return
@@ -285,62 +325,43 @@ func testDaemonRedistribution(t *testing.T, network string, host bool) {
 	t.Logf("EXPERIMENT_RESULT case=cephfs_mirror_daemon_redistribution/%s result=%s image=%s symptoms=%q", network, result, image, symptoms)
 }
 
-// registeredServices returns the daemon IDs of the mirror services that the
-// MGR lists with peer peerID on filesystem.
-func registeredServices(t *testing.T, ctx context.Context, source *ceph.Container, filesystem, peerID string) map[string]bool {
+func waitRedistributionSample(t *testing.T, ctx context.Context) {
 	t.Helper()
-	data, err := source.Ceph(ctx, "fs", "snapshot", "mirror", "daemon", "status")
-	if err != nil {
-		t.Fatalf("mirror daemon status: %v", err)
+	select {
+	case <-ctx.Done():
+		t.Fatalf("wait for the redistribution: %v", ctx.Err())
+	case <-time.After(time.Second):
 	}
-	var statuses []struct {
-		DaemonID    uint64 `json:"daemon_id"`
-		Filesystems []struct {
-			Name  string `json:"name"`
-			Peers []struct {
-				UUID string `json:"uuid"`
-			} `json:"peers"`
-		} `json:"filesystems"`
-	}
-	if err := json.Unmarshal(data, &statuses); err != nil {
-		t.Fatalf("mirror daemon status %s: %v", data, err)
-	}
-	registered := make(map[string]bool)
-	for _, status := range statuses {
-		for _, fs := range status.Filesystems {
-			for _, peer := range fs.Peers {
-				if fs.Name == filesystem && peer.UUID == peerID {
-					registered[strconv.FormatUint(status.DaemonID, 10)] = true
-				}
-			}
-		}
-	}
-	return registered
 }
 
-// spreadOverTwo reports whether the MGR's directory distribution names two
-// instances with at least one directory each, and returns the distribution.
-func spreadOverTwo(t *testing.T, ctx context.Context, source *ceph.Container, filesystem string) (bool, string) {
-	t.Helper()
-	data, err := source.Ceph(ctx, "fs", "snapshot", "mirror", "show", "distribution", filesystem)
+func sampleRedistributionMembership(ctx context.Context, source *ceph.Container, filesystem, pool string, filesystemID int, peer, sourceID string, daemons []*cephfsmirror.Daemon) (redistributionMembership, error) {
+	serviceDump, err := source.Ceph(ctx, "service", "dump", "--format", "json")
 	if err != nil {
-		t.Fatalf("mirror distribution: %v", err)
+		return redistributionMembership{}, err
 	}
-	var distribution struct {
-		Mapping map[string]string `json:"mapping"`
+	daemonStatus, err := source.Ceph(ctx, "fs", "snapshot", "mirror", "daemon", "status")
+	if err != nil {
+		return redistributionMembership{}, err
 	}
-	if err := json.Unmarshal(data, &distribution); err != nil {
-		t.Fatalf("mirror distribution %s: %v", data, err)
+	services, err := redistributionRegisteredServices(serviceDump, daemonStatus, sourceID, filesystem, peer)
+	if err != nil {
+		return redistributionMembership{}, err
 	}
-	if len(distribution.Mapping) != 2 {
-		return false, string(data)
+	watchers, err := harness.CephFSOriginalProcessWatchers(ctx, source, pool)
+	if err != nil {
+		return redistributionMembership{}, err
 	}
-	for _, summary := range distribution.Mapping {
-		if count, err := strconv.Atoi(strings.TrimSuffix(summary, " directories")); err != nil || count <= 0 {
-			return false, string(data)
+	sessions := make(map[string][]byte, len(daemons))
+	for _, daemon := range daemons {
+		data, err := harness.CephFSOriginalProcessExec(ctx, daemon, "ceph", "--admin-daemon",
+			"/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "status", fmt.Sprintf("%s@%d", filesystem, filesystemID))
+		if err != nil {
+			return redistributionMembership{}, fmt.Errorf("read filesystem session for %s: %w", daemon.DaemonName, err)
 		}
+		sessions[daemon.DaemonName] = data
 	}
-	return true, string(data)
+	owners, err := redistributionWatchers(watchers, sessions, peer)
+	return redistributionMembership{services: services, watchers: owners}, err
 }
 
 // managerErrors returns the lines of the source MGR logs that name the

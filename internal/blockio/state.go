@@ -71,6 +71,8 @@ func Parse(raw []byte, action string) (View, error) {
 		}
 	case "create":
 		required = append(required, "created", "error")
+	case "creation":
+		required = append(required, "done")
 	case "step", "settled":
 		required = append(required, "id", "done")
 		if action == "step" {

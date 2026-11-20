@@ -51,26 +51,15 @@ func sseHeaders(value string) http.Header {
 	return http.Header{sseHeader: {value}}
 }
 
-type sseFailure struct {
-	Code    string `xml:"Code"`
-	Message string `xml:"Message"`
-}
-
-// sseResult is the native answer to one PUT.
-type sseResult struct {
-	Code       int
-	Failure    sseFailure
-	Encryption string
-	VersionID  string
-}
-
 func (c *sseCase) put(t *testing.T, path string, data []byte, headers http.Header) sseResult {
 	t.Helper()
 	c.objects[path] = true
 	r := c.signed(t, c.ctx, http.MethodPut, path, data, headers)
 	result := sseResult{Code: r.Code, Encryption: r.Headers.Get(sseHeader), VersionID: r.Headers.Get("X-Amz-Version-Id")}
 	if r.Code != http.StatusOK {
-		_ = xml.Unmarshal(r.Body, &result.Failure)
+		if err := xml.Unmarshal(r.Body, &result.Failure); err != nil {
+			t.Fatalf("PUT %s: status=%d invalid S3 error document: %v", path, r.Code, err)
+		}
 	}
 	sent, present := headers[sseHeader]
 	t.Logf("RGW_SSE put=%s header-present=%t header=%q status=%d code=%s message=%q response-sse=%q version=%q",
@@ -134,13 +123,6 @@ func (c *sseCase) requireNoDefaultEncryption(t *testing.T, bucket string) {
 	if r.Code != http.StatusNotFound || code != "ServerSideEncryptionConfigurationNotFoundError" {
 		t.Fatalf("condition not established: bucket %s has a default encryption configuration (status %d %s)", bucket, r.Code, code)
 	}
-}
-
-// refused reports whether r is the validation refusal that the invalid
-// algorithm control also gets: 400 InvalidArgument with the same message,
-// never a SigV4 refusal.
-func refused(r sseResult, control sseFailure) bool {
-	return r.Code == http.StatusBadRequest && r.Failure.Code == "InvalidArgument" && r.Failure.Message == control.Message
 }
 
 // cleanup deletes the versions the test owns in each bucket of buckets, the
@@ -218,9 +200,9 @@ func requireWireHeader(t *testing.T, client harness.S3HTTPClient) {
 // sends and signs the empty header, and the controls (an invalid algorithm is
 // refused and creates nothing; an omitted header writes an ordinary object),
 // when the empty header is sent for a new key and over an existing version,
-// then the defect is REPRODUCED if either PUT is accepted or changes what is
-// stored, and NOT_REPRODUCED if both get the control's refusal and nothing
-// changes. Tentacle 20.2.4 tests the header's value instead of its presence,
+// then the defect is REPRODUCED if either PUT succeeds and stores the
+// supplied bytes without SSE, and NOT_REPRODUCED if both are refused with
+// 400 InvalidArgument and preserve the original state. Tentacle 20.2.4 tests the header's value instead of its presence,
 // so it reproduces; Tentacle 20.2.5 and Umbrella 21.2.0 do not.
 //
 // A failure of the given or when steps fails the test; the result does not.
@@ -255,8 +237,8 @@ func TestRGWEmptySSEHeader(t *testing.T) {
 	c.requireNoDefaultEncryption(t, bucket)
 	c.requireNoDefaultEncryption(t, versioned)
 
-	// The invalid nonempty algorithm is refused by every tested release; its
-	// message is the validation refusal the empty header must also get.
+	// The invalid nonempty algorithm establishes the expected S3 error
+	// category for validation refusals.
 	invalid := c.put(t, bucket+"/invalid", []byte("invalid algorithm"), sseHeaders("AES-INVALID"))
 	if invalid.Code != http.StatusBadRequest || invalid.Failure.Code != "InvalidArgument" || invalid.Failure.Message == "" {
 		t.Fatalf("control not established: invalid algorithm answered %d %s %q", invalid.Code, invalid.Failure.Code, invalid.Failure.Message)
@@ -282,11 +264,12 @@ func TestRGWEmptySSEHeader(t *testing.T) {
 		r := c.put(t, bucket+"/empty", data, sseHeaders(""))
 		got := c.get(t, bucket+"/empty")
 		t.Logf("RGW_SSE empty-new-key stored=%t bytes-match=%t etag=%s encryption=%q", got.Data != nil, bytes.Equal(got.Data, data), got.ETag, got.Encryption)
-		if !refused(r, invalid.Failure) {
-			symptoms = append(symptoms, fmt.Sprintf("new key: status %d %s, not the control's 400 InvalidArgument", r.Code, r.Failure.Code))
+		reproduced, err := judgeEmptyPUT(r, got.Data == nil, bytes.Equal(got.Data, data) && got.Encryption == "")
+		if err != nil {
+			t.Fatal(err)
 		}
-		if got.Data != nil {
-			symptoms = append(symptoms, fmt.Sprintf("new key: the PUT left an object (encryption %q)", got.Encryption))
+		if reproduced {
+			symptoms = append(symptoms, "new key: empty algorithm accepted and stored without SSE")
 		}
 	})
 
@@ -299,16 +282,23 @@ func TestRGWEmptySSEHeader(t *testing.T) {
 			t.Fatalf("condition not established: seed PUT answered %d with version %q", seeded.Code, seeded.VersionID)
 		}
 		before := c.get(t, versioned+"/key")
-		r := c.put(t, versioned+"/key", []byte("replacement from an empty header"), sseHeaders(""))
+		replacement := []byte("replacement from an empty header")
+		r := c.put(t, versioned+"/key", replacement, sseHeaders(""))
 		after := c.get(t, versioned+"/key")
-		if !refused(r, invalid.Failure) {
-			symptoms = append(symptoms, fmt.Sprintf("overwrite: status %d %s, not the control's 400 InvalidArgument", r.Code, r.Failure.Code))
+		list, markers := c.versions(t, versioned, "key")
+		unchanged := bytes.Equal(after.Data, seed) && after.ETag == before.ETag && after.VersionID == seeded.VersionID &&
+			len(list) == 1 && len(markers) == 0 && list[0].VersionID == seeded.VersionID
+		ordinary := bytes.Equal(after.Data, replacement) && after.Encryption == "" &&
+			r.VersionID != "" && r.VersionID != "null" && r.VersionID != seeded.VersionID && after.VersionID == r.VersionID &&
+			len(list) == 2 && len(markers) == 0 &&
+			slices.ContainsFunc(list, func(v sseVersion) bool { return v.VersionID == r.VersionID && v.IsLatest }) &&
+			slices.ContainsFunc(list, func(v sseVersion) bool { return v.VersionID == seeded.VersionID && !v.IsLatest })
+		reproduced, err := judgeEmptyPUT(r, unchanged, ordinary)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if !bytes.Equal(after.Data, seed) || after.ETag != before.ETag || after.VersionID != seeded.VersionID {
-			symptoms = append(symptoms, fmt.Sprintf("overwrite: the key changed, version %q -> %q", seeded.VersionID, after.VersionID))
-		}
-		if list, markers := c.versions(t, versioned, "key"); len(list) != 1 || len(markers) != 0 || list[0].VersionID != seeded.VersionID {
-			symptoms = append(symptoms, fmt.Sprintf("overwrite: %d versions and %d delete markers, want only %q", len(list), len(markers), seeded.VersionID))
+		if reproduced {
+			symptoms = append(symptoms, fmt.Sprintf("overwrite: empty algorithm accepted and stored without SSE in version %q", r.VersionID))
 		}
 	})
 	if t.Failed() {

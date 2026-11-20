@@ -352,8 +352,8 @@ func (d NetworkProfile) selection() []NetworkPeer {
 type NetworkProfileStatus struct {
 	// Applied means that the delay's own netem qdisc is the root qdisc of the
 	// interface it was applied to (with peers, that its own hierarchy is,
-	// with one filter for each peer), and that nothing the lease did not add
-	// is under that root.
+	// with the expected priority map and one filter for each peer), and that
+	// nothing the lease did not add is under that root.
 	Applied bool
 	// Gone means that the delayed interface no longer exists: the target
 	// stopped, restarted, was removed or was disconnected from the network,
@@ -587,7 +587,9 @@ type netemQdisc struct {
 	Parent  string `json:"parent"`
 	Root    bool   `json:"root"`
 	Options struct {
-		Delay struct {
+		Bands   json.RawMessage `json:"bands"`
+		Priomap json.RawMessage `json:"priomap"`
+		Delay   struct {
 			Delay  float64 `json:"delay"`
 			Jitter float64 `json:"jitter"`
 		} `json:"delay"`
@@ -2023,7 +2025,7 @@ func (l *NetworkProfileLease) read(ctx context.Context) (NetworkProfileStatus, e
 				netem, children = qdisc, children+1
 			}
 		}
-		status.mismatch = checkPeerFilter(report.Filters, l.handle, l.Peers, l.match())
+		status.mismatch = errors.Join(checkPeerPriorityMap(root), checkPeerFilter(report.Filters, l.handle, l.Peers, l.match()))
 		if children != 1 {
 			status.mismatch = errors.Join(status.mismatch, fmt.Errorf("the prio root has no netem child %s in band %s", l.child, l.handle+peerBand))
 		} else if err := l.ownedPrefix(status); status.mismatch == nil && err != nil {
@@ -2041,6 +2043,24 @@ func (l *NetworkProfileLease) read(ctx context.Context) (NetworkProfileStatus, e
 		status.Corrupt, status.Gap = netem.Options.Corrupt.fault("corrupt"), int(netem.Options.Gap)
 	}
 	return status, nil
+}
+
+// checkPeerPriorityMap validates selection semantics independently of
+// ownership. An in-place edit can divert unselected traffic into netem
+// without replacing the root, child or filters that Restore owns.
+func checkPeerPriorityMap(root netemQdisc) error {
+	var bands int
+	var priorities []*int
+	if json.Unmarshal(root.Options.Bands, &bands) != nil || bands != 3 ||
+		json.Unmarshal(root.Options.Priomap, &priorities) != nil || len(priorities) != 16 {
+		return fmt.Errorf("unexpected prio routing: bands %s, priomap %s", root.Options.Bands, root.Options.Priomap)
+	}
+	for priority, band := range priorities {
+		if band == nil || *band != 0 {
+			return fmt.Errorf("prio priority %d does not select the unshaped first band: %s", priority, root.Options.Priomap)
+		}
+	}
+	return nil
 }
 
 // ownedPrefix checks that the qdiscs and filters under the lease's root are

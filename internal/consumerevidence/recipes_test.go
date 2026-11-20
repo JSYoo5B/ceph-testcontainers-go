@@ -270,12 +270,18 @@ func TestEvaluateGate(t *testing.T) {
 func authCase() AuthBundle {
 	manager := AuthManager{Name: "a", GID: 4161, Active: true, ContainerID: "ca", StartedAt: "t0"}
 	return AuthBundle{
-		Expected:           Expected{FSID: "f", Monitors: []string{"b", "a"}, Manager: "a", GID: 4161},
-		Rejection:          Rejection{Target: "mgr.a", TargetGID: 4161, Result: -13},
-		Monitors:           []MonitorStatus{{Name: "a", FSID: "f"}, {Name: "b", FSID: "f"}},
-		Managers:           []AuthManager{manager},
-		ManagersAfter:      []AuthManager{manager},
-		Controls:           []Control{{Target: "mgr.a", ExitCode: 0, Complete: true}},
+		Expected:      Expected{FSID: "f", Monitors: []string{"b", "a"}, Manager: "a", GID: 4161},
+		Rejection:     Rejection{Target: "mgr.a", TargetGID: 4161, Result: -13},
+		Monitors:      []MonitorStatus{{Name: "a", FSID: "f"}, {Name: "b", FSID: "f"}},
+		Managers:      []AuthManager{manager},
+		ManagersAfter: []AuthManager{manager},
+		Controls:      []Control{{Target: "mgr.a", ExitCode: 0, Complete: true}},
+		Queries: []AuthQuery{
+			{Query: Query{Name: "mgr dump before", Status: StatusComplete}},
+			{Query: Query{Name: "mgr dump after", Status: StatusComplete}},
+			{Query: Query{Name: "container of mgr.a before", Status: StatusComplete}},
+			{Query: Query{Name: "container of mgr.a after", Status: StatusComplete}},
+		},
 		CollectionComplete: true,
 		GenerationEquality: GenerationUnavailable,
 	}
@@ -297,7 +303,30 @@ func TestClassifyAuthBundle(t *testing.T) {
 		"new GID": {func(b *AuthBundle) {
 			b.ManagersAfter = []AuthManager{{Name: "a", GID: 9, ContainerID: "ca", StartedAt: "t0"}}
 		}, TargetChanged, true},
-		"absent":            {func(b *AuthBundle) { b.Managers = []AuthManager{{Name: "b", GID: 7}} }, TargetAbsent, true},
+		"absent":         {func(b *AuthBundle) { b.Managers[0].GID = 0; b.ManagersAfter[0].GID = 0 }, TargetAbsent, true},
+		"removed handle": {func(b *AuthBundle) { b.ManagersAfter = nil }, TargetUnavailable, true},
+		"unreadable map": {func(b *AuthBundle) {
+			b.CollectionComplete = false
+			b.Queries[1].Status = StatusFailed
+			b.ManagersAfter[0].GID = 0
+		}, TargetUnavailable, false},
+		"after container query fails": {func(b *AuthBundle) {
+			b.Queries[3].Status = StatusFailed
+			b.ManagersAfter[0].StartedAt = ""
+			b.CollectionComplete = false
+		}, TargetUnavailable, false},
+		"both container queries fail": {func(b *AuthBundle) {
+			b.Queries[2].Status, b.Queries[3].Status = StatusFailed, StatusFailed
+			b.Managers[0].StartedAt, b.ManagersAfter[0].StartedAt = "", ""
+			b.CollectionComplete = false
+		}, TargetUnavailable, false},
+		"missing container query with populated identity": {func(b *AuthBundle) {
+			b.Queries = b.Queries[:3]
+			b.CollectionComplete = false
+		}, TargetUnavailable, false},
+		"successful container query missing identity": {func(b *AuthBundle) {
+			b.ManagersAfter[0].ContainerID = ""
+		}, TargetUnavailable, true},
 		"not observed":      {func(b *AuthBundle) { b.ManagersAfter = nil; b.CollectionComplete = false }, TargetUnavailable, false},
 		"other FSID":        {func(b *AuthBundle) { b.Monitors[1].FSID = "g" }, TargetRegistered, false},
 		"a MON missing":     {func(b *AuthBundle) { b.Monitors = b.Monitors[:1] }, TargetRegistered, false},
@@ -439,5 +468,13 @@ func TestSampleOneMapKeepsAFailedFirstRead(t *testing.T) {
 	reads = []ManagerMap{complete, complete}
 	if _, _, queries := sampleOneMap(read, func() []MonitorSessions { return monitors }); len(queries) != 0 {
 		t.Fatalf("a matching bracket left queries %+v", queries)
+	}
+}
+
+func TestIncompleteSessionsStayUnavailable(t *testing.T) {
+	for _, data := range []string{`null`, `[{}]`, `[null]`, `[{"entity_name":"mgr.a","global_id":7}]`, `[{"entity_name":"mgr.a","con_type":"mgr"}]`, `[{"entity_name":"mgr.a","con_type":"client","global_id":0}]`} {
+		if _, err := decodeSessions("a", []byte(data)); err == nil {
+			t.Errorf("incomplete session accepted: %s", data)
+		}
 	}
 }

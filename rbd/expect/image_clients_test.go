@@ -24,7 +24,7 @@ func lockedImage() rbd.ImageClientStatus {
 			{Address: ownerAddress, ClientID: 4102, Cookie: 92},
 		},
 		Locks: []rbd.ImageLock{
-			{ID: "advisory", Locker: "client.4103", Address: otherAddress},
+			{ID: "auto 93", Locker: "client.4103", Address: otherAddress},
 			{ID: "auto 92", Locker: "client.4102", Address: ownerAddress, Managed: true},
 		},
 	}
@@ -42,6 +42,23 @@ func TestImageClientsMatchesTheOwnerAndKeepsUnrelatedClients(t *testing.T) {
 	// Any holder satisfies a held lock without an owner.
 	if got, err := (ImageClients{Lock: ExclusiveLockHeld, OwnerWatches: true}).Evaluate(lockedImage()); err != nil || !got.Matched {
 		t.Fatalf("any holder: %+v %v", got, err)
+	}
+}
+
+// The expectation compares addresses, not the identity of a watch instance.
+func TestImageClientsOwnerWatchesIgnoresCookie(t *testing.T) {
+	for _, cookie := range []uint64{92, 94} {
+		observed := lockedImage()
+		observed.Watchers[1].Cookie = cookie
+		got, err := (ImageClients{Lock: ExclusiveLockHeld, OwnerWatches: true}).Evaluate(observed)
+		if err != nil || !got.Matched {
+			t.Fatalf("watch cookie %d: %+v %v", cookie, got, err)
+		}
+		observed.Watchers[1].Address = formerAddress
+		got, err = (ImageClients{Lock: ExclusiveLockHeld, OwnerWatches: true}).Evaluate(observed)
+		if err != nil || got.Matched || len(got.Mismatches) != 1 || got.Mismatches[0].Reason != ImageClientsMismatchOwnerWatch {
+			t.Fatalf("different address with cookie %d: %+v %v", cookie, got, err)
+		}
 	}
 }
 
@@ -152,13 +169,13 @@ func TestImageClientsRefusesInvalidExpectations(t *testing.T) {
 func TestImageClientsRefusesMalformedObservations(t *testing.T) {
 	e := ImageClients{Lock: ExclusiveLockHeld, OwnerWatches: true}
 	for name, mutate := range map[string]func(*rbd.ImageClientStatus){
-		"watcher without address": func(s *rbd.ImageClientStatus) { s.Watchers[0].Address = "" },
-		"watcher without client":  func(s *rbd.ImageClientStatus) { s.Watchers[0].ClientID = 0 },
-		"lock without ID":         func(s *rbd.ImageClientStatus) { s.Locks[1].ID = "" },
-		"lock without locker":     func(s *rbd.ImageClientStatus) { s.Locks[1].Locker = "" },
-		"lock without address":    func(s *rbd.ImageClientStatus) { s.Locks[0].Address = "" },
-		"managed advisory lock":   func(s *rbd.ImageClientStatus) { s.Locks[0].Managed = true },
-		"unmanaged auto lock":     func(s *rbd.ImageClientStatus) { s.Locks[1].Managed = false },
+		"watcher without address":   func(s *rbd.ImageClientStatus) { s.Watchers[0].Address = "" },
+		"watcher without client":    func(s *rbd.ImageClientStatus) { s.Watchers[0].ClientID = 0 },
+		"lock without ID":           func(s *rbd.ImageClientStatus) { s.Locks[1].ID = "" },
+		"lock without locker":       func(s *rbd.ImageClientStatus) { s.Locks[1].Locker = "" },
+		"lock without address":      func(s *rbd.ImageClientStatus) { s.Locks[0].Address = "" },
+		"managed advisory lock":     func(s *rbd.ImageClientStatus) { s.Locks[0].Managed = true },
+		"managed nonnumeric cookie": func(s *rbd.ImageClientStatus) { s.Locks[1].ID = "auto backup" },
 		"two managed locks": func(s *rbd.ImageClientStatus) {
 			s.Locks = append(s.Locks, rbd.ImageLock{ID: "auto 91", Locker: "client.4101", Address: formerAddress, Managed: true})
 		},

@@ -123,7 +123,7 @@ func TestSetMessengerPolicyFirstRefusalIsNotApplied(t *testing.T) {
 	}
 }
 
-// An uncertain option (a lost reply) stays a real, restorable handle.
+// A terminal failure after an option write keeps a real restoration handle.
 func TestSetMessengerPolicyUncertainOptionStaysRestorable(t *testing.T) {
 	control := &configFixture{failAfter: "set"}
 	c := newConfigFixture(control)

@@ -52,6 +52,48 @@ func (o cephOutcome) String() string {
 	return fmt.Sprintf("%s (%s)", o.Errno, o.Reason)
 }
 
+// fullRemovalTrigger records the initial command's exit and complete error
+// output. The traceback can exceed the ordinary NativeFailure reason bound.
+type fullRemovalTrigger struct {
+	exitCode int
+	stderr   string
+}
+
+func (r fullRemovalTrigger) verify() error {
+	if r.exitCode == 0 {
+		return fmt.Errorf("condition not established: the removal with retained snapshots succeeded while OSD_FULL was raised")
+	}
+	var wrapped, flushFrame bool
+	for line := range strings.SplitSeq(r.stderr, "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "Error "):
+			if reason, ok := strings.CutPrefix(line, "Error ENOSPC:"); ok && fullRemovalWriteOperation(strings.TrimSpace(reason)) {
+				return nil
+			}
+			wrapped, flushFrame = strings.HasPrefix(line, "Error EINVAL: Traceback"), false
+		case strings.HasPrefix(line, "Traceback ("):
+			flushFrame = false
+		case wrapped && strings.HasPrefix(line, `File "`) && strings.HasSuffix(line, ", in flush"):
+			file, _, ok := strings.Cut(strings.TrimPrefix(line, `File "`), `", line `)
+			flushFrame = flushFrame || ok && (file == "metadata_manager.py" || strings.HasSuffix(file, "/metadata_manager.py"))
+		case wrapped && flushFrame && strings.HasPrefix(line, "cephfs.NoSpace: "):
+			// The Python frame and exception must belong to the same
+			// traceback. The CLI can print a chained outer exception too.
+			detail := strings.TrimPrefix(line, "cephfs.NoSpace: ")
+			operation, _, _ := strings.Cut(detail, ":")
+			if fullRemovalWriteOperation(operation) {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("condition not established: the full-cluster removal did not report a descriptor write failing with no space (exit %d)", r.exitCode)
+}
+
+func fullRemovalWriteOperation(operation string) bool {
+	return operation == "fsync failed" || operation == "error in write"
+}
+
 // fileSeen is what the client read of one file: errno 0 with its size and
 // SHA-256, or the errno of the open or read.
 type fileSeen struct {
@@ -78,6 +120,7 @@ type dirSeen struct {
 // and after the removal was retried. LivePath, SnapshotPath and the two
 // digests are what the subvolume held before the removal.
 type removalReport struct {
+	Trigger                fullRemovalTrigger
 	LivePath, SnapshotPath string
 	LiveSHA, SnapshotSHA   string
 	// Meta is the persisted metadata; Live and Snapshot are direct reads of
@@ -121,6 +164,9 @@ func unrelated(stage string, o cephOutcome) error {
 // neither, including a command or read that fails with another errno than
 // the missing path that the stage expects.
 func judgeRemoval(r removalReport) ([]string, error) {
+	if err := r.Trigger.verify(); err != nil {
+		return nil, err
+	}
 	enoent := int(syscall.ENOENT)
 	if r.Meta.Errno != 0 {
 		return nil, fmt.Errorf("another fault: the persisted metadata is unreadable after the thresholds were restored: errno %d", r.Meta.Errno)

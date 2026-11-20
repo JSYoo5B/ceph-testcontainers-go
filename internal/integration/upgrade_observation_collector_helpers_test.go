@@ -195,9 +195,9 @@ func (c *upgradeCollector) collect(ctx context.Context, phase *upgradePhase, dae
 	}
 	// The phase takes the inventory only after every output was usable, only
 	// when it matches the checkpoint and only while no target moved (the
-	// phase re-checks ownership itself, so a target that moved during the
-	// last command is caught here too), so a failed collection leaves nothing
-	// behind in the phase.
+	// phase re-checks ownership itself after the last command).
+	// A failed refresh leaves the previously accepted inventory available
+	// for the current phase. Only a successful fresh collection can settle.
 	if err := phase.observeInventory(outputs.Versions, want); err != nil {
 		return upgradeSettled{Daemon: daemon, ObservationErr: fmt.Errorf("collect for %q: %w", daemon, err)}
 	}

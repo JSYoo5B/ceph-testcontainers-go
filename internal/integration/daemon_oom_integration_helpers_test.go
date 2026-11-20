@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -233,19 +234,121 @@ func daemonMemoryOOM(before, after map[string]uint64, sameGeneration, singleton,
 	return nil
 }
 
+// oomMembershipTarget samples the frozen cgroup. The proc stat belongs to
+// the same process whose start time was captured before the pressure step.
+type oomMembershipTarget struct {
+	group, processStat, processStart string
+	identity                         os.FileInfo
+	pid                              int
+}
+
+var errOOMMembershipDisappeared = errors.New("frozen cgroup or member disappeared")
+
+func (target oomMembershipTarget) checkGroup() error {
+	info, err := os.Stat(target.group)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return errOOMMembershipDisappeared
+	case err != nil || !os.SameFile(target.identity, info):
+		return errors.New("frozen cgroup identity is unavailable or changed")
+	default:
+		return nil
+	}
+}
+
+// members brackets the observation with the frozen cgroup directory identity.
+func (target oomMembershipTarget) members() (other bool, err error) {
+	if err := target.checkGroup(); err != nil {
+		return false, err
+	}
+	data, err := os.ReadFile(filepath.Join(target.group, "cgroup.procs"))
+	if identityErr := target.checkGroup(); identityErr != nil {
+		return false, identityErr
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return false, errOOMMembershipDisappeared
+	}
+	if err != nil {
+		return false, errors.New("target cgroup membership unreadable")
+	}
+	procs, err := parseCgroupProcs(string(data))
+	if err != nil {
+		return false, err
+	}
+	if len(procs.PIDs) == 0 {
+		return false, errOOMMembershipDisappeared
+	}
+	return slices.ContainsFunc(procs.PIDs, func(member int) bool { return member != target.pid }), nil
+}
+
+// sample separates cgroup teardown from failed attribution. Docker's exit
+// timestamp can follow the point at which Linux removes a dying task from
+// its cgroup. On disappearance only, a local observation that the frozen
+// process is exiting or gone can account for the missing member.
+func (target oomMembershipTarget) sample() (other, afterExit bool, err error) {
+	other, err = target.members()
+	if errors.Is(err, errOOMMembershipDisappeared) && target.processExiting() {
+		return false, true, nil
+	}
+	return other, false, err
+}
+
+func (target oomMembershipTarget) processExiting() bool {
+	if target.processStat == "" || target.processStart == "" {
+		return false
+	}
+	raw, err := os.ReadFile(target.processStat)
+	if err != nil {
+		return errors.Is(err, os.ErrNotExist)
+	}
+	stat := string(raw)
+	start, err := daemonProcessStart(stat)
+	if err != nil {
+		return false
+	}
+	fields := strings.Fields(stat[strings.LastIndexByte(stat, ')')+1:])
+	if start != target.processStart || fields[0] == "Z" || fields[0] == "X" {
+		return true
+	}
+	// /proc/<pid>/stat field 9 is the kernel's task flags.
+	const pfExiting = 0x00000004
+	flags, err := strconv.ParseUint(fields[6], 10, 64)
+	return err == nil && flags&pfExiting != 0
+}
+
+// oomMembershipGap excludes only samples that started at or after the
+// independently reported exit. Reads are samples, not continuous coverage.
+func oomMembershipGap(firstGap, finished time.Time) bool {
+	return !firstGap.IsZero() && (finished.IsZero() || firstGap.Before(finished))
+}
+
 // A recorder runs outside the victim while the engine applies the limit. A
 // post-update inspect is not an effective-limit observation on a stopped task.
 type daemonMemoryWindow struct {
 	Events           map[string]uint64
 	PressureObserved bool
 	OtherProcess     bool
+	MembershipGapAt  time.Time
+	TeardownObserved bool
 	Error            error
+}
+
+func (w daemonMemoryWindow) qualify(baseline map[string]uint64, sameGeneration, oomKilled, stopped bool, finished time.Time) error {
+	if oomMembershipGap(w.MembershipGapAt, finished) {
+		return errors.New("target cgroup membership unavailable before the daemon exit")
+	}
+	if !w.PressureObserved {
+		return errors.New("effective pressure ceiling was not observed")
+	}
+	return daemonMemoryOOM(baseline, w.Events, sameGeneration, !w.OtherProcess, oomKilled, stopped)
 }
 
 func (target *daemonMemoryTarget) record(ctx context.Context, baseline map[string]uint64) <-chan daemonMemoryWindow {
 	result := make(chan daemonMemoryWindow, 1)
 	go func() {
 		window := daemonMemoryWindow{Events: baseline}
+		membership := oomMembershipTarget{group: target.Group, identity: target.Identity, pid: target.PID,
+			processStat: filepath.Join("/proc", strconv.Itoa(target.PID), "stat"), processStart: target.ProcessStart}
 		tick := time.NewTicker(5 * time.Millisecond)
 		defer tick.Stop()
 		for {
@@ -257,19 +360,23 @@ func (target *daemonMemoryTarget) record(ctx context.Context, baseline map[strin
 				window.Error = err
 			}
 			sample, err := target.sample()
+			at := time.Now()
+			other, afterExit, memberErr := membership.sample()
+			window.TeardownObserved = window.TeardownObserved || afterExit
+			window.OtherProcess = window.OtherProcess || other
+			if memberErr != nil {
+				window.Error = memberErr
+				if window.MembershipGapAt.IsZero() {
+					window.MembershipGapAt = at
+				}
+			}
 			if err == nil {
 				window.Events = sample.Events
-				window.PressureObserved = window.PressureObserved || sample.Max == uint64(daemonMemoryPressure) && sample.Swap == 0
+				if memberErr == nil && !afterExit && sample.Max == uint64(daemonMemoryPressure) && sample.Swap == 0 {
+					window.PressureObserved = true
+				}
 			} else {
 				window.Error = err
-			}
-			// Record extra processes independently. Empty after exit is not a helper.
-			if data, err := os.ReadFile(filepath.Join(target.Group, "cgroup.procs")); err == nil {
-				for _, pid := range strings.Fields(string(data)) {
-					if pid != strconv.Itoa(target.PID) {
-						window.OtherProcess = true
-					}
-				}
 			}
 			select {
 			case <-ctx.Done():

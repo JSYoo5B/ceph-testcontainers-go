@@ -66,6 +66,15 @@ func (r etRead) exact(want etWant) bool {
 		r.Length == len(want.Bytes) && r.Mismatch < 0
 }
 
+// judgeTransitionRead requires a complete response for the requested range
+// before attributing divergent plaintext to the transition.
+func judgeTransitionRead(r etRead, want etWant) (bool, error) {
+	if r.Err != "" || r.Status != want.Status || (want.ContentRange != "" && r.ContentRange != want.ContentRange) || r.Length != len(want.Bytes) {
+		return false, fmt.Errorf("unqualified read of transitioned object: %s", r)
+	}
+	return r.Mismatch >= 0, nil
+}
+
 func (r etRead) String() string {
 	s := fmt.Sprintf("%s GET status=%d content-range=%q bytes=%d first-mismatch=%d", r.Kind, r.Status, r.ContentRange, r.Length, r.Mismatch)
 	if r.Err != "" {

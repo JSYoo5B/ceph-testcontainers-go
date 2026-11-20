@@ -110,7 +110,7 @@ func (e *collectEnv) collect(daemon string) upgradeSettled {
 }
 
 // requireOnlyError asserts the all-or-nothing contract: an observation error
-// and no evidence field, and no inventory kept by the phase.
+// and no evidence field, and no inventory published to this fresh phase.
 func requireOnlyError(t *testing.T, label string, ev upgradeSettled, phase *upgradePhase, target error) {
 	t.Helper()
 	if ev.ObservationErr == nil {
@@ -816,6 +816,30 @@ func TestUpgradeCollectorEvidenceKeepsItsOwnershipUntilConsumed(t *testing.T) {
 		}
 		if _, _, err := s.admit(); err == nil {
 			t.Fatal("admitted after a failed collection")
+		}
+	})
+	t.Run("a failed refresh keeps the accepted inventory without settling", func(t *testing.T) {
+		s := sequenceAtConfirmedMon(t)
+		env := newCollectEnv(t, 1)
+		if got := env.col.collect(t.Context(), env.phase, "mon.a", env.want); got.ObservationErr != nil {
+			t.Fatal(got.ObservationErr)
+		}
+		before, err := parseUpgradeInventory(obsOutputsFor(t, 1).Versions)
+		if err != nil {
+			t.Fatal(err)
+		}
+		env.runner.hook = func(int, upgradeCommandRequest, *upgradeCommandResult) error {
+			return errors.New("refresh unavailable")
+		}
+		if err := env.col.collectAndSettle(t.Context(), env.phase, "mon.a", env.want, s); !errors.Is(err, errUpgradeCollectProbe) {
+			t.Fatalf("collectAndSettle = %v", err)
+		}
+		after, err := env.phase.satisfied()
+		if err != nil || !reflect.DeepEqual(after, before) {
+			t.Fatalf("retained inventory = %v, %v; want %v", after, err, before)
+		}
+		if _, _, err := s.admit(); err == nil {
+			t.Fatal("admitted after a failed refresh")
 		}
 	})
 	t.Run("no sequence", func(t *testing.T) {

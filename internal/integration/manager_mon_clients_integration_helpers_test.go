@@ -4,7 +4,6 @@ package integration_test
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"slices"
 	"testing"
@@ -13,14 +12,11 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/monsession"
 )
 
 // monSession is one entry of a MON's "sessions" admin socket command.
-type monSession struct {
-	EntityName string `json:"entity_name"`
-	ConType    string `json:"con_type"`
-	GlobalID   uint64 `json:"global_id"`
-}
+type monSession = monsession.Session
 
 // managerMonSessions returns the sessions of each MGR, keyed by its entity
 // name, as every owned MON reports them through its local admin socket.
@@ -32,8 +28,11 @@ func managerMonSessions(t *testing.T, ctx context.Context, cluster *ceph.Contain
 		if err != nil {
 			t.Fatalf("sessions of mon.%s: %v", monitor.DaemonName, err)
 		}
-		var list []monSession
-		if err := json.Unmarshal(out, &list); err != nil {
+		if _, err := monsession.Nonces(out); err != nil {
+			t.Fatalf("native session address schema: %v", err)
+		}
+		list, err := monsession.Decode(out)
+		if err != nil {
 			t.Fatalf("sessions of mon.%s: %v: %.512s", monitor.DaemonName, err, out)
 		}
 		for _, session := range list {
@@ -90,6 +89,7 @@ func testManagerMonClients(t *testing.T) {
 		if ok {
 			t.Logf("MGR_MON_CLIENTS active mgr.%s: beacon global ID %d = MgrMap GID, other MonClients %v; standby mgr.%s: beacon global ID %d = MgrMap GID",
 				status.ActiveName, beacon[0].GlobalID, others, status.Standbys[0].Name, standby[0].GlobalID)
+			testOwnedManagerAbsence(t, ctx, cluster, status.Standbys[0].Name, status.Standbys[0].GID)
 			return
 		}
 		if time.Now().After(deadline) {
@@ -97,4 +97,60 @@ func testManagerMonClients(t *testing.T) {
 		}
 		time.Sleep(2 * time.Second)
 	}
+}
+
+// A stopped owned standby can be absent from a readable MgrMap. The synthetic
+// rejection is only classifier input; this control makes no auth-failure claim.
+func testOwnedManagerAbsence(t *testing.T, ctx context.Context, cluster *ceph.Container, name string, gid uint64) {
+	manager := harness.ManagerHandle(t, ctx, cluster, name)
+	if err := manager.Stop(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	for deadline := time.Now().Add(2 * time.Minute); ; {
+		status, err := harness.ObserveCluster(cluster).ManagerStatus(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status.ActiveName != name && !managerNamePresent(status, name) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("stopped standby remained registered")
+		}
+		time.Sleep(time.Second)
+	}
+	b := authFirstFailureBundle{Rejection: authTestedRejection{Target: "mgr." + name, TargetGID: gid, Result: -13}, Expected: authExpectedTarget{Manager: name, GID: gid}}
+	c := authCollector{sources: withSockets(t, cluster), ctx: ctx, bound: 10 * time.Second, bundle: &b}
+	b.Managers = c.observeManagers("before", nil)
+	b.ManagersAfter = c.observeManagers("after", nil)
+	if v := classifyAuthBundle(b); v.Target != "absent" {
+		t.Fatalf("owned stopped manager classification: %+v", v)
+	}
+	t.Log("owned stopped MGR absent from both complete map reads classified as absent")
+	if err := manager.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(time.Minute); ; {
+		status, err := harness.ObserveCluster(cluster).ManagerStatus(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status.ActiveName == name || managerNamePresent(status, name) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("restarted manager did not register")
+		}
+		time.Sleep(time.Second)
+	}
+}
+
+func managerNamePresent(status ceph.ManagerStatus, name string) bool {
+	for _, standby := range status.Standbys {
+		if standby.Name == name {
+			return true
+		}
+	}
+	return false
 }

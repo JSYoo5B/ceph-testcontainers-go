@@ -90,6 +90,8 @@ type hooks interface {
 	ConfigSet(ctx context.Context, c *ceph.Container, setting ceph.ConfigSetting, value string) error
 	ConfigSetEmpty(ctx context.Context, c *ceph.Container, setting ceph.ConfigSetting) error
 	ConfigRemove(ctx context.Context, c *ceph.Container, setting ceph.ConfigSetting) error
+	MGRConfigTargets(c *ceph.Container, section string) []string
+	WaitMGRConfigDelivery(ctx context.Context, c *ceph.Container, name, key, value string) error
 	MessengerPolicySettings(c *ceph.Container, policy ceph.MessengerPolicy) ([]ceph.ConfigSetting, error)
 }
 
@@ -382,6 +384,18 @@ func ConfigSetEmpty(ctx context.Context, c *ceph.Container, setting ceph.ConfigS
 // mutex.
 func ConfigRemove(ctx context.Context, c *ceph.Container, setting ceph.ConfigSetting) error {
 	return get().ConfigRemove(ctx, c, setting)
+}
+
+// MGRConfigTargets returns owned manager names to which section can apply.
+// The caller holds the cluster mutex.
+func MGRConfigTargets(c *ceph.Container, section string) []string {
+	return get().MGRConfigTargets(c, section)
+}
+
+// WaitMGRConfigDelivery waits until the daemon reports the given MON value
+// or has stopped. The caller holds the cluster mutex.
+func WaitMGRConfigDelivery(ctx context.Context, c *ceph.Container, name, key, value string) error {
+	return get().WaitMGRConfigDelivery(ctx, c, name, key, value)
 }
 
 // MessengerPolicySettings returns the central configuration entries of a

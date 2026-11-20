@@ -36,6 +36,7 @@ type DataSyncStatus struct {
 // SyncStatus is the metadata and data sync state of one attached zone, as
 // Fixture.SyncStatus reads it.
 type SyncStatus struct {
+	periodEpoch                                  uint64
 	RealmID, PeriodID, Zone, ZoneID, ZonegroupID string
 	RealmEpoch                                   uint64
 	MetadataMaster                               bool
@@ -60,12 +61,16 @@ func (f *Fixture) SyncStatus(ctx context.Context, zoneName string) (SyncStatus, 
 		return SyncStatus{}, err
 	}
 	defer f.topologyMu.Unlock()
-	return f.syncStatus(ctx, zoneName)
+	return f.syncStatus(ctx, zoneName, false)
 }
 
 // WaitSyncReady waits up to four minutes, bounded by the caller's context, for
 // metadata and the explicitly requested source-zone data streams to catch up.
-// No sources means metadata-only readiness. When the wait ends unready it
+// With no sources, the wait compares metadata with the current master
+// and leaves DataSources empty. Setup images without Python or curl use
+// combined status, which can block on an unavailable data peer.
+// Use SyncStatus to inspect all data streams.
+// When the wait ends unready it
 // returns the latest complete observation, and its error reports that
 // observation and the latest attempt's error. Native sync leases survive abrupt
 // gateway restarts until expiration, so this method does not change lease TTLs,
@@ -106,7 +111,7 @@ func (f *Fixture) WaitSyncReady(ctx context.Context, zoneName string, sourceZone
 	}
 	for {
 		attemptCtx, attemptCancel := context.WithTimeout(ctx, 30*time.Second)
-		status, err := f.syncStatus(attemptCtx, zoneName)
+		status, err := f.syncStatus(attemptCtx, zoneName, len(sourceZones) == 0)
 		attemptCancel()
 		if lastErr = err; err == nil {
 			last = status
@@ -149,7 +154,7 @@ func (f *Fixture) syncStatusZones(name string, sources []string) (*rgwZoneState,
 	return target, nil
 }
 
-func (f *Fixture) syncStatus(ctx context.Context, zoneName string) (SyncStatus, error) {
+func (f *Fixture) syncStatus(ctx context.Context, zoneName string, metadataOnly bool) (SyncStatus, error) {
 	zone, err := f.syncStatusZones(zoneName, nil)
 	if err != nil {
 		return SyncStatus{}, err
@@ -163,6 +168,10 @@ func (f *Fixture) syncStatus(ctx context.Context, zoneName string) (SyncStatus, 
 		return SyncStatus{}, err
 	}
 	result := SyncStatus{RealmID: f.RealmID, PeriodID: id, RealmEpoch: epoch, Zone: zone.Name, ZoneID: zone.ID, ZonegroupID: f.topology.groupIDs[zone.Zonegroup], MetadataMaster: master.ID == zone.ID}
+	result.periodEpoch, err = syncCommittedPeriodEpoch(current)
+	if err != nil {
+		return result, err
+	}
 	data, err := f.syncPolicyAdmin(ctx, zone, zone.Zonegroup, "period", "get")
 	if err != nil {
 		return result, err
@@ -174,13 +183,27 @@ func (f *Fixture) syncStatus(ctx context.Context, zoneName string) (SyncStatus, 
 	if local["id"] != id || fmt.Sprint(local["realm_epoch"]) != strconv.FormatUint(epoch, 10) || !syncPeriodPolicyEqual(local, current) {
 		return result, errors.New("RGW observed zone has not imported the current committed period")
 	}
+	var markers map[int]*string
 	if !result.MetadataMaster {
 		data, err = f.syncPolicyAdmin(ctx, zone, zone.Zonegroup, "metadata", "sync", "status")
 		if err != nil {
 			return result, err
 		}
-		result.Metadata, err = decodeSyncMetadata(data)
+		result.Metadata, markers, err = decodeSyncMetadata(data)
 		if err != nil {
+			return result, err
+		}
+	}
+	metadataCurrent := result.Metadata.State == "sync" && result.Metadata.PeriodID == id &&
+		result.Metadata.RealmEpoch == epoch && result.Metadata.Shards > 0 && result.Metadata.IncrementalShards == result.Metadata.Shards
+	if metadataOnly {
+		switch {
+		case result.MetadataMaster:
+			result.Metadata = MetadataSyncStatus{State: "master", PeriodID: id, RealmEpoch: epoch, CaughtUp: true}
+		case metadataCurrent:
+			result.Metadata.CaughtUp, err = f.readMetadataLog(ctx, zone, master, id, markers)
+		}
+		if !errors.Is(err, errMetadataTransportUnavailable) {
 			return result, err
 		}
 	}
@@ -195,9 +218,11 @@ func (f *Fixture) syncStatus(ctx context.Context, zoneName string) (SyncStatus, 
 	if result.MetadataMaster {
 		result.Metadata = MetadataSyncStatus{State: "master", PeriodID: id, RealmEpoch: epoch, CaughtUp: text.metadataMaster}
 	} else {
-		result.Metadata.CaughtUp = result.Metadata.State == "sync" && result.Metadata.PeriodID == id && result.Metadata.RealmEpoch == epoch && result.Metadata.Shards > 0 && result.Metadata.IncrementalShards == result.Metadata.Shards && text.metadataCaughtUp
+		result.Metadata.CaughtUp = metadataCurrent && text.metadataCaughtUp
 	}
-	result.DataSources = text.data
+	if !metadataOnly {
+		result.DataSources = text.data
+	}
 	return result, nil
 }
 
@@ -208,6 +233,17 @@ func syncCommittedPeriodIdentity(current map[string]any) (string, uint64, error)
 		return "", 0, errors.New("RGW committed period identity is malformed")
 	}
 	return id, epoch, nil
+}
+
+// syncCommittedPeriodEpoch identifies a version within one period and realm
+// epoch. A same-master commit increments this value without changing either
+// identity returned by syncCommittedPeriodIdentity.
+func syncCommittedPeriodEpoch(current map[string]any) (uint64, error) {
+	epoch, err := strconv.ParseUint(fmt.Sprint(current["epoch"]), 10, 64)
+	if err != nil || epoch == 0 {
+		return 0, errors.New("RGW committed period epoch is malformed")
+	}
+	return epoch, nil
 }
 
 func syncStatusReady(status SyncStatus, sources []string) bool {
@@ -222,7 +258,7 @@ func syncStatusReady(status SyncStatus, sources []string) bool {
 	return true
 }
 
-func decodeSyncMetadata(data []byte) (MetadataSyncStatus, error) {
+func decodeSyncMetadata(data []byte) (MetadataSyncStatus, map[int]*string, error) {
 	var native struct {
 		SyncStatus struct {
 			Info struct {
@@ -232,29 +268,33 @@ func decodeSyncMetadata(data []byte) (MetadataSyncStatus, error) {
 				RealmEpoch uint64 `json:"realm_epoch"`
 			} `json:"info"`
 			Markers []struct {
-				Key int `json:"key"`
+				Key *int `json:"key"`
 				Val struct {
-					State int `json:"state"`
+					State  int     `json:"state"`
+					Marker *string `json:"marker"`
 				} `json:"val"`
 			} `json:"markers"`
 		} `json:"sync_status"`
 	}
 	if json.Unmarshal(data, &native) != nil || native.SyncStatus.Info.Status == "" || native.SyncStatus.Info.NumShards < 0 {
-		return MetadataSyncStatus{}, errors.New("decode RGW native metadata sync status")
+		return MetadataSyncStatus{}, nil, errors.New("decode RGW native metadata sync status")
 	}
 	info := native.SyncStatus.Info
 	result := MetadataSyncStatus{State: info.Status, PeriodID: info.Period, RealmEpoch: info.RealmEpoch, Shards: info.NumShards}
-	seen := map[int]bool{}
+	markers := make(map[int]*string, len(native.SyncStatus.Markers))
 	for _, marker := range native.SyncStatus.Markers {
-		if marker.Key < 0 || marker.Key >= result.Shards || seen[marker.Key] {
-			return result, errors.New("RGW metadata sync has duplicated or invalid shard identities")
+		if marker.Key == nil || *marker.Key < 0 || *marker.Key >= result.Shards {
+			return result, nil, errors.New("RGW metadata sync has an invalid shard identity")
 		}
-		seen[marker.Key] = true
+		if _, seen := markers[*marker.Key]; seen {
+			return result, nil, errors.New("RGW metadata sync has a duplicate shard identity")
+		}
+		markers[*marker.Key] = marker.Val.Marker
 		if marker.Val.State == 1 {
 			result.IncrementalShards++
 		}
 	}
-	return result, nil
+	return result, markers, nil
 }
 
 type rgwSyncText struct {

@@ -170,7 +170,8 @@ with opaque run-scoped labels and the epochs their issuer connection showed
 The collection has one total budget and a bound per query, runs from its own
 context, and does not retry or stop on a failed query. Empty or non-JSON
 output, or a status without name, FSID or MonMap epoch, is a failed query; an
-empty session list is an answer. An unknown command is `unsupported`. Only
+empty session list is an answer. A null list or a row missing its selected
+identity fields is incomplete, not evidence of absence. An unknown command is `unsupported`. Only
 the cleanup of a `RunNativeCommand` that could not be confirmed stopped has a
 separate allowance; its failures go to `cleanup_errors`.
 
@@ -178,7 +179,10 @@ separate allowance; its failures go to `cleanup_errors`.
 was `registered`, `changed`, `absent` or `unavailable`; which client a MON's
 refusal named (registered MGR, module client or unknown); secret IDs shared
 across runs (a wipe restarts them, so equal IDs are not the same key); and the
-controls and rejection. It never reports generation equality: no stock command
+controls and rejection. Target classification covers both collection phases:
+a change of GID or process instance is `changed`; an owned target absent from
+both successfully read maps is `absent`; an unreadable map or missing owned
+handle is `unavailable`. It never reports generation equality: no stock command
 shows which rotating key a MON or MGR used without the keys themselves.
 
 `checkAuthBundleSecrecy` refuses a bundle holding a secret you pass or a field
@@ -519,7 +523,12 @@ the peer address and entity, the policy (`l=1` lossy, `l=0` lossless),
 the session's `client_cookie`, `server_cookie`, `in_seq` and `out_seq`.
 Squid prints fewer fields inside `conn(...)` than Tentacle; both print these.
 `parseReadySessions` in `internal/integration/cephfs` reads them and returns
-lines that lack one as unusable instead of dropping them.
+recognizable session-ready event lines with missing fields or unsupported framing as unusable
+instead of dropping them. A malformed record without an attributable peer
+also makes the selected client window unavailable. This cannot detect records
+that were lost entirely before capture. Other explicit connection events, such
+as `.stop`, can include `s=READY` without being session-ready observations
+and are ignored.
 
 | Recipe | What the test observes | Proven by |
 | --- | --- | --- |
@@ -537,8 +546,8 @@ python-cephfs handle and clears it again from a thread that does not wait on
 the workload: a rate high enough to break handshakes keeps every operation,
 and so a clearing call behind it, waiting. `cs` can skip values,
 because an attempt that faults before READY takes one too. A connection
-object's address can be reused after it is freed, so tell lossy sessions
-apart by their client cookie. Keepalive and ACK frames themselves appear in
+object's address and client cookie can both be reused after a lossy reset.
+The reset evidence is fresh sequence state and a zero server cookie; Keepalive and ACK frames themselves appear in
 neither the READY lines nor `messenger dump`; only the sequence numbers that
 a reconnected session carries show what was acknowledged.
 

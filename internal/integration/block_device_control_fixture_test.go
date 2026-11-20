@@ -5,8 +5,16 @@
 package integration_test
 
 import (
+	"context"
+	"errors"
+	"io"
 	"os/exec"
+	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/testcontainers/testcontainers-go"
+	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
 const (
@@ -174,4 +182,120 @@ func TestBlockControlScriptCompiles(t *testing.T) {
 	if out, err := exec.Command(python, "-I", "-c", "import sys; compile(sys.argv[1], 'control', 'exec')", blockControlScript).CombinedOutput(); err != nil {
 		t.Fatalf("%v: %s", err, out)
 	}
+}
+
+// dmCleanupReceipts replaces only keeper exec replies to exercise the same
+// cleanup caller used by the two native block fixtures.
+type dmCleanupReceipts struct {
+	testcontainers.Container
+	replies []string
+	calls   [][]string
+}
+
+func (r *dmCleanupReceipts) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+	r.calls = append(r.calls, args[4:])
+	if len(r.replies) == 0 || r.replies[0] == "" {
+		if len(r.replies) != 0 {
+			r.replies = r.replies[1:]
+		}
+		return -1, nil, errors.New("keeper reply unavailable")
+	}
+	reply := r.replies[0]
+	r.replies = r.replies[1:]
+	// Step IDs are transport correlation tokens chosen by the caller.
+	if args[4] == "step" {
+		reply = strings.ReplaceAll(reply, "step-token", args[8])
+	}
+	return 0, strings.NewReader(reply), nil
+}
+
+const (
+	dmAbsentReceipt  = `{"action":"observe","name":"x","exists":false}`
+	dmLookupFailed   = `{"action":"observe","name":"x","exists":false,"error":"permission denied"}`
+	dmOwnedReceipt   = `{"action":"observe","name":"x","exists":true,"uuid":"TC-CTL-x","major":253,"minor":4,"state":"ACTIVE","live":"0 131072 linear 7:3 0","inactive":null,"open":0,"event":1,"in_flight":[0,0]}`
+	dmRemovalReceipt = `{"action":"step","name":"x","id":"step-token","op":"remove","done":true,"rc":0,"error":""}`
+	dmLookupLoop     = `{"action":"loopid","name":"-","file":"/tc-blk/a","inode":41,"holders":[]}`
+	dmLoopUnlink     = `{"action":"unloop","name":"-","holders":[],"detached":true,"file_removed":true,"error":""}`
+)
+
+func TestBlockControlReleaseUsesObservedIdentityThroughCleanup(t *testing.T) {
+	for _, test := range []struct {
+		name, pending, want string
+		replies             []string
+		calls               int
+	}{
+		{"owned", "", dmReleasable, []string{dmOwnedReceipt, dmRemovalReceipt, dmAbsentReceipt}, 3},
+		{"reused name", "", dmReleaseHeld, []string{strings.ReplaceAll(dmOwnedReceipt, "TC-CTL-x", "TC-OTHER-x")}, 1},
+		{"unreadable existence", "", dmReleaseHeld, []string{dmLookupFailed}, 1},
+		{"unreadable after remove", "", dmReleaseHeld, []string{dmOwnedReceipt, dmRemovalReceipt, dmLookupFailed}, 3},
+		{"unsettled table change", "load", dmReleaseHeld, []string{`{"action":"settled","name":"x","id":"load-a","done":false}`}, 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctr := &dmCleanupReceipts{replies: test.replies}
+			c := dmControl{keeper: dmKeeper{ctr: ctr}, rec: dmRecord{Name: "x", UUID: "TC-CTL-x", Major: 253, Minor: 4,
+				Live: ctlLinear, Unsettled: test.pending, UnsettledID: "load-a"}}
+			got, why := c.releaseOwned(t.Context())
+			if got != test.want || len(ctr.calls) != test.calls {
+				t.Fatalf("release %s (%s), keeper calls %v", got, why, ctr.calls)
+			}
+			if test.calls == 3 && !reflect.DeepEqual(ctr.calls[1][:3], []string{"step", "x", "remove"}) {
+				t.Fatalf("expected one removal, got %v", ctr.calls[1])
+			}
+			if test.calls == 3 && ctr.calls[1][5] != c.rec.UUID {
+				t.Fatalf("removal was not selected by the owned UUID: %v", ctr.calls[1])
+			}
+		})
+	}
+}
+
+func TestBlockControlReleasePreservesBackingOnReusedLoop(t *testing.T) {
+	ctr := &dmCleanupReceipts{replies: []string{strings.ReplaceAll(dmLookupLoop, "41", "42")}}
+	keeper := dmKeeper{ctr: ctr}
+	backing := &dmBacking{name: "a", loopIdentity: loopIdentity{Loop: "/dev/loop3", File: "/tc-blk/a", Inode: 41}}
+	if _, err := backing.release(t.Context(), keeper, nil); err == nil || len(ctr.calls) != 1 || ctr.calls[0][0] != "loopid" {
+		t.Fatalf("foreign loop reached detach: err=%v calls=%v", err, ctr.calls)
+	}
+}
+
+func TestBlockControlCleanupSettlesLostAcquisitionReplies(t *testing.T) {
+	t.Run("mapping receipt", func(t *testing.T) {
+		ctr := &dmCleanupReceipts{replies: []string{
+			"",
+			`{"action":"creation","name":"x","done":false}`,
+			`{"action":"creation","name":"x","done":true,"created":true}`,
+			dmOwnedReceipt, dmRemovalReceipt, dmAbsentReceipt,
+		}}
+		f := dmFixture{keeper: dmKeeper{ctr: ctr}}
+		_, err := f.createNode(t.Context(), "x", "TC-CTL-x", "7:3", dmControlSectors)
+		if err == nil || len(f.controls) != 1 {
+			t.Fatalf("dispatched mapping lost its cleanup record: %v %+v", err, f.controls)
+		}
+		c := f.controls[0]
+		if got, _ := c.releaseOwned(t.Context()); got != dmReleaseHeld || len(ctr.calls) != 2 {
+			t.Fatalf("pending mapping was released: %s %v", got, ctr.calls)
+		}
+		if got, why := c.releaseOwned(t.Context()); got != dmReleasable || c.rec.Major != 253 || len(ctr.calls) != 6 {
+			t.Fatalf("created mapping not safely released: %s %s %v", got, why, ctr.calls)
+		}
+	})
+	t.Run("loop receipt", func(t *testing.T) {
+		ctr := &dmCleanupReceipts{replies: []string{
+			"",
+			`{"action":"creation","name":"a","done":false}`,
+			`{"action":"creation","name":"a","done":true,"file":"/tc-blk/a","inode":41,"loop":"/dev/loop3","major":7,"minor":3}`,
+			dmLookupLoop, dmLoopUnlink,
+		}}
+		f := dmFixture{keeper: dmKeeper{ctr: ctr}}
+		_, err := f.createLoop(t.Context(), "a", dmControlBytes)
+		if err == nil || len(f.loops) != 1 {
+			t.Fatalf("dispatched loop lost its cleanup record: %v %+v", err, f.loops)
+		}
+		l := f.loops[0]
+		if _, err := l.release(t.Context(), f.keeper, nil); err == nil || len(ctr.calls) != 2 {
+			t.Fatalf("pending loop was released: %v %v", err, ctr.calls)
+		}
+		if r, err := l.release(t.Context(), f.keeper, nil); err != nil || !r.FileRemoved || len(ctr.calls) != 5 {
+			t.Fatalf("created loop not safely released: %+v %v %v", r, err, ctr.calls)
+		}
+	})
 }

@@ -7,11 +7,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"os/exec"
 	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 
+	"github.com/moby/moby/api/pkg/stdcopy"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -106,10 +108,9 @@ func TestZoneRouteCommands(t *testing.T) {
 	owned := "10.0.0.5/32 via 10.0.0.250 dev eth0 proto 157"
 	install := zoneRouteCommand(zoneRouteOp{dest: dest, via: record.via, dev: record.dev})
 	for _, want := range []string{
-		"n=$(ip -o -4 route show exact 10.0.0.5/32 | wc -l)",
-		"o=$(ip -o -4 route show exact " + owned + " | wc -l)",
-		"if [ $n -eq 0 ]; then ip route add " + owned + ";",
-		"elif [ $n -ne $o ]; then",
+		"routes=$(ip -o -4 route show exact 10.0.0.5/32) || exit $?",
+		"own=$(ip -o -4 route show exact " + owned + ") || exit $?",
+		"then ip route add " + owned + ";",
 		"exit 1; fi",
 	} {
 		if !strings.Contains(install, want) {
@@ -119,9 +120,58 @@ func TestZoneRouteCommands(t *testing.T) {
 	if strings.Contains(install, "replace") {
 		t.Errorf("install %q replaces a route it does not own", install)
 	}
+	for _, lookup := range []string{"destination", "owned"} {
+		t.Run("install stops on failed "+lookup+" lookup", func(t *testing.T) {
+			const fakeIP = `ip() {
+				if [ "$1" = route ]; then echo "unexpected route mutation"; return 0; fi
+				if [ "$#" = 6 ]; then
+					[ "$failed_lookup" != destination ]
+				else
+					[ "$failed_lookup" != owned ]
+				fi
+			}
+`
+			cmd := exec.CommandContext(t.Context(), "sh", "-ec", fakeIP+install)
+			cmd.Env = append(cmd.Environ(), "failed_lookup="+lookup)
+			if out, err := cmd.CombinedOutput(); err == nil || strings.Contains(string(out), "unexpected route mutation") {
+				t.Fatalf("install output %q, err=%v, want lookup error before mutation", out, err)
+			}
+		})
+	}
 	removal := zoneRouteCommand(record.removal("x", dest))
-	if want := "ip route del " + owned + " 2>/dev/null || true; test -z \"$(ip -o -4 route show exact " + owned + ")\""; removal != want {
-		t.Errorf("removal %q, want %q", removal, want)
+	if !strings.Contains(removal, "ip route del "+owned+" ") || !strings.Contains(removal, "route show exact "+owned+") || exit $?") {
+		t.Errorf("removal %q lacks the owned route or checked lookup", removal)
+	}
+	for name, check := range map[string]struct {
+		deleteFails, showFails bool
+		result                 string
+		wantOK                 bool
+	}{
+		"absent before deletion": {deleteFails: true, wantOK: true},
+		"removed":                {wantOK: true},
+		"deletion refused":       {deleteFails: true, result: owned},
+		"lookup failed":          {deleteFails: true, showFails: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			del, show := "0", "0"
+			if check.deleteFails {
+				del = "1"
+			}
+			if check.showFails {
+				show = "2"
+			}
+			const fakeIP = `ip() {
+				if [ "$1" = route ] && [ "$2" = del ]; then return "$delete_status"; fi
+				printf '%s' "$result"
+				return "$show_status"
+			}
+`
+			cmd := exec.CommandContext(t.Context(), "sh", "-ec", fakeIP+removal)
+			cmd.Env = append(cmd.Environ(), "delete_status="+del, "show_status="+show, "result="+check.result)
+			if out, err := cmd.CombinedOutput(); (err == nil) != check.wantOK {
+				t.Fatalf("removal result %q, err=%v, want success=%t", out, err, check.wantOK)
+			}
+		})
 	}
 }
 
@@ -219,10 +269,11 @@ func TestZonePeersLeaveOutMembersThatCannotHoldRoutes(t *testing.T) {
 
 type zoneCleanupContainer struct {
 	testcontainers.Container
-	id     string
-	docker *fakeOwnedDocker
-	calls  [][]string
-	stops  int
+	id          string
+	docker      *fakeOwnedDocker
+	calls       [][]string
+	stops       int
+	routeChecks []string
 }
 
 func (a *zoneCleanupContainer) GetContainerID() string { return a.id }
@@ -232,6 +283,14 @@ func (a *zoneCleanupContainer) Exec(_ context.Context, args []string, _ ...tcexe
 		return 0, nil, errors.New("route agent was removed")
 	}
 	a.calls = append(a.calls, slices.Clone(args))
+	if slices.Equal(args, []string{"ip", "-o", "-4", "route", "show", "proto", zoneRouteProtocol}) && len(a.routeChecks) != 0 {
+		result := a.routeChecks[0]
+		a.routeChecks = a.routeChecks[1:]
+		if result == "unavailable" {
+			return 0, nil, errors.New("route table unavailable")
+		}
+		return 0, multiplexed(stdcopy.Stdout, result), nil
+	}
 	return 0, strings.NewReader(""), nil
 }
 
@@ -279,7 +338,7 @@ func TestZoneBoundaryRetainsUninspectedMemberUntilCleanupRetry(t *testing.T) {
 		"orphan":      {clusterOwnerLabel: "cluster"},
 		"route-agent": {clusterOwnerLabel: "cluster", zoneBoundaryLabel: "cluster"},
 	}}
-	agent := &zoneCleanupContainer{id: "route-agent", docker: docker}
+	agent := &zoneCleanupContainer{id: "route-agent", docker: docker, routeChecks: []string{"unavailable", "residual route", ""}}
 	monAgent := &zoneCleanupContainer{id: "mon-agent", docker: docker}
 	mon := &zoneCleanupContainer{id: owned, docker: docker}
 	dest := netip.MustParseAddr("10.0.0.5")
@@ -307,10 +366,18 @@ func TestZoneBoundaryRetainsUninspectedMemberUntilCleanupRetry(t *testing.T) {
 		t.Fatalf("failed inspection discarded cleanup state: member %+v, calls %v", member, agent.calls)
 	}
 	unavailable.Store(false)
+	for _, want := range []string{"route table unavailable", "residual route"} {
+		if err := cluster.Terminate(t.Context()); err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("cleanup got %v, want %s", err, want)
+		}
+		if len(member.routes) != 0 || b.enrolled[id] != member || agent.stops != 0 {
+			t.Fatalf("pending protocol verification lost after %s: %+v", want, member)
+		}
+	}
 	if err := cluster.Terminate(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if len(docker.containers) != 1 || docker.containers[id] == nil || len(b.enrolled) != 0 || agent.stops != 1 || len(agent.calls) != 2 || !strings.Contains(strings.Join(agent.calls[0], " "), zoneRouteCommand(record.removal(id, dest))) {
+	if len(docker.containers) != 1 || docker.containers[id] == nil || len(b.enrolled) != 0 || agent.stops != 1 || len(agent.calls) != 4 || !strings.Contains(strings.Join(agent.calls[0], " "), zoneRouteCommand(record.removal(id, dest))) {
 		t.Fatalf("retry did not remove the owned route and agent: calls %v, stops %d", agent.calls, agent.stops)
 	}
 }

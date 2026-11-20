@@ -43,7 +43,7 @@ func removeFilesystem(ctx context.Context, c *ceph.Container, handle *Filesystem
 			survivors[native.ID] = survivor.fleet().ownedNames()
 		}
 	}
-	if present {
+	if fs.fsNewAttempted && present {
 		// Gracefully drain only this filesystem. Older monitors can refuse
 		// fs fail because an unrelated filesystem's MDS has a warning.
 		if err := drainFilesystemForRemoval(ctx, c, fs); err != nil {
@@ -53,6 +53,7 @@ func removeFilesystem(ctx context.Context, c *ceph.Container, handle *Filesystem
 			return fmt.Errorf("remove cephfs %q: %w", name, err)
 		}
 	}
+	fs.fsNewAttempted = false
 	// Checked even when the filesystem is already absent: a retry after a
 	// failed wait, or after an fs rm whose reply was lost, must still hold
 	// the survivors' affinity before the removal is reported as done.
@@ -62,10 +63,12 @@ func removeFilesystem(ctx context.Context, c *ceph.Container, handle *Filesystem
 	if err := fs.fleet().removeAll(ctx); err != nil {
 		return err
 	}
-	for _, pool := range cephFSConfiguredPools(fs.config) {
-		if err := servicehook.RemovePool(ctx, c, pool.Name, true); err != nil && !servicehook.PoolMissing(err) {
+	for len(fs.createdPools) > 0 {
+		pool := fs.createdPools[0]
+		if err := servicehook.RemovePool(ctx, c, pool); err != nil && !servicehook.PoolMissing(err) {
 			return fmt.Errorf("remove pool %q of removed cephfs %q: %w", pool.Name, name, err)
 		}
+		fs.createdPools = fs.createdPools[1:]
 	}
 	delete(filesystems(c).byName, name)
 	return nil

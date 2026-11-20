@@ -426,9 +426,16 @@ type monReplacementReporter interface {
 // test.
 func runMonReplacement(t monReplacementReporter, ctx context.Context, r *monReplacementRecorder, pairs [][2]string) {
 	t.Helper()
+	started := time.Now()
 	r.begin(ctx)
 	if err := r.replace(ctx, pairs); err != nil {
-		bundle := r.collect(ctx, r.Phases[len(r.Phases)-1])
+		// An initial membership read can fail before any mutation starts.
+		// Phase zero identifies setup without adding an operation to Phases.
+		failed := monReplacementPhase{Name: "before replacement", Started: started, Ended: time.Now(), Error: err.Error()}
+		if len(r.Phases) > 0 {
+			failed = r.Phases[len(r.Phases)-1]
+		}
+		bundle := r.collect(ctx, failed)
 		t.Logf("MON_REPLACEMENT_BUNDLE %s", monReplacementJSON(bundle))
 		t.Fatalf("MON replacement token=%s cluster=%s phase %d %q: %v", r.Token, r.Cluster, bundle.Failed.Seq, bundle.Failed.Name, err)
 		return

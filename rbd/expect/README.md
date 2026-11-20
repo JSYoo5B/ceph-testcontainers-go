@@ -34,7 +34,12 @@ watch comparison.
 The watcher and lock lists come from separate native reads, so during a
 handoff an observation can name the new owner before its watch appears. An
 `owner-watch` mismatch is then a possible observed state; the test decides
-whether to read again.
+whether to read again. `OwnerWatches` does not compare cookies. Two image
+handles on one client connection can watch at the same address with different
+cookies, so an address match does not establish that the lock's particular
+watch instance was observed. Tests that need that identity must also compare
+the managed lock ID (`auto <watch cookie>`) with the watcher cookie; even that
+comparison spans separate native reads.
 
 ```golang
 status, err := rbd.ImageClients(ctx, cluster, pool, "", image)

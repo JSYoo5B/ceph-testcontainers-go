@@ -53,8 +53,11 @@ use the [finalize](../finalize/README.md) package instead.
   observations fail: keep the report. Truncation alone is not an error.
   `Report.Complete` means every observation succeeded untruncated, not that
   Ceph is healthy.
-- A canceled test context cannot collect: `t.Context()` has ended when
-  cleanups run.
+- Use a fresh context when collecting during test cleanup. A query interrupted
+  during collection gets a bounded cancellation attempt. If its settlement
+  cannot be confirmed, the query may still run in the control container.
+  The affected artifact and aggregate error identify this uncertainty;
+  save the report before terminating the fixture.
 - `Config` and `CrashMetadataConfig` bound time, bytes, records and
   concurrency; zero fields select defaults, and invalid limits are refused
   with an error that matches `ceph.ErrInvalidRequest`, without a report.

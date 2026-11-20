@@ -104,18 +104,20 @@ func fullnessBarrierSample(base backfillBaseline, p pgProgress) (barrierVerdict,
 	return barrierWaiting, "state " + p.State
 }
 
-// barrierSample is one verdict with the time it was taken.
+// barrierSample bounds one PG observation with its request and reply times.
 type barrierSample struct {
 	Verdict barrierVerdict
-	At      time.Time
+	Start   time.Time
+	End     time.Time
 }
+
+const fullnessSampleGap = 10 * time.Second
 
 // barrierJudgement is what a window of samples showed.
 type barrierJudgement struct {
 	// Holds is the number of backfill_toofull samples; Before counts the samples
-	// before the first one; FirstHold and LastHold bound them in time.
+	// before the first one.
 	Holds, Before        int
-	FirstHold, LastHold  time.Time
 	BeforeRunning        int
 	HeldFor              time.Duration
 	BeforeVerdictsByName map[barrierVerdict]int
@@ -123,9 +125,11 @@ type barrierJudgement struct {
 
 // judgeBarrier accepts a window of samples only when the primary reported
 // backfill_toofull at least once, kept reporting it in every later sample for
-// at least minSpan (so that at least one retry of the reservation was refused
-// too), and never showed a running backfill or an advanced cursor after the
-// first report. Samples before the first report may be waiting; they may show a
+// at least minSpan between closely spaced observations. The conservative
+// span runs from the end of the first read to the start of the last; a
+// slow request or a long gap cannot establish the state between samples.
+// This does not observe individual reservation retries. Samples before the
+// first report may be waiting; they may show a
 // running backfill only when allowRunningBefore is set, which is the revocation
 // path (a granted reservation is taken back). In the admission path a running
 // backfill before the first report means the reservation was granted, so the
@@ -155,11 +159,21 @@ func judgeBarrier(samples []barrierSample, minSpan time.Duration, allowRunningBe
 		if sample.Verdict != barrierHolds {
 			return j, fmt.Errorf("sample %d after the first backfill_toofull is %s", i, sample.Verdict)
 		}
+		if sample.Start.IsZero() || sample.End.Before(sample.Start) {
+			return j, fmt.Errorf("sample %d has invalid read bounds", i)
+		}
+		if sample.End.Sub(sample.Start) > fullnessSampleGap {
+			return j, fmt.Errorf("sample %d took %s to read, want within %s", i, sample.End.Sub(sample.Start), fullnessSampleGap)
+		}
+		if i > first {
+			prev := samples[i-1]
+			if sample.Start.Before(prev.End) || sample.End.Sub(prev.Start) > fullnessSampleGap {
+				return j, fmt.Errorf("sample %d ended %s after the previous one began, want ordered reads within %s", i, sample.End.Sub(prev.Start), fullnessSampleGap)
+			}
+		}
 		j.Holds++
-		j.LastHold = sample.At
 	}
-	j.FirstHold = samples[first].At
-	j.HeldFor = j.LastHold.Sub(j.FirstHold)
+	j.HeldFor = max(samples[len(samples)-1].Start.Sub(samples[first].End), 0)
 	if j.HeldFor < minSpan {
 		return j, fmt.Errorf("backfill_toofull was observed for %s, want at least %s", j.HeldFor.Round(time.Millisecond), minSpan)
 	}
@@ -172,11 +186,12 @@ func judgeBarrier(samples []barrierSample, minSpan time.Duration, allowRunningBe
 // the time on either side must not be credited as one uninterrupted barrier.
 // Before the first report nothing is credited yet, so the failure is only
 // counted by the caller and the sample list is unchanged.
-func recordFailedRead(samples []barrierSample, at time.Time, credited bool) []barrierSample {
+func recordFailedRead(samples []barrierSample, sample barrierSample, credited bool) []barrierSample {
 	if !credited {
 		return samples
 	}
-	return append(samples, barrierSample{Verdict: barrierInconclusive, At: at})
+	sample.Verdict = barrierInconclusive
+	return append(samples, sample)
 }
 
 // osdStates are the state names of every OSD in an "osd dump": exists, up,

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
@@ -36,7 +37,7 @@ type cephFSOriginalScope struct {
 // after its native cluster identities are read and found distinct. operation
 // names the receipt in the refusals. Container.mu is held.
 func (mirror *Container) captureOriginalScope(ctx context.Context, operation, peerID string, readClusters func(context.Context) ([2]string, error)) (*cephFSOriginalScope, error) {
-	if mirror.metadataPoolID <= 0 || mirror.destinationMetadataPoolID <= 0 || mirror.SourceClientEntity == "" || mirror.metadataPool == "" {
+	if !mirror.filesystemIdentityConfirmed || mirror.metadataPoolID < 0 || mirror.destinationMetadataPoolID < 0 || mirror.SourceClientEntity == "" || mirror.metadataPool == "" {
 		return nil, cephFSObserveGuard(operation + " original filesystem metadata identity is unavailable")
 	}
 	if readClusters == nil {
@@ -68,7 +69,7 @@ func (s *cephFSOriginalScope) usable() bool {
 func (s *cephFSOriginalScope) sameFixture(allowClearedPeer bool) bool {
 	m := s.mirror
 	peer := m.peerID == s.peerID || (allowClearedPeer && m.peerID == "")
-	return peer && m.source == s.source && m.destination == s.destination && m.SourceFilesystem == s.sourceFilesystem && m.DestinationFilesystem == s.destinationFilesystem && m.SourceClientEntity == s.sourceClient && m.filesystemID == s.sourceID && m.destinationFilesystemID == s.destinationID && m.metadataPoolID == s.sourceMetadata && m.destinationMetadataPoolID == s.destinationMetadata && m.metadataPool == s.metadataPool && m.DestinationClientEntity == s.peer.ClientName && m.destinationSite == s.peer.SiteName
+	return peer && m.filesystemIdentityConfirmed && m.source == s.source && m.destination == s.destination && m.SourceFilesystem == s.sourceFilesystem && m.DestinationFilesystem == s.destinationFilesystem && m.SourceClientEntity == s.sourceClient && m.filesystemID == s.sourceID && m.destinationFilesystemID == s.destinationID && m.metadataPoolID == s.sourceMetadata && m.destinationMetadataPoolID == s.destinationMetadata && m.metadataPool == s.metadataPool && m.DestinationClientEntity == s.peer.ClientName && m.destinationSite == s.peer.SiteName
 }
 
 // directoryPolicy reads the source filesystem's native directory policy with
@@ -301,7 +302,11 @@ func validCephFSRemovalClusters(values [2]string) bool {
 
 func (mirror *Container) peerRemovalClusterIdentities(ctx context.Context) ([2]string, error) {
 	var result [2]string
-	for i, cluster := range []*ceph.Container{mirror.source, mirror.destination} {
+	for i, site := range []struct {
+		cluster *ceph.Container
+		name    string
+	}{{mirror.source, "source"}, {mirror.destination, "destination"}} {
+		cluster := site.cluster
 		if cluster == nil {
 			return result, cephFSObserveGuard("CephFS original cluster is unavailable")
 		}
@@ -309,7 +314,7 @@ func (mirror *Container) peerRemovalClusterIdentities(ctx context.Context) ([2]s
 		if err != nil {
 			return result, err
 		}
-		original, err := readCephFSRemovalClusterIdentity(ctx, observer.MonitorBootstrapAddresses,
+		original, err := readCephFSRemovalClusterIdentity(ctx, site.name, observer.MonitorBootstrapAddresses,
 			func(queryCtx context.Context) (string, error) {
 				status, err := observer.QuorumStatus(queryCtx)
 				return status.MonMap.FSID, err
@@ -331,11 +336,13 @@ func (mirror *Container) peerRemovalClusterIdentities(ctx context.Context) ([2]s
 // The common API does not type query versus schema errors, so non-context
 // failures conservatively guard this observation. The retained intent survives:
 // retry Status/Wait with a fresh context after quorum availability is restored.
-func readCephFSRemovalClusterIdentity(ctx context.Context, bootstrap, quorum, native func(context.Context) (string, error)) (string, error) {
-	validate := func() error {
+func readCephFSRemovalClusterIdentity(ctx context.Context, site string, bootstrap, quorum, native func(context.Context) (string, error)) (string, error) {
+	validate := func(phase string) error {
+		started := time.Now()
 		addresses, err := bootstrap(ctx)
 		if err != nil {
-			cause := cephFSObserveQuery("validate original CephFS monitor bootstrap", err)
+			operation := fmt.Sprintf("validate original CephFS %s monitor bootstrap %s FSID readback (elapsed %s)", site, phase, time.Since(started).Round(time.Millisecond))
+			cause := cephFSObserveQuery(operation, err)
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return cause
 			}
@@ -346,7 +353,7 @@ func readCephFSRemovalClusterIdentity(ctx context.Context, bootstrap, quorum, na
 		}
 		return ctx.Err()
 	}
-	if err := validate(); err != nil {
+	if err := validate("before"); err != nil {
 		return "", err
 	}
 	original, err := quorum(ctx)
@@ -368,7 +375,7 @@ func readCephFSRemovalClusterIdentity(ctx context.Context, bootstrap, quorum, na
 	if current != original {
 		return "", cephFSObserveGuard("CephFS native FSID differs from its confirmed monmap")
 	}
-	if err := validate(); err != nil {
+	if err := validate("after"); err != nil {
 		return "", err
 	}
 	return original, ctx.Err()

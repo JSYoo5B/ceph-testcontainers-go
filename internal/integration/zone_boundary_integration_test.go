@@ -647,7 +647,7 @@ func zonePartition(t *testing.T, ctx context.Context, b *zoneBoundary, observer 
 		}
 		s := summarizeZoneRTT(r)
 		if p.Cross {
-			err = checkZoneCut(s)
+			err = harness.CheckZoneCut(s)
 		} else {
 			err = checkZoneControl(base[p.Name], s)
 		}

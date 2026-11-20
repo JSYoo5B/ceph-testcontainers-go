@@ -96,3 +96,16 @@ func (r *osdRegistry) unpark(id int, osd *OSDContainer) {
 //
 //testdouble:test-mutator
 func (r *osdRegistry) replace(owned map[int]*OSDContainer) { r.owned = owned }
+
+// placements includes both owned and retained registrations, whose CRUSH
+// buckets must keep their parents even while no daemon is attached.
+func (r *osdRegistry) placements() []OSDConfig {
+	result := make([]OSDConfig, 0, len(r.owned)+len(r.detached))
+	for _, osd := range r.owned {
+		result = append(result, osd.placement)
+	}
+	for _, detached := range r.detached {
+		result = append(result, detached.placement)
+	}
+	return result
+}

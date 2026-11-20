@@ -7,6 +7,7 @@ package mon_log_ack_peon_test
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -97,22 +98,54 @@ func TestRoutedLogAck(t *testing.T) {
 2026-11-01T00:08:12.147+0000 ffff8c719a80 10 mon.b@1(peon) e3 handle_route tid 198 null
 `
 	delivered := forwarded + "2026-11-01T00:08:12.981+0000 ffff8c719a80 10 mon.b@1(peon) e3 handle_route tid 198 log(last 5)\n"
-	if tid, why := routedLogAck([]byte(delivered), "osd.0", 5); tid != "198" || why != "" {
+	if tid, why := routedLogAck([]byte(delivered), "osd.0", 5, false); tid != "198" || why != "" {
 		t.Fatalf("a routed ack: %q %q", tid, why)
 	}
 	discarded := delivered + "2026-11-01T00:08:12.981+0000 ffff8c719a80 10 mon.b@1(peon) e3  don't have routed request tid 198\n"
-	if tid, _ := routedLogAck([]byte(discarded), "osd.0", 5); tid != "" {
+	if tid, _ := routedLogAck([]byte(discarded), "osd.0", 5, false); tid != "" {
 		t.Fatal("a discarded ack was bound")
 	}
-	if tid, _ := routedLogAck([]byte(delivered), "osd.0", 6); tid != "" {
+	if tid, _ := routedLogAck([]byte(delivered), "osd.0", 6, false); tid != "" {
 		t.Fatal("an ack below the sent sequence was bound")
 	}
-	if tid, _ := routedLogAck([]byte(delivered), "osd.2", 5); tid != "" {
+	if tid, _ := routedLogAck([]byte(delivered), "osd.2", 5, false); tid != "" {
 		t.Fatal("another OSD's route was bound")
 	}
 	// Acknowledged by the leader after a rehunt: nothing routed through b.
-	if tid, why := routedLogAck([]byte(forwarded), "osd.0", 5); tid != "" || why == "" {
+	if tid, why := routedLogAck([]byte(forwarded), "osd.0", 5, false); tid != "" || why == "" {
 		t.Fatalf("an ack that never came through the peon: %q %q", tid, why)
+	}
+}
+
+func TestJudgeLogAcksRequiresAnObservedCoveringRoute(t *testing.T) {
+	const targetQuery = "preprocess_query log(2 entries from seq 4 at sample) from osd.0 address "
+	const forward = "forward_request 198 request log(2 entries from seq 4 at sample)"
+	const ack = "handle_route tid 198 log(last 5)"
+	const discard = "don't have routed request tid 198"
+	roles := map[string]string{"osd.0": "peon", "osd.1": "leader"}
+	sessions := map[string]logAckSessionID{"osd.0": {Mon: "b"}, "osd.1": {Mon: "a"}}
+	for _, test := range []struct {
+		name           string
+		progress       logClientProgress
+		log            string
+		wantReproduced bool
+		wantError      bool
+	}{
+		{"missing send", logClientProgress{}, targetQuery + forward + ack + discard, false, true},
+		{"outstanding with no routed reply", logClientProgress{Sent: 5}, targetQuery + forward, false, true},
+		{"unrelated route", logClientProgress{Sent: 5}, strings.Replace(targetQuery, "osd.0", "osd.2", 1) + forward + ack + discard, false, true},
+		{"discard below sent sequence", logClientProgress{Sent: 6}, targetQuery + forward + ack + discard, false, true},
+		{"client outstanding but route delivered", logClientProgress{Sent: 5}, targetQuery + forward + ack, false, true},
+		{"attributed covering discard", logClientProgress{Sent: 5}, targetQuery + forward + ack + discard, true, false},
+		{"acknowledged through the peon", logClientProgress{Sent: 5, Acked: 5}, targetQuery + forward + ack, false, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			progress := map[string]logClientProgress{"osd.0": test.progress, "osd.1": {Sent: 5, Acked: 5}}
+			symptoms, routes, err := judgeLogAcks(roles, sessions, progress, map[string][]byte{"b": []byte(test.log)})
+			if (err != nil) != test.wantError || (len(symptoms) != 0) != test.wantReproduced {
+				t.Fatalf("symptoms %v, routes %v, error %v", symptoms, routes, err)
+			}
+		})
 	}
 }
 

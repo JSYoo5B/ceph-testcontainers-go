@@ -12,10 +12,11 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"strconv"
+
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
@@ -23,13 +24,13 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-// Argv strips the shell supervisor of a radosgw-admin call, so a fake sees
+// Argv strips the process supervisor of a radosgw-admin call, so a fake sees
 // the radosgw-admin command line.
 //
 //testdouble:shared-double
 func Argv(args []string) []string {
-	if len(args) > 7 && args[0] == "sh" && args[2] == supervised.ShellScript {
-		return args[7:]
+	if len(args) > 6 && args[0] == "python3" && args[2] == supervised.Script {
+		return args[6:]
 	}
 	return args
 }
@@ -39,20 +40,20 @@ func Argv(args []string) []string {
 //
 //testdouble:shared-double
 func IsCancel(args []string) bool {
-	return len(args) > 2 && args[0] == "sh" && args[2] == supervised.ShellCancelScript
+	return len(args) > 2 && args[0] == "python3" && args[2] == supervised.CancelScript
 }
 
-// Reply answers a call as the gateway's supervisor does: it ends the standard
-// error of a call that original wrapped with the supervisor's end line.
+// Reply frames native output as a supervisor envelope for a supervised
+// call or returns the original Docker exec stream.
 //
 //testdouble:shared-double
-func Reply(original []string, code int, stream *bytes.Buffer) (int, io.Reader, error) {
-	if len(original) > 2 && original[2] == supervised.ShellScript {
-		end := []byte(supervised.ShellEndPrefix + strconv.Itoa(code) + "\n")
-		header := [8]byte{byte(stdcopy.Stderr)}
-		binary.BigEndian.PutUint32(header[4:], uint32(len(end)))
-		stream.Write(header[:])
-		stream.Write(end)
+func Reply(original []string, code int, stream *bytes.Buffer, stopped ...bool) (int, io.Reader, error) {
+	if len(original) > 2 && original[2] == supervised.Script {
+		var stdout, stderr bytes.Buffer
+		if _, err := stdcopy.StdCopy(&stdout, &stderr, stream); err != nil {
+			return 0, nil, err
+		}
+		return 0, bytes.NewReader(clustertest.QuorumEnvelope(stdout.Bytes(), stderr.Bytes(), code, len(stopped) > 0 && stopped[0], false)), nil
 	}
 	return code, stream, nil
 }

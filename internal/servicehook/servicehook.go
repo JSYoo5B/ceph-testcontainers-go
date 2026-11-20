@@ -52,16 +52,17 @@ type hooks interface {
 	LockTopology(ctx context.Context, c *ceph.Container) error
 	MonitorAddresses(status ceph.QuorumStatus) (string, error)
 	NativeFailure(program string, code int, stdout, stderr []byte) error
+	NativeInputClaimed(input *ceph.NativeInput) bool
 	NormalizePool(config ceph.PoolConfig) (ceph.PoolConfig, error)
 	OnlyMissingHostResource(err error) bool
 	PoolMissing(err error) bool
 	PoolPlacementDomains(c *ceph.Container, config ceph.PoolConfig) int
 	PoolPolicyReady(c *ceph.Container) error
 	PoolStates(ctx context.Context, c *ceph.Container) ([]ceph.PoolState, error)
-	RemovePool(ctx context.Context, c *ceph.Container, name string, skipForeign bool) error
+	RemovePool(ctx context.Context, c *ceph.Container, pool *ceph.Pool) error
 	ReserveHostPorts(ctx context.Context, c *ceph.Container, count int) ([]int, func(context.Context) error, error)
 	ResolvePool(c *ceph.Container, config ceph.PoolConfig) ceph.PoolConfig
-	RunOwnedShell(ctx context.Context, c *ceph.Container, target testcontainers.Container, label string, limit, stdoutLimit int, argv ...string) (supervised.ShellReport, error)
+	RunOwnedRoleCommand(ctx context.Context, c *ceph.Container, target testcontainers.Container, label string, limit, stdoutLimit int, argv ...string) (supervised.Report, error)
 	ScriptFile(name string) testcontainers.ContainerFile
 	Service(c *ceph.Container, name string) testcontainers.Container
 	ServiceBootstrap(kind string, fallback bool, build func() (Bootstrap, error)) ceph.Option
@@ -173,6 +174,10 @@ func NativeFailure(program string, code int, stdout, stderr []byte) error {
 	return get().NativeFailure(program, code, stdout, stderr)
 }
 
+// NativeInputClaimed reports whether command admission took a fresh input.
+// A claim allows dispatch but does not establish that the command ran.
+func NativeInputClaimed(input *ceph.NativeInput) bool { return get().NativeInputClaimed(input) }
+
 // NormalizePool validates a pool configuration and fills its defaults.
 func NormalizePool(config ceph.PoolConfig) (ceph.PoolConfig, error) {
 	return get().NormalizePool(config)
@@ -200,11 +205,9 @@ func PoolStates(ctx context.Context, c *ceph.Container) ([]ceph.PoolState, error
 	return get().PoolStates(ctx, c)
 }
 
-// RemovePool removes a fixture-created pool and its rule and profile. With
-// skipForeign, a pool the fixture did not create is left alone. The caller
-// holds the cluster mutex.
-func RemovePool(ctx context.Context, c *ceph.Container, name string, skipForeign bool) error {
-	return get().RemovePool(ctx, c, name, skipForeign)
+// RemovePool removes the resources of a CreatePool result under the cluster mutex.
+func RemovePool(ctx context.Context, c *ceph.Container, pool *ceph.Pool) error {
+	return get().RemovePool(ctx, c, pool)
 }
 
 // ReserveHostPorts reserves count host ports that the cluster tracks until
@@ -219,15 +222,15 @@ func ResolvePool(c *ceph.Container, config ceph.PoolConfig) ceph.PoolConfig {
 	return get().ResolvePool(c, config)
 }
 
-// RunOwnedShell runs argv in target, a container of c that the caller
-// admitted while it held the cluster mutex, under the shell supervisor with
+// RunOwnedRoleCommand runs argv in target, a container of c that the caller
+// admitted while it held the cluster mutex, under the process supervisor with
 // limit seconds (0 for none), keeping at most stdoutLimit bytes of its
-// standard output (0 for all) as supervised.RunShellLimited does, and tracks
+// standard output (0 for all) as supervised.RunRoleCommand does, and tracks
 // it until it is known to have ended: when ctx ends first the command is
-// stopped before RunOwnedShell returns, and a stop that cannot be confirmed
+// stopped before RunOwnedRoleCommand returns, and a stop that cannot be confirmed
 // returns a *ceph.NativeCommandUnstoppedError.
-func RunOwnedShell(ctx context.Context, c *ceph.Container, target testcontainers.Container, label string, limit, stdoutLimit int, argv ...string) (supervised.ShellReport, error) {
-	return get().RunOwnedShell(ctx, c, target, label, limit, stdoutLimit, argv...)
+func RunOwnedRoleCommand(ctx context.Context, c *ceph.Container, target testcontainers.Container, label string, limit, stdoutLimit int, argv ...string) (supervised.Report, error) {
+	return get().RunOwnedRoleCommand(ctx, c, target, label, limit, stdoutLimit, argv...)
 }
 
 // ScriptFile returns an embedded bootstrap script as a container file.

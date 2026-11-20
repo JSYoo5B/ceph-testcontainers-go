@@ -128,12 +128,12 @@ func TestECEligibleFragmentVerdicts(t *testing.T) {
 			t.Errorf("required versions: head %v, clone %v", head.Need, clone.Need)
 		}
 	})
-	t.Run("missing fragment is not observed", func(t *testing.T) {
+	t.Run("explicit acting hole has no holder", func(t *testing.T) {
 		head, clone := ecFixtureClassify(t, observe(t, "active+undersized+degraded", []int{1, ecFragmentNone, 0}, ecFixtureNoUnfound,
 			ecFixtureComplete(1, 0), ecFixtureComplete(0, 2)), 2)
 		for _, c := range []ecClassification{head, clone} {
 			ecWant(t, c, ecSufficient, ecEligible, 0, 2)
-			ecWant(t, c, ecSufficient, ecUnobserved, 1)
+			ecWant(t, c, ecSufficient, ecAbsent, 1)
 		}
 	})
 	t.Run("lagging fragment with an empty unfound list", func(t *testing.T) {
@@ -174,10 +174,24 @@ func TestECEligibleFragmentVerdicts(t *testing.T) {
 		ecWant(t, head, ecSufficient, ecBehind, 1)
 	})
 	t.Run("duplicate locations of one index count once", func(t *testing.T) {
-		acting := []int{1, 2, 3, 4, 5, 6}
+		acting := []int{1, 2, 3, ecFragmentNone, ecFragmentNone, ecFragmentNone}
 		head, _ := ecFixtureClassify(t, observe(t, "active+undersized+degraded", acting, ecFixtureNoUnfound,
 			ecFixtureComplete(1, 0), ecFixtureComplete(2, 1), ecFixtureComplete(2, 1), ecFixtureComplete(3, 2)), 4)
 		ecWant(t, head, ecInsufficient, ecEligible, 0, 1, 2)
+	})
+	t.Run("unreported acting holder can affect the threshold", func(t *testing.T) {
+		acting := []int{1, 2, ecFragmentNone}
+		head, _ := ecFixtureClassify(t, observe(t, "active+undersized+degraded", acting, ecFixtureNoUnfound,
+			ecFixtureComplete(1, 0)), 2)
+		ecWant(t, head, ecIncomplete, ecUnobserved, 1)
+		head, _ = ecFixtureClassify(t, observe(t, "active+undersized+degraded", acting, ecFixtureNoUnfound,
+			ecFixtureComplete(1, 0), ecFixtureComplete(2, 1)), 2)
+		ecWant(t, head, ecSufficient, ecEligible, 0, 1)
+	})
+	t.Run("reported eligible fragments do not need an unreported holder", func(t *testing.T) {
+		head, _ := ecFixtureClassify(t, observe(t, "active+degraded", clean, ecFixtureNoUnfound,
+			ecFixtureComplete(1, 0), ecFixtureComplete(2, 1)), 2)
+		ecWant(t, head, ecSufficient, ecUnobserved, 2)
 	})
 	t.Run("too few fragments", func(t *testing.T) {
 		head, _ := ecFixtureClassify(t, observe(t, "active+undersized+degraded", []int{1, ecFragmentNone, ecFragmentNone}, ecFixtureNoUnfound,

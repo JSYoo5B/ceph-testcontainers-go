@@ -330,6 +330,11 @@ func (t monitorTopology) retireMonitor(ctx context.Context, handle *MonitorConta
 			return errors.New("removing this monitor would lose quorum; add a replacement first")
 		}
 	}
+	if t.fenceNative != nil && mon.Container != nil {
+		if err := t.fenceNative(ctx, mon.GetContainerID()); err != nil {
+			return fmt.Errorf("settle monitor %s native commands: %w", name, err)
+		}
+	}
 	// Stop the MON before it leaves the membership, as Ceph's manual removal
 	// procedure does. Committing the removal renumbers the survivors' ranks,
 	// and each of them then drops every client session. A warm client hunts
@@ -1040,6 +1045,11 @@ func (t monitorTopology) retireManager(ctx context.Context, handle *ManagerConta
 	}
 	if len(candidates) == 0 {
 		return errors.New("no other running, registered owned manager; add or restart a replacement first")
+	}
+	if t.fenceNative != nil && mgr.Container != nil {
+		if err := t.fenceNative(ctx, mgr.GetContainerID()); err != nil {
+			return fmt.Errorf("settle manager %s native commands: %w", name, err)
+		}
 	}
 	// A failed manager that is still running can immediately beacon back into
 	// the map. Delete its container first, then remove any remaining map entry.

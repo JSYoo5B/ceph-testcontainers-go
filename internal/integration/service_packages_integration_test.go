@@ -35,7 +35,7 @@ func TestServicePackages(t *testing.T) {
 		if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 			t.Fatal(err)
 		}
-		servicePackageProbe(t, ctx, client, "rbd", "rbd")
+		servicePackageProbe(t, ctx, client, "rbd", "rbd", 1)
 	})
 	t.Run("cephfs_run_default_filesystem", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
@@ -48,7 +48,7 @@ func TestServicePackages(t *testing.T) {
 		if err := filesystems[0].WaitReady(ctx); err != nil {
 			t.Fatal(err)
 		}
-		servicePackageProbe(t, ctx, client, "cephfs", "tc-cephfs")
+		servicePackageProbe(t, ctx, client, "cephfs", "tc-cephfs", 1)
 	})
 	t.Run("rgw_run_default_gateway", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
@@ -86,11 +86,11 @@ func TestServicePackages(t *testing.T) {
 				t.Fatal(err)
 			}
 			// All three protocols use the same OSDs in one session of work.
-			servicePackageProbe(t, ctx, client, "rbd", "volumes")
-			servicePackageProbe(t, ctx, client, "cephfs", "shared")
+			servicePackageProbe(t, ctx, client, "rbd", "volumes", 1)
+			servicePackageProbe(t, ctx, client, "cephfs", "shared", 1)
 			servicePackageS3(t, ctx, gateways[0], gateways[0].AccessKey, gateways[0].SecretKey, name)
-			servicePackageProbe(t, ctx, client, "rbd", "volumes")
-			servicePackageProbe(t, ctx, client, "cephfs", "shared")
+			servicePackageProbe(t, ctx, client, "rbd", "volumes", 2)
+			servicePackageProbe(t, ctx, client, "cephfs", "shared", 2)
 			pools, err := harness.ObserveCluster(cluster).Pools(ctx)
 			if err != nil {
 				t.Fatal(err)
@@ -149,11 +149,24 @@ func servicePackageApplication(t *testing.T, ctx context.Context, cluster *ceph.
 	}
 }
 
-// The probe keeps earlier phases' data: each call writes a fresh object and
-// verifies every object that an earlier call wrote.
-func servicePackageProbe(t *testing.T, ctx context.Context, client testcontainers.Container, kind, target string) {
+// Each phase writes one new object. Its ordinal supplies the expected object
+// identities independently of enumeration by either client.
+func servicePackageProbe(t *testing.T, ctx context.Context, client testcontainers.Container, kind, target string, phase int) {
 	t.Helper()
-	t.Logf("SERVICE_PACKAGES %s", harness.ExecOutput(t, ctx, client, "python3", "-c", servicePackageScript, kind, target))
+	expected := servicePackageExpected(kind, phase)
+	names, err := json.Marshal(expected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := harness.ExecOutput(t, ctx, client, "python3", "-c", servicePackageScript, kind, target, string(names))
+	t.Logf("SERVICE_PACKAGES %s target=%s phase=%d %s", kind, target, phase, raw)
+	var receipt servicePackageReadback
+	if err := json.Unmarshal([]byte(raw), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	if err := requireServicePackageReadback(expected, receipt); err != nil {
+		t.Fatalf("%s %s phase %d: %v", kind, target, phase, err)
+	}
 }
 
 func servicePackageS3(t *testing.T, ctx context.Context, gateway *rgw.Gateway, access, secret, phase string) {
@@ -174,22 +187,25 @@ func servicePackageS3(t *testing.T, ctx context.Context, gateway *rgw.Gateway, a
 	t.Logf("SERVICE_PACKAGES s3 bucket=%s bytes=%d", bucket, len(body))
 }
 
-const servicePackageScript = `import sys,json,hashlib,uuid
-kind,target=sys.argv[1:]
+const servicePackageScript = `import sys,json,hashlib
+kind,target,expected=sys.argv[1:]
+expected=json.loads(expected)
+name=expected[-1]
+checked=[]
 def payload(name): return hashlib.sha256(name.encode()).digest()*1024
 if kind=='rbd':
     import rados,rbd
     cluster=rados.Rados(conffile='/etc/ceph/ceph.conf'); cluster.connect()
     try:
         with cluster.open_ioctx(target) as io:
-            name='image-'+uuid.uuid4().hex[:8]
             rbd.RBD().create(io,name,4<<20)
             with rbd.Image(io,name) as image: image.write(payload(name),0)
             names=sorted(n for n in rbd.RBD().list(io) if n.startswith('image-'))
-            for existing in names:
+            for existing in expected:
                 with rbd.Image(io,existing,read_only=True) as image:
                     data=payload(existing); assert image.read(0,len(data))==data,existing
-            print(json.dumps({'rbd':target,'images':len(names)}))
+                checked.append(existing)
+            print(json.dumps({'listed':names,'checked':checked}))
     finally: cluster.shutdown()
 else:
     import cephfs
@@ -198,7 +214,6 @@ else:
     try:
         try: fs.mkdir(b'/service',0o755)
         except cephfs.ObjectExists: pass
-        name='file-'+uuid.uuid4().hex[:8]
         fd=fs.open(('/service/'+name).encode(),'w',0o644); fs.write(fd,payload(name),0); fs.fsync(fd,0); fs.close(fd)
         names=[]
         d=fs.opendir(b'/service')
@@ -207,9 +222,10 @@ else:
             if entry.d_name.startswith(b'file-'): names.append(entry.d_name.decode())
             entry=fs.readdir(d)
         fs.closedir(d)
-        for existing in names:
+        for existing in expected:
             data=payload(existing); fd=fs.open(('/service/'+existing).encode(),'r',0)
             assert fs.read(fd,0,len(data)+1)==data,existing; fs.close(fd)
-        print(json.dumps({'cephfs':target,'files':len(names)}))
+            checked.append(existing)
+        print(json.dumps({'listed':names,'checked':checked}))
     finally: fs.unmount(); fs.shutdown()
 `

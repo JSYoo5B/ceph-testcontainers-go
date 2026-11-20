@@ -69,17 +69,32 @@ username, password := d.Credentials()
 ## Concepts and limits
 
 - **Readiness.** `Start` and `Endpoint` pass only when the listener the MGR
-  map advertises presents the installed certificate, refuses the account with
-  a wrong password, accepts its password, and answers `GET /api/summary` with
+  map advertises presents the installed certificate, refuses an unauthenticated
+  summary request, accepts the account password, and answers `GET /api/summary` with
   the session token from the manager that the MGR map names active. Every
   connection of the check compares the presented certificate with the
   installed one before it sends a password or the session token, so a stale
   or foreign listener receives neither, and the check sends nothing more after
   a mismatch. An open
   port, an enabled module or a module that can run is not readiness. The
-  check runs from the control container. Each check sends one wrong password
-  and then the right one, which resets the module's failed-login counter, so
-  repeated checks never lock the account.
+  check runs from the control container and never deliberately submits a wrong
+  password. Concurrent and interrupted checks therefore do not add intentional
+  failed-password attempts to the handed-off account. A completed successful
+  login resets the native failure counter; the fixture does not change the
+  lockout policy or protect against incorrect credentials submitted by the SUT
+  or an outside password change.
+- **Observation lifetime.** Endpoint, host-endpoint and linked-gateway checks
+  may run concurrently. Restore and link removal wait for admitted checks
+  before changing their resources. A probe whose native process cannot be
+  confirmed stopped remains owned and cleanup retries its stop. A login
+  without a definitive server response is a separate uncertainty: stopping
+  the client does not establish that the server has finished its multi-cluster
+  write. The fixture refuses cleanup and further observations in that case,
+  retains ownership, and does not overwrite this uncertainty with a later
+  successful login. Restore cannot clear missing server-completion evidence;
+  terminate the disposable cluster in that case. A normal completed probe
+  permits ordinary cleanup. Stop SUT authentication traffic before restoration;
+  fixture methods do not join server handlers started by outside clients.
 - **Endpoints.** In bridge mode the listener is the manager's address on the
   cluster network, port 8443, which `Endpoint` returns: containers on that
   network reach it. A process on the Docker host reaches it only through a
@@ -118,8 +133,8 @@ username, password := d.Credentials()
 - **Restoration.** `Restore` verifies the Dashboard account's display name
   before deletion. Keep the generated display name unchanged because it
   marks the account as owned by this fixture. It keeps the module enabled until the gateway link,
-  account, multi-cluster record and certificate steps succeed. It still
-  attempts the listener options, retains the fixture slot on error and
+  account, multi-cluster record and certificate steps succeed. After settling
+  observations, it still attempts the listener options, retains the fixture slot on error and
   retries the unfinished steps on the next call. The module keeps its access database and token
   signing key (`mgr/dashboard/accessdb_v2`, `mgr/dashboard/jwt_secret`) after
   `Restore`; they hold no fixture account.
@@ -141,9 +156,12 @@ username, password := d.Credentials()
 - **Backend failures.** `Check` fails when the Dashboard's answer is empty or
   does not name the gateway and the link's user. With the Dashboard itself
   ready, an identity the gateway refuses (suspended, wrong key) is
-  `ErrGatewayRefused` and an unreachable gateway is `ErrGatewayUnreachable`;
-  a stopped gateway makes Dashboard RGW requests hang until the probe's time
-  runs out, while login and `Endpoint` keep working.
+  `ErrGatewayRefused` and an unreachable gateway is `ErrGatewayUnreachable`.
+  A stopped gateway makes Dashboard RGW requests hang until the probe's time
+  runs out, or fail with a message that names no cause, such as a generic
+  HTTP 500; `Check` attributes such a failure to the gateway only when the
+  linked gateway's container is not running, paused or restarting. Login and
+  `Endpoint` keep working.
 - Out of scope: Dashboard SSO, Grafana, Prometheus and Alertmanager pages,
   orchestrator-backed pages, multisite RGW and multi-cluster management.
 

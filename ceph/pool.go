@@ -90,7 +90,10 @@ type poolIdentity struct {
 
 // CreatePool creates a new pool with explicit placement and replication settings.
 // It validates the entire config and requires enough eligible owned domains before sending
-// any Ceph command. Existing pools, profiles and rules are rejected rather than
+// any Ceph command. Eligible OSDs completed startup and class assignment and
+// have not entered removal or detach. A stopped daemon retains its placement.
+// This local preflight does not observe external CRUSH changes.
+// Existing pools, profiles and rules are rejected rather than
 // changed. A non-nil Pool returned with an error identifies resources whose
 // creation was attempted; inspect them or terminate the disposable cluster.
 // That Pool may not know the native ID of its pool yet: it then binds to the
@@ -233,7 +236,7 @@ func replicatedCRUSHRuleCommand(config PoolConfig, rule string) []string {
 func (r *osdRegistry) placementDomains(config PoolConfig) int {
 	domains := make(map[string]struct{})
 	for _, osd := range r.each() {
-		if osd.purged {
+		if !osd.placementReady || osd.removing || osd.purged || osd.purgeIssued || osd.detaching {
 			continue
 		}
 		placement := osd.Placement()

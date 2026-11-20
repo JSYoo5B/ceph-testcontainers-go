@@ -223,7 +223,7 @@ func TestOverrideMGRModuleNoopRefusesOutsideMembershipChange(t *testing.T) {
 	}
 }
 
-func TestOverrideMGRModuleLostRepliesAndReadbackReconcile(t *testing.T) {
+func TestOverrideMGRModuleTerminalNativeFailuresAndReadbackReconcile(t *testing.T) {
 	ctr := newMGRModuleFixture()
 	ctr.failAfter = "enable"
 	c := mgrModuleCluster(ctr)
@@ -283,36 +283,44 @@ func TestOverrideMGRModuleRestorationRequiresRunnableMetadata(t *testing.T) {
 }
 
 func TestOverrideMGRModuleCancellationKeepsAppliedHandleWithFreshReadback(t *testing.T) {
-	ctr := newMGRModuleFixture()
-	ctx, cancel := context.WithCancel(t.Context())
-	ctr.cancelOnSet = cancel
-	c := mgrModuleCluster(ctr)
-	change, err := SetMGRModule(ctx, c, "mirroring", true)
-	if !errors.Is(err, context.Canceled) || change == nil || !ctr.enabled["mirroring"] {
-		t.Fatal("canceled apply lost native state/handle", err)
-	}
-	if ctr.canceledReads != 0 {
-		t.Fatal("apply readback reused canceled context")
-	}
-	if heldMGR(c)["mirroring"] != change {
-		t.Fatal("the canceled apply did not track its handle before the write")
-	}
-	// The readback after the canceled write ran on a fresh context: a native
-	// read follows the enable command.
-	enableAt := -1
-	for i, call := range ctr.calls {
-		if slices.Equal(call, []string{"mgr", "module", "enable", "mirroring"}) {
-			enableAt = i
+	// The write completes in the same call that cancels the caller, so
+	// mutation.Run may report either the completed write or the cancellation.
+	// Repeat to cover both: each must read the membership back on a fresh
+	// context.
+	for attempt := range 64 {
+		ctr := newMGRModuleFixture()
+		ctx, cancel := context.WithCancel(t.Context())
+		ctr.cancelOnSet = cancel
+		c := mgrModuleCluster(ctr)
+		change, err := SetMGRModule(ctx, c, "mirroring", true)
+		if !errors.Is(err, context.Canceled) || change == nil || !ctr.enabled["mirroring"] {
+			t.Fatal("canceled apply lost native state/handle", attempt, err)
+		}
+		if ctr.canceledReads != 0 {
+			t.Fatal("apply readback reused canceled context", attempt)
+		}
+		if heldMGR(c)["mirroring"] != change {
+			t.Fatal("the canceled apply did not track its handle before the write", attempt)
+		}
+		// The readback after the canceled write ran on a fresh context: a
+		// native read follows the enable command.
+		enableAt := -1
+		for i, call := range ctr.calls {
+			if slices.Equal(call, []string{"mgr", "module", "enable", "mirroring"}) {
+				enableAt = i
+			}
+		}
+		if enableAt < 0 || enableAt == len(ctr.calls)-1 {
+			t.Fatalf("attempt %d: no native readback followed the canceled write: %v", attempt, ctr.calls)
+		}
+		if change.state.pending != nil {
+			t.Fatal("the fresh readback did not settle the respawned membership", attempt)
+		}
+		if err := change.Restore(t.Context()); err != nil {
+			t.Fatal(attempt, err)
 		}
 	}
-	if enableAt < 0 || enableAt == len(ctr.calls)-1 {
-		t.Fatalf("no native readback followed the canceled write: %v", ctr.calls)
-	}
-	if err := change.Restore(t.Context()); err != nil {
-		t.Fatal(err)
-	}
 }
-
 func TestSetMGRModuleNilClusterReturnsNotAppliedHandle(t *testing.T) {
 	handle, err := SetMGRModule(t.Context(), nil, "mirroring", true)
 	var op *ceph.OperationError

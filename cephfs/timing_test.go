@@ -146,13 +146,22 @@ func TestOverrideTimingPreservesUncertainAndEarlierHandles(t *testing.T) {
 		t.Fatalf("uncertain second write lost owned changes: handles=%d entries=%d error=%v", len(handles), len(control.entries), err)
 	}
 	control.failAfterSet = ""
-	for index := len(handles) - 1; index >= 0; index-- {
-		if err := handles[index].Restore(t.Context()); err != nil {
-			t.Fatal(err)
+	// Losing the native reply cannot be settled by reading the matching entry.
+	// Retain this handle while allowing the earlier completed write to restore.
+	calls := len(control.calls)
+	for range 2 {
+		if err := handles[1].Restore(t.Context()); err == nil {
+			t.Fatal("lost completion evidence released the uncertain handle")
 		}
 	}
-	if len(control.entries) != 0 {
-		t.Fatal("uncertain write or earlier entry was not restored")
+	if len(control.calls) != calls {
+		t.Fatal("uncertain restore reconciled state without completion evidence")
+	}
+	if err := handles[0].Restore(t.Context()); err != nil {
+		t.Fatal("earlier completed write could not restore", err)
+	}
+	if len(control.entries) != 1 || control.entries[0].Section != "mds.fixture-1" {
+		t.Fatalf("uncertain entry was released or earlier entry was not restored: %+v", control.entries)
 	}
 }
 

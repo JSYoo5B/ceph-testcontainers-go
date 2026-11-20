@@ -132,7 +132,7 @@ func (ctr *mgrModuleFixture) Exec(ctx context.Context, args []string, _ ...tcexe
 		}
 	} else if len(args) == 4 && slices.Equal(args[:2], []string{"mgr", "module"}) && slices.Contains([]string{"enable", "disable"}, args[2]) {
 		if args[2] == ctr.rejectSet {
-			return 0, nil, errors.New("injected rejected module mutation")
+			return 1, fullRatiosStream("Error EINVAL: injected rejected module mutation"), nil
 		}
 		ctr.mutations++
 		ctr.staleAtMutation = append(ctr.staleAtMutation, ctr.staleLeft)
@@ -142,10 +142,10 @@ func (ctr *mgrModuleFixture) Exec(ctx context.Context, args []string, _ ...tcexe
 		if ctr.cancelOnSet != nil {
 			ctr.cancelOnSet()
 			ctr.cancelOnSet = nil
-			return 0, nil, context.Canceled
+			return 0, fullRatiosStream(""), nil
 		}
 		if args[2] == ctr.failAfter {
-			code = 1
+			return 1, fullRatiosStream("Error EINVAL: injected native failure"), nil
 		}
 		result = map[string]any{}
 	} else if slices.Equal(args, []string{"fs", "dump", "--format", "json"}) {

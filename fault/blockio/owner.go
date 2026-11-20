@@ -32,6 +32,7 @@ type ownerReply struct {
 	Bytes                 int64 `json:"bytes"`
 	Detached, FileRemoved bool
 	Started               bool `json:"started"`
+	BuildNotLaunched      bool `json:"build_not_launched"`
 }
 
 func (b *Container) owner(ctx context.Context, action string) (ownerReply, error) {
@@ -163,8 +164,14 @@ def spawn(which, attempt=""):
     try:
         subprocess.Popen(argv,start_new_session=True,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
     except Exception as error:
-        if which!="detach": raise
-        save(detach_path,{"done":True,"Error":str(error),"attempt":attempt})
+        if which=="detach":
+            save(detach_path,{"done":True,"Error":str(error),"attempt":attempt})
+        elif isinstance(error, OSError):
+            # Popen failed to launch the build. No operation on backing
+            # resources started, but duplicate dispatch remains fenced.
+            save(work+"/create.json",{"lease":name,"instance":generation,"done":True,"Error":str(error),"build_not_launched":True})
+        else:
+            raise
 if expected and expected!=generation:
     raise SystemExit("keeper generation changed; refusing action")
 if action=="exec":

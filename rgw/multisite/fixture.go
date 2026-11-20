@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/mutation"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/rgwhook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
@@ -59,6 +60,7 @@ type Fixture struct {
 	topologyMu  sync.Mutex
 	httpNetwork *testcontainers.DockerNetwork
 	closed      bool
+	syncWrites  mutation.Fence
 }
 
 // rgwRealmAccess runs radosgw-admin in the realm. The configuration, the
@@ -84,7 +86,7 @@ type rgwZoneTopology struct {
 	removed                 map[string]*rgwZoneRemoval
 	groupIDs                map[string]string
 	groupMasters            map[string]string
-	reloadNeeded            map[string]bool
+	reloadNeeded            map[string]*zoneReload
 	bootstrapStagingPending bool
 }
 
@@ -134,7 +136,11 @@ func WithTopology(config TopologyConfig) Option {
 // Use fresh clusters from ceph.Run, without gateways or RGW configuration.
 // WithConfig creates one ordinary S3 test user on the master; both gateways
 // expose its keys in AccessKey and SecretKey, and their Region is the zonegroup
-// name. The two-zone setup, and each further WithTopology zone, is bounded by
+// name. Run returns after issuing the keys on the master. Before a client uses
+// them on a secondary, call WaitSyncReady(ctx, secondaryZone) to wait for
+// user metadata to replicate there.
+//
+// The two-zone setup, and each further WithTopology zone, is bounded by
 // six minutes in addition to ctx. A secondary zone cannot start on Ceph
 // 19.2.6, whose master gateway refuses its realm pull; use 19.2.5 (see the
 // repository's known release issues guide).
@@ -282,7 +288,9 @@ func (f *Fixture) startPairClients(ctx context.Context, setup pairSetup) (*testc
 	peerNetwork := ""
 	if !setup.sourceHostNetwork {
 		var err error
-		bridge, err = dockerbridge.New(ctx)
+		// Keep published S3 traffic on the cluster bridge. Docker Desktop may
+		// forward host ports to any externally routed gateway attachment.
+		bridge, err = dockerbridge.NewInternal(ctx)
 		if bridge != nil {
 			f.httpNetwork = bridge
 			f.owned.AddCleanup("remove RGW HTTP bridge", func(cleanupCtx context.Context) error {
@@ -659,6 +667,9 @@ func (f *Fixture) pullPeriod(ctx context.Context, client testcontainers.Containe
 		return err
 	}
 	defer f.topologyMu.Unlock()
+	if err := f.settleSyncWrite(ctx); err != nil {
+		return err
+	}
 	if f.closed {
 		return multisiteInvalid(errors.New("RGW multisite fixture is terminated"))
 	}

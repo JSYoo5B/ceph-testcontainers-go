@@ -3,7 +3,7 @@ package rbd
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
+
 	"errors"
 	"io"
 	"strconv"
@@ -57,11 +57,11 @@ func TestImmutableObjectCacheLeaseWaitsOnlyUntilTheContextEnds(t *testing.T) {
 // The fake can stall until the backend context ends, as with a held flock.
 type cacheStartupProbe struct {
 	*fakeCacheClient
-	stall, failedStart, shellStopped bool
-	inspect                          string
-	deadline                         time.Time
-	limit                            string
-	sawStop                          bool
+	stall, failedStart, supervisorStopped bool
+	inspect                               string
+	deadline                              time.Time
+	limit                                 string
+	sawStop                               bool
 }
 
 func (c *cacheStartupProbe) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
@@ -71,14 +71,12 @@ func (c *cacheStartupProbe) Exec(ctx context.Context, args []string, opts ...tce
 	if args[2] == immutableObjectCacheScript && args[4] == "start" && c.failedStart {
 		return clustertest.Reply(args, 1, []byte("prelaunch command failed"))
 	}
-	if len(args) > 11 && args[2] == supervised.ShellScript && args[11] == "stop" {
+	if len(args) > 10 && args[2] == supervised.Script && args[10] == "stop" {
 		c.sawStop = true
 		c.deadline, _ = ctx.Deadline()
 		c.limit = args[5]
-		if c.shellStopped {
-			line := supervised.ShellDeadlineLine + "\n" + supervised.ShellEndPrefix + "143\n"
-			header := binary.BigEndian.AppendUint32([]byte{2, 0, 0, 0}, uint32(len(line)))
-			return 143, bytes.NewReader(append(header, line...)), nil
+		if c.supervisorStopped {
+			return 0, bytes.NewReader(clustertest.QuorumEnvelope(nil, nil, -9, true, false)), nil
 		}
 		if c.stall {
 			if c.deadline.IsZero() {
@@ -99,7 +97,7 @@ func TestImmutableObjectCacheBoundsAutomaticRollback(t *testing.T) {
 	limit, limitErr := strconv.Atoi(c.limit)
 	if lease != nil || !errors.Is(err, ceph.ErrInvalidRequest) || !c.sawStop || limitErr != nil || limit < 1 || limit > int(immutableCacheRollbackTimeout/time.Second) ||
 		c.deadline.Before(before) || c.deadline.After(time.Now().Add(immutableCacheRollbackTimeout)) {
-		t.Fatalf("automatic conflict rollback: lease=%v error=%v deadline=%s shell limit=%s", lease, err, c.deadline, c.limit)
+		t.Fatalf("automatic conflict rollback: lease=%v error=%v deadline=%s supervisor limit=%s", lease, err, c.deadline, c.limit)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 400*time.Millisecond)
 	defer cancel()
@@ -108,22 +106,22 @@ func TestImmutableObjectCacheBoundsAutomaticRollback(t *testing.T) {
 	parent, _ := ctx.Deadline()
 	if lease == nil || !errors.Is(err, ceph.ErrInvalidRequest) || !errors.Is(err, context.DeadlineExceeded) ||
 		!c.deadline.Equal(parent) || c.limit != "1" {
-		t.Fatalf("short rollback: lease=%v error=%v deadline=%s parent=%s shell limit=%s", lease, err, c.deadline, parent, c.limit)
+		t.Fatalf("short rollback: lease=%v error=%v deadline=%s parent=%s supervisor limit=%s", lease, err, c.deadline, parent, c.limit)
 	}
 	c.stall = false
-	if err := lease.Restore(context.Background()); err != nil || c.limit != "0" {
+	if err := lease.Restore(context.Background()); err != nil || c.limit != "inf" {
 		t.Fatalf("explicit restore: %v, limit=%s", err, c.limit)
 	}
 }
 
-func TestImmutableObjectCacheReportsShellRollbackDeadline(t *testing.T) {
-	c := &cacheStartupProbe{fakeCacheClient: newFakeCacheClient(), shellStopped: true}
+func TestImmutableObjectCacheReportsSupervisorRollbackDeadline(t *testing.T) {
+	c := &cacheStartupProbe{fakeCacheClient: newFakeCacheClient(), supervisorStopped: true}
 	c.startConflict = true
 	lease, err := StartImmutableObjectCache(t.Context(), c, ImmutableObjectCache{})
 	if lease == nil || !errors.Is(err, ceph.ErrInvalidRequest) || !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("shell deadline: lease=%v, error=%v", lease, err)
+		t.Fatalf("supervisor deadline: lease=%v, error=%v", lease, err)
 	}
-	c.shellStopped = false
+	c.supervisorStopped = false
 	if err := lease.Restore(t.Context()); err != nil {
 		t.Fatal(err)
 	}

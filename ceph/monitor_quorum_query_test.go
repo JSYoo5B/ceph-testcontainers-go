@@ -169,6 +169,10 @@ func TestMonitorQuorumTimeoutPreservesCauseAndNativeFailure(t *testing.T) {
 		if err == nil || errors.Is(err, context.DeadlineExceeded) != timeout || !timeout && !strings.Contains(err.Error(), "native failure") {
 			t.Fatalf("timeout/native exit was hidden: %v", err)
 		}
+		var processTimeout *supervised.ProcessTimeoutError
+		if errors.As(err, &processTimeout) != timeout || timeout && processTimeout.ExitCode != 2 {
+			t.Fatalf("timeout report lost the observed process exit: %v", err)
+		}
 	}
 }
 

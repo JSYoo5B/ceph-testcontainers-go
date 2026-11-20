@@ -529,8 +529,8 @@ type encReply struct {
 	// nodes, unnode
 	Nodes  []encNodeSeen `json:"nodes,omitempty"`
 	Unnode []encOutcome  `json:"unnode,omitempty"`
-	// LookupError is a failed inspection after open, linear or foreign: the
-	// step may have created a mapping that the keeper could not read back.
+	// LookupError is a failed inspection around open, linear or foreign.
+	// The step may have created a mapping that the keeper could not read back.
 	LookupError string `json:"lookup_error,omitempty"`
 }
 
@@ -616,7 +616,7 @@ const (
 	encOpened        = "opened"         // a mapping exists after the attempt
 	encAccepted      = "accepted"       // cryptsetup reported success
 	encHeaderChanged = "header-changed" // the LUKS header area differs from the recorded one
-	encUnobserved    = "unobserved"     // the header could not be read back
+	encUnobserved    = "unobserved"     // the exit, mapping absence or header could not be established
 )
 
 // judgeEncRefusal decides whether an unlock attempt with a missing or wrong
@@ -633,6 +633,8 @@ func judgeEncRefusal(r encReply, recorded encHeader) (string, string) {
 		return encUnobserved, "no exit status"
 	case *r.RC == 0:
 		return encAccepted, "cryptsetup open exited 0"
+	case r.LookupError != "":
+		return encUnobserved, "mapping absence could not be established: " + r.LookupError
 	case !recorded.known() || !after.known():
 		return encUnobserved, fmt.Sprintf("header recorded=%+v after=%+v", recorded, after)
 	case after != recorded:

@@ -127,11 +127,52 @@ func (c *Container) adminSocket(ctx context.Context, handle daemonHandle, args .
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
+	runCtx, cancelCommand := context.WithCancelCause(ctx)
+	defer cancelCommand(nil)
+	inv, err := c.admitAdminSocket(runCtx, handle, daemon, cancelCommand)
+	if err != nil {
+		return nil, err
+	}
+	return c.runAdminSocketInvocation(runCtx, inv, daemon, args...)
+}
+
+// runAdminSocketInvocation settles the registered invocation or leaves its
+// cleanup obligation in the cluster's registry.
+func (c *Container) runAdminSocketInvocation(ctx context.Context, inv *nativeInvocation, daemon string, args ...string) ([]byte, error) {
+	output, err := c.adminSocketCommand(ctx, inv.target, daemon, args...)
+	marker, unconfirmed := supervised.Unconfirmed(err)
+	var notStopped *supervised.NotStoppedError
+	if unconfirmed && !errors.As(err, &notStopped) {
+		inv.marker = marker
+		if stopErr := inv.stop(context.WithoutCancel(ctx)); stopErr != nil {
+			err = errors.Join(err, stopErr)
+		} else {
+			unconfirmed = false
+		}
+	}
+	c.native.calls.finish(inv, marker, unconfirmed)
+	close(inv.done)
+	if unconfirmed {
+		return output, &NativeCommandUnstoppedError{invocation: inv, err: safeNativeError(err)}
+	}
+	return output, err
+}
+
+// admitAdminSocket checks the handle and registers the invocation under the
+// topology lock. Removal drains the registered invocation before it can reuse
+// the daemon name. Running the command outside this lock permits concurrent
+// commands and topology queries while a daemon is unresponsive.
+func (c *Container) admitAdminSocket(ctx context.Context, handle daemonHandle, daemon string, cancelCommand context.CancelCauseFunc) (*nativeInvocation, error) {
 	if err := c.lockTopology(ctx); err != nil {
 		return nil, err
 	}
+	defer c.mu.Unlock()
+	return c.admitAdminSocketLocked(ctx, handle, daemon, cancelCommand)
+}
+
+// admitAdminSocketLocked registers the command while the caller holds c.mu.
+func (c *Container) admitAdminSocketLocked(ctx context.Context, handle daemonHandle, daemon string, cancelCommand context.CancelCauseFunc) (*nativeInvocation, error) {
 	closed, shared, owned := c.closed, c.runDir.shared(), handle.ownedBy(c)
-	c.mu.Unlock()
 	switch {
 	case closed:
 		return nil, errClusterTerminated
@@ -144,7 +185,15 @@ func (c *Container) adminSocket(ctx context.Context, handle daemonHandle, args .
 	if err != nil {
 		return nil, fmt.Errorf("select admin socket control: %w", err)
 	}
-	return c.adminSocketCommand(ctx, control, daemon, args...)
+	inv := &nativeInvocation{owner: c, target: control, targetID: handle.GetContainerID(), label: "admin socket",
+		cancel: cancelCommand, stopCommand: supervised.Cancel, done: make(chan struct{})}
+	switch c.native.calls.admit(inv, nil) {
+	case nativeRefusedClosed:
+		return nil, errClusterTerminated
+	case nativeRefusedFenced:
+		return nil, invalidRequest("daemon %s is fenced for removal", daemon)
+	}
+	return inv, nil
 }
 
 // adminSocketCommand runs args on the admin socket of daemon, which the

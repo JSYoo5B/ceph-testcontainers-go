@@ -243,7 +243,7 @@ func fullnessLiveVerify(ops []secondFaultOp, read map[string]secondFaultObject) 
 		switch {
 		case op.Outcome == opAcked:
 			out.AckedVerified++
-		case op.Outcome == opUnknown && read[op.Name].Present:
+		case op.Outcome == opUnknown && *read[op.Name].Present:
 			out.UnknownPresent++
 		case op.Outcome == opUnknown:
 			out.UnknownAbsent++

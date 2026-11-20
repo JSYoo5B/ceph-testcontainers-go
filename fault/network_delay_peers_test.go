@@ -79,6 +79,42 @@ func TestNetworkDelayPeersApplyOneFilterEach(t *testing.T) {
 	}
 }
 
+func TestNetworkDelayPeersRequireTheNativePriorityMap(t *testing.T) {
+	for name, edit := range map[string]func(map[string]any){
+		"missing priomap":   func(o map[string]any) { delete(o, "priomap") },
+		"short priomap":     func(o map[string]any) { o["priomap"] = make([]int, 15) },
+		"malformed priomap": func(o map[string]any) { o["priomap"] = make([]*int, 16) },
+		"malformed bands":   func(o map[string]any) { o["bands"] = "3" },
+		"changed bands":     func(o map[string]any) { o["bands"] = 4 },
+		"changed priomap":   func(o map[string]any) { o["priomap"].([]int)[0] = 2 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			netem := newFakeNetem()
+			cluster, osd := peersCluster(netem)
+			delay := testDelay
+			delay.Peers = manyPeers
+			lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, delay)
+			if err != nil {
+				t.Fatal(err)
+			}
+			edit(netem.root("osd-0").prioOptions)
+			status, err := lease.Status(t.Context())
+			if err != nil || status.Applied || status.RootHandle != lease.handle || status.mismatch == nil {
+				t.Fatalf("priority routing status %+v, %v", status, err)
+			}
+			if err := lease.verifyApplied(t.Context(), delay); err == nil {
+				t.Fatal("apply readback admitted the altered hierarchy")
+			}
+			if err := lease.Restore(t.Context()); err != nil {
+				t.Fatalf("in-place priority routing edit prevented Restore: %v", err)
+			}
+			if netem.eth0("osd-0").root != nil {
+				t.Fatal("Restore left the owned root")
+			}
+		})
+	}
+}
+
 // An apply that stops at any filter returns its lease: the hierarchy so far
 // is the lease's, is not reported applied, and Restore removes it.
 func TestNetworkDelayPeersPartialApplyIsRestored(t *testing.T) {

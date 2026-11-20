@@ -57,7 +57,11 @@ func TestOSDInMemoryStorageTopology(t *testing.T) {
 				if keeperID != "" {
 					osdMemoryCapacity(t, ctx, docker.Client, keeperID, "failure")
 				}
-				for _, osd := range clusteraccess.OSDs(t, cluster) {
+				osds, inventoryErr := cluster.OSDs(ctx)
+				if inventoryErr != nil {
+					t.Logf("diagnostic OSD inventory unavailable: %v", inventoryErr)
+				}
+				for _, osd := range osds {
 					if osd.Container == nil {
 						continue
 					}

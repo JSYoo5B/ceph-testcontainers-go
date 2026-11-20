@@ -270,10 +270,14 @@ def main(argv=None):
     require(not (args.line and args.policy_pr), "separate cutover from opening a line")
     require(args.mode != "verify" or not (args.line or args.policy_pr), "verify checks all managed lines")
     repo = api("")
-    require(repo["default_branch"] == "main" and repo["allow_merge_commit"], "expected main default and merge commits enabled")
+    default = repo["default_branch"]
+    require(repo["allow_merge_commit"], "enable merge commits")
+    require(default in {"main", "develop"}, "expected main or develop as the default branch")
+    if args.mode in {"plan", "apply"} and not args.line:
+        require(default == "main", "initial cutover requires main as the default branch")
     managed, branches = managed_rules(), refs()
     lines = installed_lines(managed)
-    print(f"Default main, main at {branches['main']}, admin {repo['permissions']['admin']}")
+    print(f"Default {default}, main at {branches['main']}, admin {repo['permissions']['admin']}")
     require(published_commit(BASE_TAG) == BASE_SHA, "published v1.0.0 no longer points at its original commit")
     if args.mode == "apply":
         require(repo["permissions"]["admin"], "the actor needs repository administration permission")

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
 // probeScript makes the readiness requests of one probe inside the control
@@ -29,7 +28,7 @@ import (
 const probeScript = `import hashlib, http.client, json, socket, ssl, sys, urllib.parse
 req = json.load(sys.stdin)
 url = urllib.parse.urlsplit(req["url"])
-report = {"results": []}
+report = {"results": [], "login_pending": False, "finished": False}
 def conn():
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
@@ -48,16 +47,26 @@ def call(method, path, body=None, token=None):
         headers = {"Accept": "application/vnd.ceph.api.v1.0+json", "Content-Type": "application/json"}
         if token:
             headers["Authorization"] = "Bearer " + token
+        if method == "POST" and path == "/api/auth":
+            report["login_pending"] = True
         c.request(method, path, body=None if body is None else json.dumps(body), headers=headers)
         r = c.getresponse()
-        return {"status": r.status, "location": r.getheader("Location") or "", "body": r.read(65536).decode("utf-8", "replace")}
+        data = r.read(65537)
+        if len(data) > 65536:
+            raise http.client.HTTPException("response body exceeds probe limit")
+        if r.length is not None and r.length != 0:
+            raise http.client.IncompleteRead(data, r.length)
+        result = {"status": r.status, "location": r.getheader("Location") or "", "body": data.decode("utf-8", "replace")}
+        if method == "POST" and path == "/api/auth":
+            report["login_pending"] = False
+        return result
     except socket.timeout:
         return {"error": "timeout"}
     except (OSError, http.client.HTTPException) as e:
         return {"error": type(e).__name__ + ": " + str(e)[:200]}
     finally:
         c.close()
-report["rejected"] = call("POST", "/api/auth", {"username": req["username"], "password": req["wrong"]})
+report["rejected"] = call("GET", "/api/summary")
 login = call("POST", "/api/auth", {"username": req["username"], "password": req["password"]})
 token = ""
 if login.get("status") == 201:
@@ -72,6 +81,7 @@ if token:
         result = call("GET", path, token=token)
         result["path"] = path
         report["results"].append(result)
+report["finished"] = True
 json.dump(report, sys.stdout)
 `
 
@@ -81,7 +91,6 @@ type probeRequest struct {
 	Fingerprint string   `json:"fingerprint"`
 	Username    string   `json:"username"`
 	Password    string   `json:"password"`
-	Wrong       string   `json:"wrong"`
 	Paths       []string `json:"paths"`
 	Timeout     float64  `json:"timeout"`
 }
@@ -90,7 +99,7 @@ type probeRequest struct {
 // accepts only a listener that presents the certificate with fingerprint
 // want, logs in as username and GETs paths with the session token.
 func newProbeRequest(url, want, username, password string, paths []string) ([]byte, error) {
-	return json.Marshal(probeRequest{URL: url, Fingerprint: want, Username: username, Password: password, Wrong: password + "-wrong", Paths: paths, Timeout: probeTimeout.Seconds()})
+	return json.Marshal(probeRequest{URL: url, Fingerprint: want, Username: username, Password: password, Paths: paths, Timeout: probeTimeout.Seconds()})
 }
 
 // probeResult is one HTTP exchange of probeScript.
@@ -108,11 +117,13 @@ type probeResult struct {
 // Token is the session token of the owned account, which the fixture
 // registers as a secret and never returns.
 type probeReport struct {
-	Mismatch string        `json:"mismatch"`
-	Rejected probeResult   `json:"rejected"`
-	Login    probeResult   `json:"login"`
-	Token    string        `json:"token"`
-	Results  []probeResult `json:"results"`
+	LoginPending bool          `json:"login_pending"`
+	Finished     bool          `json:"finished"`
+	Mismatch     string        `json:"mismatch"`
+	Rejected     probeResult   `json:"rejected"`
+	Login        probeResult   `json:"login"`
+	Token        string        `json:"token"`
+	Results      []probeResult `json:"results"`
 }
 
 // result returns the exchange of path.
@@ -136,29 +147,31 @@ func runProbe(ctx context.Context, c *ceph.Container, url, want, username, passw
 	if err != nil {
 		return probeReport{}, err
 	}
-	input := ceph.NewNativeInput()
 	command := ceph.NativeCommand{
 		Argv:    []string{"python3", "-I", "-c", probeScript},
 		Timeout: time.Duration(len(paths)+3)*probeTimeout + 10*time.Second, MaxStdout: 1 << 20, MaxStderr: 64 << 10,
-		Label: "dashboard readiness probe", Input: input, MaxInput: len(request),
+		Label: "dashboard readiness probe",
 	}
-	go func() {
-		_ = input.Write(ctx, request)
-		_ = input.Close()
-	}()
-	result, err := c.RunNativeCommand(ctx, servicehook.CLI(c), command)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return probeReport{}, err
 	}
-	if result.ExitCode != 0 {
-		return probeReport{}, fmt.Errorf("dashboard readiness probe exited %d", result.ExitCode)
+	result, admitted, err := runInputCommand(ctx, c, command, request)
+	if err != nil {
+		return probeReport{LoginPending: admitted && !errors.Is(err, ceph.ErrInvalidRequest) && !errors.Is(err, ceph.ErrImageCapability)}, err
 	}
-	return decodeProbeReport(result.Stdout)
+	if result.ExitCode != 0 {
+		return probeReport{LoginPending: true}, fmt.Errorf("dashboard readiness probe exited %d", result.ExitCode)
+	}
+	report, err := decodeProbeReport(result.Stdout)
+	if err != nil {
+		report.LoginPending = true
+	}
+	return report, err
 }
 
 func decodeProbeReport(data []byte) (probeReport, error) {
 	var report probeReport
-	if err := json.Unmarshal(data, &report); err != nil {
+	if err := json.Unmarshal(data, &report); err != nil || !report.Finished {
 		return probeReport{}, errors.New("decode dashboard readiness probe report")
 	}
 	return report, nil
@@ -177,7 +190,7 @@ type summary struct {
 }
 
 // checkReadiness judges one probe of the account against the active manager:
-// every connection was presented the installed certificate, a wrong password
+// every connection was presented the installed certificate, an unauthenticated summary request
 // is refused, the right one logs in, and /api/summary is answered by active.
 func checkReadiness(report probeReport, active string) error {
 	switch {
@@ -187,8 +200,8 @@ func checkReadiness(report probeReport, active string) error {
 		return fmt.Errorf("dashboard listener unreachable: %s", report.Rejected.Error)
 	case report.Rejected.Status == 303:
 		return errors.New("dashboard listener is a standby that redirects to the active manager")
-	case report.Rejected.Status != 400 && report.Rejected.Status != 401:
-		return fmt.Errorf("dashboard accepted or failed a wrong password with HTTP %d", report.Rejected.Status)
+	case report.Rejected.Status != 401 && report.Rejected.Status != 403:
+		return fmt.Errorf("dashboard unauthenticated summary answered HTTP %d", report.Rejected.Status)
 	case report.Login.Error != "":
 		return fmt.Errorf("dashboard login: %s", report.Login.Error)
 	case report.Login.Status != 201 || report.Token == "":

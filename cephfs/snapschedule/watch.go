@@ -112,10 +112,12 @@ func (w *LeaseWatch) Stop() error {
 // watch with an error instead: ctx ending, a terminated cluster, a
 // filesystem that is no longer the registered one or whose FSMap ID or
 // original pools changed, a restored lease, a schedule that the module no
-// longer lists (removed, even if added again with the same path and repeat),
+// longer lists, or a replacement with a different start or creation time,
 // another schedule of the directory with the lease's repeat, and a full buffer
 // (ceph.ErrWatchOverflow). The watch has no terminal sample: it runs until one
 // of these errors or until the caller invokes Stop, which returns nil in that case.
+// The module records creation time to the second. A replacement with the
+// same path, repeat, start and creation time is indistinguishable to Watch.
 //
 // The stream reports the module's aggregate progress, emitted only when it
 // changes; it is not a per-snapshot event history. A created counter that

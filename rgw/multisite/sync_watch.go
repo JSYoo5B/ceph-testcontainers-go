@@ -112,8 +112,8 @@ func (w *SyncWatch) Stop() error {
 // failed first read returns its error and starts nothing. That read is the
 // baseline: the first event, already buffered, and the identities the watch
 // keeps for its lifetime: the realm, zonegroup and zone IDs and the committed
-// period ID and realm epoch. Receive the baseline before triggering the
-// change to observe.
+// period ID, period epoch and realm epoch. Receive the baseline before
+// triggering the change to observe.
 //
 // Each read takes the fixture's topology lock for one bounded observation, as
 // SyncStatus does, and holds it neither while the event is sent nor while the
@@ -162,7 +162,7 @@ func (f *Fixture) WatchSync(ctx context.Context, cfg ceph.WatchConfig, zoneName 
 			// The read fills the committed period before it checks that the
 			// zone imported it, so a known new period ends the watch even
 			// when a later step of the read failed.
-			if status.PeriodID != "" && (status.PeriodID != pin.PeriodID || status.RealmEpoch != pin.RealmEpoch) {
+			if status.PeriodID != "" && (status.PeriodID != pin.PeriodID || status.RealmEpoch != pin.RealmEpoch || status.periodEpoch != 0 && status.periodEpoch != pin.periodEpoch) {
 				return status, watch.Fatal(fmt.Errorf("%s: %w", syncWatchOperation, errSyncPeriodChanged))
 			}
 			if err != nil {
@@ -201,7 +201,7 @@ func (f *Fixture) watchSyncRead(ctx context.Context, zoneName string, sources []
 	if _, err := f.syncStatusZones(zoneName, sources); err != nil {
 		return SyncStatus{}, watch.Fatal(fmt.Errorf("%s: %w", syncWatchOperation, err))
 	}
-	return f.syncStatus(ctx, zoneName)
+	return f.syncStatus(ctx, zoneName, false)
 }
 
 // syncWatchPinned refuses a successful read whose identities or committed
@@ -210,7 +210,7 @@ func syncWatchPinned(pin, status SyncStatus) error {
 	if status.RealmID != pin.RealmID || status.ZonegroupID != pin.ZonegroupID || status.Zone != pin.Zone || status.ZoneID != pin.ZoneID {
 		return errors.New("the zone's realm, zonegroup or zone identity changed")
 	}
-	if status.PeriodID != pin.PeriodID || status.RealmEpoch != pin.RealmEpoch {
+	if status.PeriodID != pin.PeriodID || status.RealmEpoch != pin.RealmEpoch || status.periodEpoch != pin.periodEpoch {
 		return errSyncPeriodChanged
 	}
 	return nil
@@ -352,11 +352,12 @@ func (g *SyncGroup) WatchBucketSync(ctx context.Context, cfg ceph.WatchConfig, p
 // bucketSyncWatchPins is what a bucket watch keeps from its baseline. Only the
 // watch's goroutine uses it after the baseline.
 type bucketSyncWatchPins struct {
-	group      *SyncGroup
-	checkpoint *rgwSyncBucketCheckpoint
-	policy     map[string]any
-	period     string
-	epoch      uint64
+	group       *SyncGroup
+	checkpoint  *rgwSyncBucketCheckpoint
+	policy      map[string]any
+	period      string
+	epoch       uint64
+	periodEpoch uint64
 }
 
 func (p *bucketSyncWatchPins) read(ctx context.Context, f *Fixture, pipeID, sourceZone, destinationZone string) (BucketSyncStatus, error) {
@@ -375,7 +376,7 @@ func (p *bucketSyncWatchPins) read(ctx context.Context, f *Fixture, pipeID, sour
 			return status, err
 		}
 		p.checkpoint, p.policy = checkpoint, syncJSONClone(p.group.state.group)
-		p.period, p.epoch = status.PeriodID, status.RealmEpoch
+		p.period, p.epoch, p.periodEpoch = status.PeriodID, status.RealmEpoch, status.periodEpoch
 		return status, nil
 	}
 	if err := f.validateSyncGroup(p.group, false); err != nil {
@@ -403,7 +404,7 @@ func (p *bucketSyncWatchPins) read(ctx context.Context, f *Fixture, pipeID, sour
 	// new period can make fail: a policy commit that drops the pipe fails
 	// the publication check, and an endpoint may not have imported it yet.
 	// A known new period ends the watch whether or not the rest succeeded.
-	if status.PeriodID != "" && (status.PeriodID != p.period || status.RealmEpoch != p.epoch) {
+	if status.PeriodID != "" && (status.PeriodID != p.period || status.RealmEpoch != p.epoch || status.periodEpoch != 0 && status.periodEpoch != p.periodEpoch) {
 		return status, fatal(errSyncPeriodChanged)
 	}
 	return status, err

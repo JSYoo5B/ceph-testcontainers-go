@@ -67,24 +67,14 @@ func rbdScenarioWaitSplitBrain(t *testing.T, parent context.Context, link *rbdmi
 
 func rbdScenarioRequireSnapshotAbsent(t *testing.T, ctx context.Context, client testcontainers.Container, image, snapshot string) {
 	t.Helper()
-	var snapshots []struct{ Name string }
-	if err := json.Unmarshal(harness.RBDOutput(t, ctx, client, "snap", "ls", image, "--format", "json"), &snapshots); err != nil {
+	if err := harness.RBDRequireSnapshotAbsent(harness.RBDOutput(t, ctx, client, "snap", "ls", image, "--format", "json"), snapshot); err != nil {
 		t.Fatal(err)
-	}
-	for _, snap := range snapshots {
-		if snap.Name == snapshot {
-			t.Fatalf("losing branch snapshot %s survived authoritative resync", snapshot)
-		}
 	}
 }
 
 func rbdScenarioRequireNoPeers(t *testing.T, ctx context.Context, link *rbdmirror.Container, pool string) {
 	t.Helper()
-	var info struct{ Peers []json.RawMessage }
-	if err := json.Unmarshal(harness.RBDScenarioCommand(t, ctx, link.DestinationRBD, "mirror", "pool", "info", pool, "--format", "json"), &info); err != nil {
+	if err := harness.RBDRequireNoPeers(harness.RBDScenarioCommand(t, ctx, link.DestinationRBD, "mirror", "pool", "info", pool, "--format", "json")); err != nil {
 		t.Fatal(err)
-	}
-	if len(info.Peers) != 0 {
-		t.Fatalf("RBD peer removal left peers: %s", info.Peers)
 	}
 }

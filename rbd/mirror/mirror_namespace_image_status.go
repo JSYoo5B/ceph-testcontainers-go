@@ -2,10 +2,10 @@ package mirror
 
 import (
 	"context"
-	"encoding/json"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/rbdobservation"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -76,7 +76,7 @@ func (v *Namespace) imageReader(imageName, during string) func(context.Context) 
 	}
 }
 
-func (v *Namespace) imageStatus(ctx context.Context, imageName string, previous *rbdReceiverWitness) (ImageStatus, *rbdReceiverWitness, error) {
+func (v *Namespace) imageStatus(ctx context.Context, imageName string, previous *rbdReceiverWitness) (_ ImageStatus, _ *rbdReceiverWitness, observationErr error) {
 	var result ImageStatus
 	if err := validateRBDMirrorObservedImage(imageName); err != nil {
 		return result, previous, scopedRBDImageError(ctx, err)
@@ -84,18 +84,26 @@ func (v *Namespace) imageStatus(ctx context.Context, imageName string, previous 
 	if v == nil || v.owner == nil || v.scope.binding == nil {
 		return result, previous, rbdImageGuardError("RBD namespace binding is unavailable")
 	}
+	caller := ctx
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	observation := rbdobservation.Begin(caller, "namespace-image")
+	defer func() { observation.Finish(ctx, observationErr) }()
 	m := v.owner
 	if err := multicluster.LockObservation(ctx, &m.mu); err != nil {
 		return result, previous, scopedRBDImageError(ctx, err)
 	}
-	defer m.mu.Unlock()
+	defer func() {
+		observation.Releasing()
+		m.mu.Unlock()
+	}()
+	observation.Acquired()
+	observation.Stage("capture-receiver-witness")
 	witness, err := m.receiverWitness(&v.scope, nil, previous)
 	if err != nil {
 		return result, previous, scopedRBDImageError(ctx, err)
 	}
-	result, err = m.observeRBDMirrorImageLocked(ctx, imageName, &v.scope, witness)
+	result, err = m.observeRBDMirrorImageLocked(ctx, imageName, &v.scope, witness, observation)
 	if err != nil {
 		result.ReplayReady = false
 		return result, witness, scopedRBDImageError(ctx, err)
@@ -164,13 +172,6 @@ func readRBDMirrorImageStatusForScope(ctx context.Context, client testcontainers
 	}
 	if err := rbdReceiverRead.json(data); err != nil {
 		return rbdObservedStatus{}, err
-	}
-	var fields map[string]json.RawMessage
-	if json.Unmarshal(data, &fields) != nil {
-		return rbdObservedStatus{}, rbdImageGuardError("decode RBD namespace image status")
-	}
-	if service, exists := fields["daemon_service"]; exists && string(service) == "null" {
-		return rbdObservedStatus{}, rbdImageGuardError("decode RBD namespace image status: null daemon service")
 	}
 	return decodeRBDMirrorObservedStatus(data, name, globalID)
 }

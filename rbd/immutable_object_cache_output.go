@@ -231,15 +231,23 @@ func parseImmutableObjectCacheStart(out immutableObjectCacheOutput) (immutableOb
 // parseImmutableObjectCacheStatus validates the status operation's report:
 // perf is required while the daemon runs, and files and bytes while the
 // cache directory exists.
-func parseImmutableObjectCacheStatus(out immutableObjectCacheOutput, pid int) (ImmutableObjectCacheStatus, error) {
-	status := ImmutableObjectCacheStatus{PID: pid}
-	f, err := out.fields("running", "perf", "dir", "files", "bytes")
+func parseImmutableObjectCacheStatus(out immutableObjectCacheOutput) (ImmutableObjectCacheStatus, error) {
+	status := ImmutableObjectCacheStatus{}
+	f, err := out.fields("running", "pid", "perf", "dir", "files", "bytes")
 	if err != nil {
 		return status, err
 	}
 	if status.Running, err = f.flag("running"); err != nil {
 		return status, err
 	}
+	pid, err := f.count("pid", strconv.IntSize-1)
+	if err != nil {
+		return status, err
+	}
+	if status.Running != (pid > 0) {
+		return status, f.errorf("pid", "must be positive exactly when running")
+	}
+	status.PID = int(pid)
 	dir, err := f.flag("dir")
 	if err != nil {
 		return status, err

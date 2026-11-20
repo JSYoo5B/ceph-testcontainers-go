@@ -17,6 +17,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
+	"github.com/moby/moby/api/types/container"
 )
 
 // GatewayAdminCaps are the RGW Admin Ops capabilities of the identity that
@@ -35,8 +36,9 @@ var (
 	// identity, or missing capabilities.
 	ErrGatewayRefused = errors.New("the gateway refused the dashboard's RGW identity")
 	// ErrGatewayUnreachable reports that the Dashboard could not reach the
-	// gateway: a refused or timed-out connection, or a request that did not
-	// finish within the probe's time.
+	// gateway: a refused or timed-out connection, a request that did not
+	// finish within the probe's time, or a failed answer while the linked
+	// gateway's container is not running, paused or restarting.
 	ErrGatewayUnreachable = errors.New("the dashboard cannot reach the gateway")
 )
 
@@ -48,7 +50,7 @@ type GatewayLink struct {
 }
 
 type linkState struct {
-	mu        sync.Mutex
+	mu        sync.RWMutex
 	dashboard *state
 	gateway   *rgw.Gateway
 	user      *rgw.User
@@ -58,7 +60,12 @@ type linkState struct {
 
 // String names the link by its RGW identity.
 func (l GatewayLink) String() string {
-	if l.linkState == nil || l.user == nil {
+	if l.linkState == nil {
+		return "Dashboard RGW link"
+	}
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	if l.user == nil {
 		return "Dashboard RGW link"
 	}
 	return "Dashboard RGW link of " + l.user.ID()
@@ -96,8 +103,8 @@ func (d *Dashboard) AddGateway(ctx context.Context, gateway *rgw.Gateway) (*Gate
 	s := d.state
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.restored {
-		return nil, &ceph.OperationError{Kind: ceph.ErrInvalidRequest, Op: op, Err: errors.New("the dashboard was restored")}
+	if err := s.ready(); err != nil {
+		return nil, err
 	}
 	if s.link != nil {
 		return nil, &ceph.OperationError{Kind: ceph.ErrInvalidRequest, Op: op, Err: errors.New("the dashboard already has a gateway link")}
@@ -138,6 +145,9 @@ func (d *Dashboard) AddGateway(ctx context.Context, gateway *rgw.Gateway) (*Gate
 	for {
 		if last = link.check(ctx); last == nil {
 			return link, nil
+		}
+		if err := s.ready(); err != nil {
+			return link, errors.Join(last, err)
 		}
 		select {
 		case <-ctx.Done():
@@ -202,6 +212,8 @@ func (l *GatewayLink) User() *rgw.User {
 	if l == nil || l.linkState == nil {
 		return nil
 	}
+	l.mu.RLock()
+	defer l.mu.RUnlock()
 	return l.user
 }
 
@@ -214,17 +226,24 @@ func (l *GatewayLink) User() *rgw.User {
 // does not pass the readiness check of Endpoint, that is the error; when it
 // does and the gateway refuses the link's identity the error wraps
 // ErrGatewayRefused, and when the Dashboard cannot reach the gateway it wraps
-// ErrGatewayUnreachable. It makes one attempt.
+// ErrGatewayUnreachable. An HTTP failure whose message names neither cause
+// wraps ErrGatewayUnreachable when the linked gateway's container is not
+// running, paused or restarting, and is left unattributed otherwise. It makes
+// one attempt.
 //
 //purpose:observation
 func (l *GatewayLink) Check(ctx context.Context) error {
 	if l == nil || l.linkState == nil {
 		return errors.New("dashboard gateway link is unavailable")
 	}
-	l.mu.Lock()
-	removed := l.removed
-	l.mu.Unlock()
-	if removed {
+	l.dashboard.mu.RLock()
+	defer l.dashboard.mu.RUnlock()
+	if err := l.dashboard.ready(); err != nil {
+		return err
+	}
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	if l.removed {
 		return &ceph.OperationError{Kind: ceph.ErrInvalidRequest, Op: "dashboard gateway link", Err: errors.New("the link was removed")}
 	}
 	ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(l.dashboard.cluster))
@@ -249,11 +268,11 @@ func (l *GatewayLink) check(ctx context.Context) error {
 	// The Dashboard's answers are judged first: with the gateway stopped,
 	// the gateway's own address is gone too.
 	daemon, _ := report.result(rgwDaemonPath)
-	if err := backendError(daemon); err != nil {
+	if err := l.backendFailure(ctx, daemon); err != nil {
 		return err
 	}
 	users, _ := report.result(rgwUserPath)
-	if err := backendError(users); err != nil {
+	if err := l.backendFailure(ctx, users); err != nil {
 		return err
 	}
 	var listed []struct {
@@ -290,6 +309,50 @@ func (l *GatewayLink) check(ctx context.Context) error {
 		return fmt.Errorf("dashboard lists %d RGW users without the link's own user", len(ids))
 	}
 	return nil
+}
+
+// backendFailure classifies a Dashboard answer about its RGW backend. An
+// HTTP failure that the Dashboard's message does not attribute is judged by
+// the linked gateway's container: the Dashboard cannot reach a gateway whose
+// container is not running, paused or restarting, whatever message it
+// answers with.
+func (l *GatewayLink) backendFailure(ctx context.Context, result probeResult) error {
+	err := backendError(result)
+	if !unattributed(result, err) {
+		return err
+	}
+	state, stateErr := l.gateway.State(ctx)
+	if stateErr != nil {
+		return errors.Join(err, fmt.Errorf("inspect the linked gateway: %w", stateErr))
+	}
+	return gatewayNotServing(err, state)
+}
+
+// unattributed reports whether err is an HTTP failure of the Dashboard's
+// answer result that backendError attributed to neither cause.
+func unattributed(result probeResult, err error) bool {
+	return err != nil && result.Error == "" && result.Status != 0 &&
+		!errors.Is(err, ErrGatewayRefused) && !errors.Is(err, ErrGatewayUnreachable)
+}
+
+// gatewayNotServing wraps err with ErrGatewayUnreachable when state shows a
+// gateway container that cannot answer: absent, not running, paused or
+// restarting. Otherwise it returns err unchanged.
+func gatewayNotServing(err error, state *container.State) error {
+	var condition string
+	switch {
+	case state == nil:
+		condition = "has no state"
+	case !state.Running:
+		condition = "is not running"
+	case state.Paused:
+		condition = "is paused"
+	case state.Restarting:
+		condition = "is restarting"
+	default:
+		return err
+	}
+	return fmt.Errorf("%w: %w; the linked gateway's container %s", ErrGatewayUnreachable, err, condition)
 }
 
 // backendError classifies a Dashboard answer about its RGW backend. The
@@ -341,6 +404,9 @@ func (l *GatewayLink) Remove(ctx context.Context) error {
 	defer s.mu.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(s.cluster))
 	defer cancel()
+	if err := s.settleProbes(ctx); err != nil {
+		return err
+	}
 	if err := l.remove(ctx); err != nil {
 		return err
 	}

@@ -207,20 +207,21 @@ type familyActor struct {
 	ctr     testcontainers.Container
 	tag     string
 	n       int
-	done    chan heldResult
+	actor   *integrationActor[heldResult]
 	started actorRequests
 }
 
-func startFamilyActor(ctx context.Context, ctr testcontainers.Container, tag, monHost, pool string) *familyActor {
-	actor := &familyActor{ctr: ctr, tag: tag, done: make(chan heldResult, 1), started: actorRequests{}}
-	go func() {
+func startFamilyActor(t *testing.T, ctx context.Context, ctr testcontainers.Container, tag, monHost, pool string) *familyActor {
+	actor := &familyActor{ctr: ctr, tag: tag, started: actorRequests{}}
+	actor.actor = launchIntegrationActor(context.WithoutCancel(ctx), func(ctx context.Context) heldResult {
 		code, reader, err := ctr.Exec(ctx, []string{"timeout", "1100", "python3", "-c", dualStackActor, tag, monHost, pool}, tcexec.Multiplexed())
 		var output []byte
 		if err == nil {
-			output, _ = io.ReadAll(reader)
+			output, err = io.ReadAll(reader)
 		}
-		actor.done <- heldResult{code, output, err}
-	}()
+		return heldResult{code, output, err}
+	})
+	t.Cleanup(func() { cleanupHeldActor(t, actor.actor, ctr, tag) })
 	return actor
 }
 
@@ -244,13 +245,17 @@ func (a *familyActor) call(t *testing.T, ctx context.Context, request map[string
 	deadline := time.Now().Add(time.Duration(wait)*time.Second + time.Minute)
 	for {
 		select {
-		case result := <-a.done:
+		case <-a.actor.done:
+			result := a.actor.result
 			t.Fatalf("%s ended at request %d: exit %d: %s %v", a.tag, n, result.code, result.output, result.err)
 		default:
 		}
 		code, reader, err := a.ctr.Exec(ctx, []string{"cat", fmt.Sprintf("/tmp/%s.%d.json", a.tag, n)}, tcexec.Multiplexed())
 		if err == nil && code == 0 {
-			output, _ := io.ReadAll(reader)
+			output, readErr := io.ReadAll(reader)
+			if readErr != nil {
+				t.Fatal("incomplete actor/socket evidence:", readErr)
+			}
 			var result actorResult
 			if err := json.Unmarshal(output, &result); err != nil {
 				t.Fatalf("%s request %d: %s", a.tag, n, output)
@@ -271,7 +276,12 @@ func (a *familyActor) release(t *testing.T, ctx context.Context) {
 	if code, _, err := a.ctr.Exec(ctx, []string{"touch", "/tmp/" + a.tag + ".release"}); err != nil || code != 0 {
 		t.Fatalf("release %s: exit %d: %v", a.tag, code, err)
 	}
-	result := <-a.done
+	joinCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	result, err := a.actor.wait(joinCtx)
+	if err != nil {
+		t.Fatal("actor command reader did not join:", err)
+	}
 	if result.err != nil || result.code != 0 {
 		t.Fatalf("%s: exit %d: %s %v", a.tag, result.code, result.output, result.err)
 	}
@@ -387,8 +397,8 @@ func testDualStackFamilyCut(t *testing.T) {
 	monCtr, mgrCtr := monitorContainer(t, cluster, mon.Name), managerContainer(t, cluster, mgr.Name)
 	osd0Ctr, osd1Ctr := osdContainer(t, cluster, 0), osdContainer(t, cluster, 1)
 
-	v6 := startFamilyActor(ctx, client, "v6", "[v2:"+mon6.String()+"]", pool)
-	v4 := startFamilyActor(ctx, client, "v4", "[v2:"+mon4.String()+"]", pool)
+	v6 := startFamilyActor(t, ctx, client, "v6", "[v2:"+mon6.String()+"]", pool)
+	v4 := startFamilyActor(t, ctx, client, "v4", "[v2:"+mon4.String()+"]", pool)
 	payload := map[string][]byte{}
 	want := map[string]string{}
 	for _, name := range []string{objects[0], objects[1]} {
@@ -523,7 +533,10 @@ func testDualStackFamilyCut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	output, _ := io.ReadAll(reader)
+	output, readErr := io.ReadAll(reader)
+	if readErr != nil {
+		t.Fatal("incomplete actor/socket evidence:", readErr)
+	}
 	var probe map[string]string
 	if code != 0 || json.Unmarshal([]byte(strings.TrimSpace(string(output))), &probe) != nil {
 		t.Fatalf("probe: exit %d: %s", code, output)
@@ -597,7 +610,10 @@ func testDualStackFamilyCut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	output, _ = io.ReadAll(reader)
+	output, err = io.ReadAll(reader)
+	if err != nil {
+		t.Fatal("incomplete family-cut oracle evidence:", err)
+	}
 	var oracle map[string]string
 	if code != 0 || json.Unmarshal([]byte(strings.TrimSpace(string(output))), &oracle) != nil || oracle[objects[0]] != want[objects[0]] || oracle[objects[1]] != want[objects[1]] {
 		t.Fatalf("oracle read: exit %d: %s, want %v", code, output, want)

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/mutation"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/overridehook"
 )
 
@@ -18,7 +19,7 @@ import (
 // AddBlocklist returns a non-nil handle for every outcome. A handle of a call
 // that was refused or never applied owns nothing: its Restore returns nil, takes
 // no lock and never reports a restoration. A handle returned together with an
-// error for an uncertain outcome is real and still restorable. The zero value
+// error for an uncertain outcome is real and keeps restoration ownership. The zero value
 // is unavailable, and its Restore returns an error.
 type BlocklistHandle struct {
 	owner   *ceph.Container
@@ -27,6 +28,7 @@ type BlocklistHandle struct {
 }
 
 type blocklistState struct {
+	command         mutation.Fence
 	until           time.Time
 	known, restored bool
 	// token is the entry in the owner's registry of held overrides.
@@ -150,9 +152,12 @@ func addBlocklistLocked(ctx context.Context, c *ceph.Container, address string, 
 	handle := &BlocklistHandle{owner: c, address: address, state: &blocklistState{token: token}}
 	// Tracked before the command: an uncertain add still needs Restore.
 	_, _ = overridehook.Settle(c, token, handle)
-	setErr := overridehook.BlocklistAdd(ctx, c, address, duration)
+	setErr := handle.state.command.Record(overridehook.BlocklistAdd(ctx, c, address, duration))
 	readCtx, readCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer readCancel()
+	if err := handle.state.command.Wait(readCtx); err != nil {
+		return handle, errors.Join(setErr, err)
+	}
 	entries, readErr := overridehook.BlocklistEntries(readCtx, c)
 	if readErr == nil {
 		if current := findBlocklistEntry(entries, address); current != nil {
@@ -176,6 +181,11 @@ func addBlocklistLocked(ctx context.Context, c *ceph.Container, address string, 
 // operation on a terminated cluster, and the entry stays registered. A context
 // that ends before the topology lock is free returns the context error, and the
 // entry stays registered.
+//
+// A canceled call leaves its native write running under a separate bounded
+// wait. Restore waits for its terminal reply before reconciling state.
+// If transport failure or that bound loses completion evidence, Restore keeps
+// ownership and returns an error; terminate the disposable cluster in that case.
 //
 //purpose:condition,lifetime
 func (h *BlocklistHandle) Restore(ctx context.Context) error {
@@ -204,6 +214,10 @@ func (h *BlocklistHandle) restoreLocked(ctx context.Context, c *ceph.Container) 
 	}
 	ctx, cancel := context.WithTimeout(ctx, overridehook.StartupTimeout(c))
 	defer cancel()
+	if err := h.state.command.Wait(ctx); err != nil {
+		return err
+	}
+
 	entries, err := overridehook.BlocklistEntries(ctx, c)
 	if err != nil {
 		return err
@@ -219,7 +233,7 @@ func (h *BlocklistHandle) restoreLocked(ctx context.Context, c *ceph.Container) 
 	if !current.Until.Equal(h.state.until) {
 		return overridehook.Invalid(errors.New("client blocklist entry changed outside this override; refusing removal"))
 	}
-	if err := overridehook.BlocklistRemove(ctx, c, h.address); err != nil {
+	if err := h.state.command.Record(overridehook.BlocklistRemove(ctx, c, h.address)); err != nil {
 		return err
 	}
 	entries, err = overridehook.BlocklistEntries(ctx, c)

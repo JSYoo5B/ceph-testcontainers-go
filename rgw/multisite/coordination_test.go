@@ -122,14 +122,10 @@ func TestRGWImportSyncPeriodRequiresTheExactPeriodInEveryZone(t *testing.T) {
 	if err := f.importSyncPeriod(t.Context(), states[0], states, cli.current); err != nil {
 		t.Fatal(err)
 	}
-	pulled := false
 	for _, args := range cli.calls {
 		if syncTestCommand(args, "realm", "pull") {
-			pulled = syncTestFlag(args, "--zone-id") == "dest-id" && syncTestFlag(args, "--url") == "http://source:7480"
+			t.Fatal("already imported period required the master's peer endpoint")
 		}
-	}
-	if !pulled {
-		t.Fatal("the secondary did not pull from the master's peer endpoint")
 	}
 	stale := syncJSONClone(cli.current)
 	stale["id"] = "period-stale"
@@ -137,5 +133,22 @@ func TestRGWImportSyncPeriodRequiresTheExactPeriodInEveryZone(t *testing.T) {
 	err := f.importSyncPeriod(t.Context(), states[0], states, cli.current)
 	if err == nil || !strings.Contains(err.Error(), "has not imported") || strings.Contains(err.Error(), "SECRET-MARKER") {
 		t.Fatalf("stale secondary: %v", err)
+	}
+	pulled := false
+	for _, args := range cli.calls {
+		if syncTestCommand(args, "realm", "pull") {
+			pulled = syncTestFlag(args, "--zone-id") == "dest-id" && syncTestFlag(args, "--url") == "http://source:7480"
+		}
+	}
+	if !pulled {
+		t.Fatal("stale secondary did not pull the master's peer period")
+	}
+	cli.onExec = func(_ context.Context, args []string) {
+		if syncTestCommand(args, "realm", "pull") {
+			cli.periodByZone["dest-id"] = syncJSONClone(cli.current)
+		}
+	}
+	if err := f.importSyncPeriod(t.Context(), states[0], states, cli.current); err != nil {
+		t.Fatal(err)
 	}
 }

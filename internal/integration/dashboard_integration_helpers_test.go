@@ -28,6 +28,7 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/dashboard"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
@@ -423,13 +424,9 @@ func testDashboardOwnedHTTPS(t *testing.T, opts ...testcontainers.ContainerCusto
 	if reply := consumer.request(t, ctx, standby, "GET", "/api/summary", token, nil); reply.Status != 303 || reply.Location != endpoint {
 		t.Fatalf("standby %s answered HTTP %d to %q, want 303 to %s", standby, reply.Status, reply.Location, endpoint)
 	}
-	// Every readiness check sends one wrong password; the account must not
-	// reach the module's lockout of ten failed attempts.
-	for range 11 {
-		if _, err := d.Endpoint(ctx); err != nil {
-			t.Fatal(err)
-		}
-	}
+	dashboardConcurrentChecks(t, ctx,
+		func(ctx context.Context) error { _, err := d.Endpoint(ctx); return err },
+		func(ctx context.Context) error { _, err := d.HostEndpoint(ctx); return err })
 	consumer.login(t, ctx, endpoint, username, password, 201)
 	t.Logf("DASHBOARD endpoint %s active=mgr.%s standby %s redirects; consumer login, 400 wrong password, 401 no token, 403 read-only write", endpoint, active, standby)
 
@@ -583,6 +580,8 @@ func testDashboardRGWGateway(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	dashboardConcurrentChecks(t, ctx,
+		func(ctx context.Context) error { _, err := d.Endpoint(ctx); return err }, link.Check)
 	linkUser := link.User().ID()
 	linkMetadata := "user:" + linkUser
 	if _, err := gateway.Admin(ctx, "metadata", "get", linkMetadata); err != nil {
@@ -729,16 +728,20 @@ func testDashboardRGWGateway(t *testing.T) {
 type delayedDashboardUserCreate struct {
 	testcontainers.Container
 	command      []string
+	options      []tcexec.ProcessOption
+	marker       string
 	refusedStops int
 }
 
 func (f *delayedDashboardUserCreate) Exec(ctx context.Context, args []string, options ...tcexec.ProcessOption) (int, io.Reader, error) {
-	if len(args) > 7 && args[2] == supervised.ShellScript && len(f.command) == 0 &&
-		slices.Contains(args[7:], "create") && slices.Contains(args[7:], "user") {
+	if len(args) > 6 && args[2] == supervised.Script && len(f.command) == 0 &&
+		slices.Contains(args[6:], "create") && slices.Contains(args[6:], "user") {
 		f.command = slices.Clone(args)
+		f.options = slices.Clone(options)
+		f.marker = clustertest.ExecEnv(options, supervised.MarkerVariable)
 		return 0, nil, errors.New("lost gateway user create reply")
 	}
-	if len(args) > 4 && args[2] == supervised.ShellCancelScript && len(f.command) != 0 && args[4] == f.command[4] && f.refusedStops < 2 {
+	if len(args) > 4 && args[2] == supervised.CancelScript && f.marker != "" && args[3] == f.marker && f.refusedStops < 2 {
 		f.refusedStops++
 		return 0, nil, errors.New("gateway user create stop unavailable")
 	}
@@ -762,7 +765,7 @@ func testDashboardUnconfirmedGatewayUser(t *testing.T, ctx context.Context, d *d
 	}
 	// Dispatch the exact held exec. Check its resulting native state without
 	// handing the generated credentials to the unconfirmed user handle.
-	code, output, err := transport.Container.Exec(ctx, transport.command)
+	code, output, err := transport.Container.Exec(ctx, transport.command, transport.options...)
 	if err != nil || code != 0 || output == nil {
 		t.Fatalf("delayed gateway user create: exit=%d, error=%v", code, err)
 	}
@@ -876,4 +879,24 @@ func serviceMapRGW(t *testing.T, ctx context.Context, cluster *ceph.Container) s
 		t.Fatalf("service map RGW daemons %v", gids)
 	}
 	return gids[0]
+}
+
+// dashboardConcurrentChecks exercises ordinary readiness concurrently without
+// introducing invalid credentials or changing the Dashboard lockout policy.
+func dashboardConcurrentChecks(t *testing.T, ctx context.Context, checks ...func(context.Context) error) {
+	t.Helper()
+	results := make(chan error, 4*len(checks))
+	for range 4 {
+		for _, check := range checks {
+			go func() { results <- check(ctx) }()
+		}
+	}
+	for range 4 * len(checks) {
+		if err := <-results; err != nil {
+			t.Error(err)
+		}
+	}
+	if t.Failed() {
+		t.FailNow()
+	}
 }

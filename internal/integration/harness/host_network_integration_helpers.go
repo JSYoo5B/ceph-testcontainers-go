@@ -15,7 +15,6 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -98,14 +97,7 @@ func HostNetworkCleanupCluster(t *testing.T, cluster *ceph.Container) {
 	t.Helper()
 	t.Cleanup(func() {
 		ReleaseAfterDiagnostics(t, 3*time.Minute, func(ctx context.Context) {
-			serviceCtx, cancelServices := context.WithTimeout(context.Background(), 5*time.Second)
-			services, inventoryErr := ObserveCluster(cluster).ServiceContainers(serviceCtx)
-			cancelServices()
-			if inventoryErr != nil {
-				t.Logf("service inventory unavailable: %v", inventoryErr)
-			}
-			ctrs := append([]testcontainers.Container{cluster.Container, clusteraccess.InitialManager(t, cluster)}, services...)
-			ctrs = append(ctrs, OSDContainers(t, cluster)...)
+			ctrs := diagnosticContainers(t, ctx, cluster)
 			for _, ctr := range ctrs {
 				if ctr == nil {
 					continue

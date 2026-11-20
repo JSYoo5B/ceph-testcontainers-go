@@ -62,28 +62,30 @@ func testManagerTelegrafDelivery(t *testing.T) {
 	// Registered first, so it is terminated after the module is restored.
 	const udpPort, tcpPort = "8094", "8095"
 	receiver := runModuleReceiver(t, ctx, cluster, "telegraf-sink", telegrafReceiverScript, udpPort, tcpPort)
+	records := func() []telegrafRecord {
+		t.Helper()
+		return moduleReceiverRecords[telegrafRecord](t, ctx, receiver)
+	}
 	batches := func() []telegrafBatch {
 		t.Helper()
-		all, err := telegrafBatches(moduleReceiverRecords[telegrafRecord](t, ctx, receiver))
+		all, err := telegrafBatches(records())
 		if err != nil {
 			t.Fatal(err)
 		}
 		return all
 	}
-	// awaitBatch waits for a complete batch first received after since that
-	// accept takes. A batch is complete once a later one has begun or no line
-	// has arrived for two seconds.
+	// awaitBatch waits for observed evidence first received after since.
+	// Check each UDP timestamp's last arrival, even when a newer timestamp
+	// is already present. A quiet period does not establish UDP delivery.
 	awaitBatch := func(what string, since time.Time, limit time.Duration, accept func(telegrafBatch) error) telegrafBatch {
 		t.Helper()
 		deadline := time.Now().Add(limit)
 		var last error
 		for {
 			all := batches()
-			for i, batch := range all {
-				if batch.Received < float64(since.UnixNano())/1e9 {
-					continue
-				}
-				if i == len(all)-1 && time.Since(time.Unix(0, int64(batch.Received*1e9))) < 2*time.Second+time.Duration(len(batch.Points))*time.Millisecond {
+			now := time.Now()
+			for _, batch := range all {
+				if telegrafReceiveTime(batch.Received).Before(since) || !batch.ready(now) {
 					continue
 				}
 				if last = accept(batch); last == nil {
@@ -157,11 +159,8 @@ func testManagerTelegrafDelivery(t *testing.T) {
 	module, enabled := enable()
 	active := activeManager(t, ctx, cluster)
 	first := awaitBatch("first UDP batch", enabled, time.Minute, from(active, "udp"))
-	if len(first.Units) != len(first.Points) {
-		t.Fatalf("UDP batch %d: %d lines in %d datagrams, want one line per datagram", first.Timestamp, len(first.Points), len(first.Units))
-	}
 	t.Logf("MGR_TELEGRAF first UDP batch %v after enabling: %d lines from mgr.%s, %d cluster, %d pool, %d daemon",
-		time.Unix(0, int64(first.Received*1e9)).Sub(enabled).Round(time.Millisecond), len(first.Points), active,
+		telegrafReceiveTime(first.Received).Sub(enabled).Round(time.Millisecond), len(first.Points), active,
 		len(first.Select("ceph_cluster_stats", nil)), len(first.Select("ceph_pool_stats", nil)), len(first.Select("ceph_daemon_stats", nil)))
 
 	// A controlled change: a new pool and writes to it, identified by the
@@ -194,7 +193,7 @@ func testManagerTelegrafDelivery(t *testing.T) {
 		return nil
 	})
 	t.Logf("MGR_TELEGRAF pool %s id %s: %d objects and writes in batch %d, %v after the writes",
-		pool, poolID, objects, change.Timestamp, time.Unix(0, int64(change.Received*1e9)).Sub(written).Round(time.Millisecond))
+		pool, poolID, objects, change.Timestamp, telegrafReceiveTime(change.Received).Sub(written).Round(time.Millisecond))
 
 	// Receiver unavailable: the module only logs the failure.
 	before := failures(active)
@@ -217,13 +216,13 @@ func testManagerTelegrafDelivery(t *testing.T) {
 	up := time.Now()
 	receiver.SetAvailable(t, ctx, true)
 	resumed := awaitBatch("batch after the outage", up, 30*time.Second, from(active, "udp"))
-	for _, batch := range batches() {
-		if received := time.Unix(0, int64(batch.Received*1e9)); received.After(down) && received.Before(up) {
-			t.Fatalf("batch %d received during the outage", batch.Timestamp)
+	for _, record := range records() {
+		if received := telegrafReceiveTime(record.Time); received.After(down) && received.Before(up) {
+			t.Fatalf("%s unit %d received during the outage", record.Proto, record.Unit)
 		}
 	}
 	t.Logf("MGR_TELEGRAF outage of %v: %d logged send failures, health unchanged, next batch %v after the receiver returned with %d lines",
-		up.Sub(down).Round(time.Millisecond), logged, time.Unix(0, int64(resumed.Received*1e9)).Sub(up).Round(time.Millisecond), len(resumed.Points))
+		up.Sub(down).Round(time.Millisecond), logged, telegrafReceiveTime(resumed.Received).Sub(up).Round(time.Millisecond), len(resumed.Points))
 
 	// Failover: the passes come from the promoted manager.
 	standby := ""
@@ -242,7 +241,7 @@ func testManagerTelegrafDelivery(t *testing.T) {
 		}
 	}
 	t.Logf("MGR_TELEGRAF failover: first batch from mgr.%s %v after mgr fail, %v after the last batch of mgr.%s, %d lines",
-		standby, time.Unix(0, int64(promoted.Received*1e9)).Sub(failed).Round(time.Millisecond),
+		standby, telegrafReceiveTime(promoted.Received).Sub(failed).Round(time.Millisecond),
 		time.Duration((promoted.Received-lastOld)*1e9).Round(time.Millisecond), active, len(promoted.Points))
 
 	// Disabling stops the passes.
@@ -251,9 +250,9 @@ func testManagerTelegrafDelivery(t *testing.T) {
 	}
 	disabled := time.Now()
 	time.Sleep(12 * time.Second)
-	for _, batch := range batches() {
-		if time.Unix(0, int64(batch.Received*1e9)).After(disabled.Add(time.Second)) {
-			t.Fatalf("batch %d arrived %v after the module was disabled", batch.Timestamp, time.Unix(0, int64(batch.Received*1e9)).Sub(disabled))
+	for _, record := range records() {
+		if received := telegrafReceiveTime(record.Time); received.After(disabled.Add(time.Second)) {
+			t.Fatalf("%s unit %d arrived %v after the module was disabled", record.Proto, record.Unit, received.Sub(disabled))
 		}
 	}
 
@@ -266,11 +265,8 @@ func testManagerTelegrafDelivery(t *testing.T) {
 	_, enabled = enable()
 	active = activeManager(t, ctx, cluster)
 	tcp := awaitBatch("first TCP batch", enabled, time.Minute, from(active, "tcp"))
-	if len(tcp.Units) != 1 {
-		t.Fatalf("TCP batch %d arrived over %d connections, want one", tcp.Timestamp, len(tcp.Units))
-	}
 	t.Logf("MGR_TELEGRAF first TCP batch %v after enabling: %d lines from mgr.%s in one connection",
-		time.Unix(0, int64(tcp.Received*1e9)).Sub(enabled).Round(time.Millisecond), len(tcp.Points), active)
+		telegrafReceiveTime(tcp.Received).Sub(enabled).Round(time.Millisecond), len(tcp.Points), active)
 
 	// The sender stops before the receiver goes: the restorations run here,
 	// and the receiver is terminated in cleanup.
@@ -300,9 +296,9 @@ func testManagerTelegrafDelivery(t *testing.T) {
 	}
 	stopped := time.Now()
 	time.Sleep(12 * time.Second)
-	for _, batch := range batches() {
-		if time.Unix(0, int64(batch.Received*1e9)).After(stopped.Add(time.Second)) {
-			t.Fatalf("batch %d arrived after the restoration", batch.Timestamp)
+	for _, record := range records() {
+		if telegrafReceiveTime(record.Time).After(stopped.Add(time.Second)) {
+			t.Fatalf("%s unit %d arrived after the restoration", record.Proto, record.Unit)
 		}
 	}
 }

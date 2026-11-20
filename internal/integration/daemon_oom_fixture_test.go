@@ -7,13 +7,15 @@ package integration_test
 import (
 	"context"
 	"fmt"
-	mobycl "github.com/moby/moby/client"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	mobycl "github.com/moby/moby/client"
 )
 
 func TestDaemonMemoryOOMOracle(t *testing.T) {
@@ -131,6 +133,48 @@ func TestDaemonMemoryObserverRecordsHelperVictim(t *testing.T) {
 	}
 	if daemonMemoryOOM(map[string]uint64{"max": 10, "oom": 2, "oom_kill": 1}, window.Events, true, !window.OtherProcess, true, true) == nil {
 		t.Fatal("helper cgroup OOM qualified as daemon OOM")
+	}
+}
+
+func TestDaemonMemoryMembershipLossBeforeExitIsNotAttributed(t *testing.T) {
+	baseline := map[string]uint64{"max": 10, "oom": 2, "oom_kill": 1}
+	for _, issue := range []string{"unreadable", "malformed", "replaced", "removed"} {
+		t.Run(issue, func(t *testing.T) {
+			target := daemonMemoryFileTarget(t)
+			switch issue {
+			case "unreadable":
+				if err := os.Remove(filepath.Join(target.Group, "cgroup.procs")); err != nil {
+					t.Fatal(err)
+				}
+			case "malformed":
+				if err := os.WriteFile(filepath.Join(target.Group, "cgroup.procs"), []byte("41"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			default:
+				if err := os.Rename(target.Group, target.Group+"-retired"); err != nil {
+					t.Fatal(err)
+				}
+				if issue == "replaced" {
+					if err := os.Mkdir(target.Group, 0o700); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			ctx, stop := context.WithCancel(t.Context())
+			stop()
+			window := <-target.record(ctx, baseline)
+			if window.MembershipGapAt.IsZero() || window.OtherProcess || window.Events["oom_kill"] != 2 {
+				t.Fatalf("loss of membership was not retained alongside the readable counters: %+v", window)
+			}
+			// An earlier, valid pressure sample remains in the window.
+			window.PressureObserved = true
+			if err := window.qualify(baseline, true, true, true, window.MembershipGapAt.Add(time.Millisecond)); err == nil {
+				t.Fatal("membership loss during the live pressure window still attributed the kill")
+			}
+			if err := window.qualify(baseline, true, true, true, window.MembershipGapAt.Add(-time.Millisecond)); err != nil {
+				t.Fatal("membership loss after the independently observed exit invalidated the window", err)
+			}
+		})
 	}
 }
 

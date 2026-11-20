@@ -300,7 +300,11 @@ What to expect:
 With `Peer`, only packets to that address are shaped, and with `PeerPort`
 only TCP packets to that destination port. `Peers` lists up to
 `fault.MaxNetworkPeers` `fault.NetworkPeer` entries of either family in one
-lease. Every other packet leaves unshaped.
+lease. The installed priority map sends every other packet to an unshaped
+band. `Status` reports `Applied: false` if that priority map changes or cannot
+be confirmed. An in-place priority-map edit leaves the lease's root ownership
+intact, so `Restore` can still remove the hierarchy if it contains only the
+lease's qdiscs and filters.
 
 ```golang
 // The MDS loses both OSDs; clients and the MON still reach it.
@@ -933,7 +937,7 @@ Neither wait looks at an individual OSD:
 
 | Wait | OSD condition | PG condition |
 | --- | --- | --- |
-| [`WaitForClean`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Observer.WaitForClean) | The cluster status counts as many OSDs in total, up and in as the fixture owns. These are three cluster-wide numbers; no OSD ID or UUID is read. | At least one PG, all exactly `active+clean`. |
+| [`WaitForClean`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Observer.WaitForClean) | The cluster status counts as many OSDs in total, up and in as the fixture owned at the start of the wait. These are three cluster-wide numbers; no OSD ID or UUID is read. | At least one PG, all exactly `active+clean`. |
 | [`WaitForPGClean`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Observer.WaitForPGClean) | None. | At least one PG, all exactly `active+clean`. |
 
 Both also need an available MGR. Choose by what the test has to establish:

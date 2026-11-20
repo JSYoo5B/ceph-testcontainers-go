@@ -84,11 +84,8 @@ func checkKillWindow(checkpoint uint64, atKill, before, after []byte) error {
 	return nil
 }
 
-// judgeResumedCopy is the then step, judged on the destination image read
-// after the resumed snapshot copy completed. It returns the symptom when the
-// object at the checkpoint kept the old bytes, and none when the destination
-// holds exactly the new bytes. A mismatch elsewhere is not this defect and
-// is returned as an error.
+// judgeResumedCopy recognizes a skipped checkpoint object in a completed
+// copy. Every other object must hold the new bytes.
 func judgeResumedCopy(checkpoint uint64, final, before, after []byte) ([]string, error) {
 	classes, err := objectClasses(final, before, after)
 	if err != nil {
@@ -97,11 +94,15 @@ func judgeResumedCopy(checkpoint uint64, final, before, after []byte) ([]string,
 	if checkpoint >= uint64(len(classes)) {
 		return nil, fmt.Errorf("checkpoint %d outside the %d objects", checkpoint, len(classes))
 	}
-	if classes[checkpoint] == "old" {
+	index := int(checkpoint)
+	for object, class := range classes {
+		if class == "new" || (object == index && class == "old") {
+			continue
+		}
+		return nil, fmt.Errorf("another fault: object %d is %s after the resumed copy at checkpoint %d; %s", object, class, checkpoint, classSummary(classes))
+	}
+	if classes[index] == "old" {
 		return []string{fmt.Sprintf("object %d, at checkpoint last_copied_object_number=%d, kept the previous snapshot's bytes after the resumed copy completed; %s", checkpoint, checkpoint, classSummary(classes))}, nil
 	}
-	if bytes.Equal(final, after) {
-		return nil, nil
-	}
-	return nil, fmt.Errorf("another fault: object %d at checkpoint %d is %s, but the destination differs elsewhere; %s", checkpoint, checkpoint, classes[checkpoint], classSummary(classes))
+	return nil, nil
 }

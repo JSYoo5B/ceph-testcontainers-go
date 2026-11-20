@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"maps"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
@@ -35,6 +38,7 @@ type rateLimitBucket struct{ id, marker, owner string }
 // first for every command and may answer it instead (handled true); after
 // runs once the model applied a command and may replace its reply.
 type rateLimitGateway struct {
+	mu sync.Mutex
 	testcontainers.Container
 	userDocument string
 	buckets      map[string]rateLimitBucket
@@ -46,6 +50,7 @@ type rateLimitGateway struct {
 	// answers.
 	errnoLine   string
 	unsetENOENT bool
+	failCancel  bool
 }
 
 func (f *rateLimitGateway) GetContainerID() string { return "gateway" }
@@ -56,11 +61,16 @@ func (f *rateLimitGateway) State(context.Context) (*container.State, error) {
 
 func (f *rateLimitGateway) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
 	if gwtest.IsCancel(args) {
+		if f.failCancel {
+			return 0, nil, errors.New("cancel unavailable")
+		}
 		return 0, nil, nil
 	}
 	original := args
 	args = gwtest.Argv(args)
+	f.mu.Lock()
 	f.calls = append(f.calls, slices.Clone(args))
+	f.mu.Unlock()
 	if f.before != nil {
 		if code, err, handled := f.before(args); handled {
 			if err != nil {
@@ -73,7 +83,9 @@ func (f *rateLimitGateway) Exec(_ context.Context, args []string, _ ...tcexec.Pr
 			return gwtest.Reply(original, code, gwtest.Stream(true, []byte(output)))
 		}
 	}
+	f.mu.Lock()
 	data, code := f.answer(args)
+	f.mu.Unlock()
 	if f.after != nil {
 		if err := f.after(args); err != nil {
 			return 0, nil, err
@@ -509,7 +521,7 @@ func TestRGWRateLimitRestoreRefusesReplacedTargetsAndOutsideEdits(t *testing.T) 
 // A command whose reply is lost, whose context ends, or that fails natively
 // returns the real handle with the original error; Restore with a fresh
 // context reconciles either side of that command.
-func TestRGWRateLimitOverrideUncertainOutcomesStayRestorable(t *testing.T) {
+func TestRGWRateLimitOverrideLostCompletionKeepsOwnership(t *testing.T) {
 	lost := errors.New("connection to the engine broke")
 	for _, tc := range []struct {
 		name    string
@@ -563,11 +575,11 @@ func TestRGWRateLimitOverrideUncertainOutcomesStayRestorable(t *testing.T) {
 				}
 			}
 			f.before, f.after = nil, nil
-			if err := change.Restore(t.Context()); err != nil {
-				t.Fatal(err)
+			if err := change.Restore(t.Context()); err == nil {
+				t.Fatal("uncertain completion released ownership")
 			}
-			if !maps.Equal(f.policies["bucket:limited"], rateLimitNative(false, 0, 0)) {
-				t.Fatalf("restored policy %v", f.policies["bucket:limited"])
+			if _, err := user.OverrideRateLimit(t.Context(), RateLimitScope{Bucket: "limited"}, RateLimit{Enabled: true, MaxReadOps: 2}); err == nil {
+				t.Fatal("successor admitted without completion proof")
 			}
 		})
 	}
@@ -585,7 +597,7 @@ func TestRGWRateLimitRestoreFailureNamesTheFailedStep(t *testing.T) {
 		{[]string{"user", "info"}, "confirm the owned RGW user (user info): radosgw-admin exited 5 (EIO); native output is redacted"},
 		{[]string{"bucket", "stats"}, "read RGW bucket identity (bucket stats): radosgw-admin exited 5 (EIO); native output is redacted"},
 		{[]string{"ratelimit", "get"}, "read RGW rate-limit policy (ratelimit get): radosgw-admin exited 5 (EIO); native output is redacted"},
-		{[]string{"ratelimit", "disable"}, "change RGW rate-limit policy (ratelimit disable): radosgw-admin exited 5 (EIO); native output is redacted"},
+		{[]string{"ratelimit", "disable"}, "change RGW rate-limit policy (ratelimit disable): native mutation completion is uncertain; retain ownership or terminate the cluster"},
 	} {
 		t.Run(strings.Join(tc.command, " "), func(t *testing.T) {
 			user, f := newRateLimitFixture(t)
@@ -606,7 +618,7 @@ func TestRGWRateLimitRestoreFailureNamesTheFailedStep(t *testing.T) {
 				t.Fatalf("Restore error = %v, want %q", err, tc.want)
 			}
 			f.before, f.errnoLine = nil, ""
-			if err := change.Restore(t.Context()); err != nil {
+			if err := change.Restore(t.Context()); (err != nil) != slices.Equal(tc.command, []string{"ratelimit", "disable"}) {
 				t.Fatal(err)
 			}
 		})
@@ -620,6 +632,7 @@ func TestRGWRateLimitRestoreFailureIsPreservedAndRetryable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.errnoLine = "ERROR: invalid argument: (22) Invalid argument"
 	f.before = func(args []string) (int, error, bool) {
 		return 22, nil, slices.Equal(rateLimitCommand(args), []string{"ratelimit", "set"})
 	}
@@ -856,8 +869,8 @@ func TestRGWRateLimitRestoreOfAnUnsetUserPolicy(t *testing.T) {
 			t.Fatalf("uncertain apply lost its handle: %v", err)
 		}
 		f.before = nil
-		if err := change.Restore(t.Context()); err != nil {
-			t.Fatal(err)
+		if err := change.Restore(t.Context()); err == nil {
+			t.Fatal("transport loss released ownership")
 		}
 		if f.policies["user:test-user"] != nil || len(f.mutations()) != 1 {
 			t.Fatalf("Restore of a still unset scope changed it: %v, %v", f.policies, f.mutations())
@@ -933,8 +946,9 @@ func TestRGWRateLimitUnsetUserPolicyNeedsNativeProof(t *testing.T) {
 // vanished after the ENOENT, and finishes once the proof holds again.
 func TestRGWRateLimitRestoreOfAnUnsetUserPolicyNeedsNativeProof(t *testing.T) {
 	user, f := newUnsetRateLimitFixture(t)
+	f.errnoLine = "ERROR: invalid argument: (22) Invalid argument"
 	f.before = func(args []string) (int, error, bool) {
-		return 0, errors.New("connection to the engine broke"), slices.Equal(rateLimitCommand(args), []string{"ratelimit", "set"})
+		return 22, nil, slices.Equal(rateLimitCommand(args), []string{"ratelimit", "set"})
 	}
 	change, err := user.OverrideRateLimit(t.Context(), RateLimitScope{}, RateLimit{Enabled: true, MaxWriteOps: 1})
 	if err == nil {
@@ -984,5 +998,97 @@ func TestRGWRateLimitDefaultPolicyMatching(t *testing.T) {
 	}
 	if (rateLimitPolicy{unset: true}).equal(defaultRateLimitPolicy()) || !(rateLimitPolicy{unset: true}).equal(rateLimitPolicy{unset: true}) {
 		t.Fatal("unset policy matching")
+	}
+}
+
+// The completion barrier is independent of policy reads and caller lifetime.
+func TestRGWRateLimitWaitsForDelayedMutations(t *testing.T) {
+	for _, restore := range []bool{false, true} {
+		t.Run(fmt.Sprint(restore), func(t *testing.T) {
+			user, f := newRateLimitFixture(t)
+			limit := RateLimit{Enabled: true, MaxReadOps: 1}
+			var h *RateLimitOverrideHandle
+			if restore {
+				var err error
+				h, err = user.OverrideRateLimit(t.Context(), RateLimitScope{}, limit)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			started, release := make(chan struct{}), make(chan struct{})
+			verb := "enable"
+			if restore {
+				verb = "disable"
+			}
+			f.before = func(args []string) (int, error, bool) {
+				if slices.Equal(rateLimitCommand(args), []string{"ratelimit", verb}) {
+					close(started)
+					<-release
+				}
+				return 0, nil, false
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() {
+				if restore {
+					done <- h.Restore(ctx)
+				} else {
+					var err error
+					h, err = user.OverrideRateLimit(ctx, RateLimitScope{}, limit)
+					done <- err
+				}
+			}()
+			<-started
+			cancel()
+			if err := <-done; !errors.Is(err, context.Canceled) {
+				t.Fatal(err)
+			}
+			short, stop := context.WithTimeout(t.Context(), 20*time.Millisecond)
+			if err := h.Restore(short); err == nil {
+				t.Fatal("unfinished write reported restored")
+			}
+			stop()
+			if _, err := user.OverrideRateLimit(t.Context(), RateLimitScope{}, limit); err == nil {
+				t.Fatal("successor admitted")
+			}
+			close(release)
+			if err := h.Restore(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			f.before = nil
+			next, err := user.OverrideRateLimit(t.Context(), RateLimitScope{}, limit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := next.Restore(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestRGWRateLimitUnstoppedCommandKeepsOwnership(t *testing.T) {
+	user, f := newRateLimitFixture(t)
+	f.failCancel = true
+	f.before = func(args []string) (int, error, bool) {
+		return 0, errors.New("transport unavailable"), slices.Equal(rateLimitCommand(args), []string{"ratelimit", "set"})
+	}
+	h, err := user.OverrideRateLimit(t.Context(), RateLimitScope{}, RateLimit{Enabled: true, MaxReadOps: 1})
+	var unstopped *ceph.NativeCommandUnstoppedError
+	if !errors.As(err, &unstopped) {
+		t.Fatalf("lost stop responsibility: %v", err)
+	}
+	if err := h.Restore(t.Context()); err == nil {
+		t.Fatal("unstopped write restored")
+	}
+	f.failCancel = false
+	if err := unstopped.Stop(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	// Local process termination cannot prove that its accepted storage write
+	// has settled. The missing native reply keeps the override reserved.
+	if err := h.Restore(t.Context()); err == nil {
+		t.Fatal("stop was treated as native completion")
 	}
 }

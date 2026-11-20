@@ -91,6 +91,27 @@ func TestRBDPausedLockOwner(t *testing.T) {
 			if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
+			for _, advisory := range []struct{ name, features, id string }{
+				{"backup", "layering", "auto backup"},
+				{"numeric", "layering,exclusive-lock", "auto 42"},
+			} {
+				spec := pool + "/" + advisory.name
+				harness.ExecOutput(t, ctx, first, "rbd", "create", spec, "--size", "1M", "--image-feature", advisory.features)
+				harness.ExecOutput(t, ctx, first, "rbd", "lock", "add", spec, advisory.id)
+				status, err := rbd.ImageClients(ctx, cluster, pool, "", advisory.name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(status.Locks) != 1 || status.Locks[0].ID != advisory.id || status.Locks[0].Managed || status.ExclusiveOwner() != nil {
+					t.Fatalf("advisory %q: locks %+v, owner %+v", advisory.id, status.Locks, status.ExclusiveOwner())
+				}
+				for _, lock := range []expect.ExclusiveLock{expect.ExclusiveLockFree, expect.ExclusiveLockHeld} {
+					got, err := (expect.ImageClients{Lock: lock}).Evaluate(*status)
+					if err != nil || got.Matched != (lock == expect.ExclusiveLockFree) {
+						t.Fatalf("advisory %q against %s: %+v, %v", advisory.id, lock, got, err)
+					}
+				}
+			}
 			harness.ExecOutput(t, ctx, first, "rbd", "create", pool+"/"+imageName, "--size", "16M")
 			clients := func(want expect.ImageClients) *rbd.ImageClientStatus {
 				t.Helper()
@@ -217,5 +238,97 @@ func TestRBDPausedLockOwner(t *testing.T) {
 				t.Fatalf("current owner write errno = %d", errno)
 			}
 		})
+	}
+}
+
+// TestRBDOwnerWatchAddressScope qualifies address matching with two native
+// image handles on one librados connection and a cooperative lock handoff.
+func TestRBDOwnerWatchAddressScope(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
+	defer cancel()
+	cluster, client := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2)))
+	const pool, name = "tc-watch-scope", "disk"
+	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, Application: "rbd", Replicas: 2, MinSize: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rbd.InitPool(ctx, cluster, pool); err != nil {
+		t.Fatal(err)
+	}
+	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
+		t.Fatal(err)
+	}
+	harness.ExecOutput(t, ctx, client, "rbd", "create", pool+"/"+name, "--size", "1M", "--image-feature", "layering,exclusive-lock")
+	const script = `
+import os, rados, rbd, time
+cluster = rados.Rados(conffile="/etc/ceph/ceph.conf")
+cluster.connect()
+ioctx = cluster.open_ioctx("tc-watch-scope")
+a = rbd.Image(ioctx, "disk")
+b = rbd.Image(ioctx, "disk")
+a.write(b"first", 0)
+a.flush()
+open("/tmp/watch-scope/first", "w").close()
+while not os.path.exists("/tmp/watch-scope/handoff"):
+    time.sleep(0.05)
+a.close()
+b.write(b"second", 0)
+b.flush()
+open("/tmp/watch-scope/second", "w").close()
+while not os.path.exists("/tmp/watch-scope/finish"):
+    time.sleep(0.05)
+b.close()
+ioctx.close()
+cluster.shutdown()
+open("/tmp/watch-scope/done", "w").close()
+`
+	harness.ExecOutput(t, ctx, client, "sh", "-c", `mkdir /tmp/watch-scope && printf '%s' "$1" > /tmp/watch-scope/client.py && nohup python3 /tmp/watch-scope/client.py > /tmp/watch-scope/log 2>&1 &`, "sh", script)
+	read := func(stage string) *rbd.ImageClientStatus {
+		t.Helper()
+		harness.WaitClientFile(t, ctx, client, "/tmp/watch-scope/"+stage, "/tmp/watch-scope/log")
+		status, err := rbd.ImageClients(ctx, cluster, pool, "", name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("%s: watchers=%+v locks=%+v", stage, status.Watchers, status.Locks)
+		return status
+	}
+	first := read("first")
+	owner := first.ExclusiveOwner()
+	if owner == nil || len(first.Watchers) != 2 {
+		t.Fatalf("two open handles: %+v", first)
+	}
+	if first.Watchers[0].Address != first.Watchers[1].Address || first.Watchers[0].Cookie == first.Watchers[1].Cookie {
+		t.Fatalf("expected distinct watches at one address: %+v", first.Watchers)
+	}
+	var oldWatch rbd.ImageWatcher
+	for _, w := range first.Watchers {
+		if owner.ID == "auto "+strconv.FormatUint(w.Cookie, 10) {
+			oldWatch = w
+		}
+	}
+	if oldWatch.Address != owner.Address {
+		t.Fatalf("first owner cookie has no watch: %+v", first)
+	}
+	harness.ExecOutput(t, ctx, client, "touch", "/tmp/watch-scope/handoff")
+	second := read("second")
+	successor := second.ExclusiveOwner()
+	if successor == nil || successor.Address != owner.Address || successor.ID == owner.ID || len(second.Watchers) != 1 || successor.ID != "auto "+strconv.FormatUint(second.Watchers[0].Cookie, 10) {
+		t.Fatalf("same-address handoff: before=%+v after=%+v", first, second)
+	}
+	want := expect.ImageClients{Lock: expect.ExclusiveLockHeld, OwnerWatches: true}
+	// Combine actual native records from opposite sides of the handoff. This
+	// deliberately models separate reads; it does not claim an atomic snapshot.
+	mixed := rbd.ImageClientStatus{Watchers: []rbd.ImageWatcher{oldWatch}, Locks: second.Locks}
+	for _, observed := range []rbd.ImageClientStatus{*first, *second, mixed} {
+		result, err := want.Evaluate(observed)
+		if err != nil || !result.Matched {
+			t.Fatalf("address expectation: %+v %v", result, err)
+		}
+	}
+	harness.ExecOutput(t, ctx, client, "touch", "/tmp/watch-scope/finish")
+	done := read("done")
+	result, err := (expect.ImageClients{Lock: expect.ExclusiveLockFree, Unwatched: true}).Evaluate(*done)
+	if err != nil || !result.Matched {
+		t.Fatalf("closed handles: %+v %v", result, err)
 	}
 }

@@ -105,7 +105,8 @@ func TestJudgeBarrier(t *testing.T) {
 	series := func(verdicts ...barrierVerdict) []barrierSample {
 		out := make([]barrierSample, len(verdicts))
 		for i, v := range verdicts {
-			out[i] = barrierSample{Verdict: v, At: at.Add(time.Duration(i) * 5 * time.Second)}
+			point := at.Add(time.Duration(i) * 5 * time.Second)
+			out[i] = barrierSample{Verdict: v, Start: point, End: point}
 		}
 		return out
 	}
@@ -220,19 +221,19 @@ func TestFailedReadsBreakTheBarrierWindow(t *testing.T) {
 	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	sec := func(n int) time.Time { return at.Add(time.Duration(n) * time.Second) }
 	const span = 20 * time.Second
-	hold := func(n int) barrierSample { return barrierSample{Verdict: barrierHolds, At: sec(n)} }
+	hold := func(n int) barrierSample { return barrierSample{Verdict: barrierHolds, Start: sec(n), End: sec(n)} }
 
-	// Silent skipping, the former behavior, bridges the gap.
+	// An oversized gap also prevents the remaining holds from qualifying.
 	skipped := []barrierSample{hold(0), hold(5), hold(20)}
-	if _, err := judgeBarrier(skipped, span, false); err != nil {
-		t.Fatalf("the holds alone should pass this judge: %v", err)
+	if _, err := judgeBarrier(skipped, span, false); err == nil {
+		t.Fatal("credited holds across an oversized gap")
 	}
 	var kept []barrierSample
 	for _, n := range []int{0, 5} {
 		kept = append(kept, hold(n))
 	}
 	for _, n := range []int{10, 15} {
-		kept = recordFailedRead(kept, sec(n), true)
+		kept = recordFailedRead(kept, hold(n), true)
 	}
 	kept = append(kept, hold(20))
 	if len(kept) != 5 {
@@ -242,12 +243,55 @@ func TestFailedReadsBreakTheBarrierWindow(t *testing.T) {
 		t.Fatalf("a window with failed reads inside it was credited: %v", err)
 	}
 	// Before the first report nothing is credited, so the list is unchanged.
-	before := recordFailedRead(nil, sec(0), false)
-	before = append(before, hold(5), hold(10), hold(15), hold(30))
+	before := recordFailedRead(nil, hold(0), false)
+	before = append(before, hold(5), hold(10), hold(15), hold(25))
 	if len(before) != 4 {
 		t.Fatalf("a failed read before the first report entered the window: %d samples", len(before))
 	}
 	if _, err := judgeBarrier(before, span, false); err != nil {
 		t.Fatalf("a failure before the first report should not count: %v", err)
+	}
+}
+
+func TestBarrierReadTiming(t *testing.T) {
+	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	base := barrierBaseline(t)
+	source := newProgressSample()
+	source.state = "active+degraded+remapped+backfill_toofull"
+	doc := source.json(t)
+	read := func(from, to int) barrierSample {
+		t.Helper()
+		now := at.Add(time.Duration(from) * time.Second)
+		p, _, sample, err := readBarrierProgress(func() time.Time { return now }, func() ([]byte, error) {
+			now = at.Add(time.Duration(to) * time.Second)
+			return doc, nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sample.Verdict, _ = fullnessBarrierSample(base, p)
+		return sample
+	}
+	const span = 20 * time.Second
+	for _, test := range []struct {
+		name    string
+		samples []barrierSample
+		wantErr string
+	}{
+		{"closely spaced responses", []barrierSample{read(0, 1), read(6, 7), read(12, 13), read(18, 19), read(23, 24)}, ""},
+		{"slow reply", []barrierSample{read(0, 1), read(2, 23)}, "took"},
+		{"slow first read", []barrierSample{read(0, 21), read(22, 23)}, "took"},
+		{"short reads across large gap", []barrierSample{read(0, 1), read(5, 6), read(21, 22)}, "previous one"},
+		{"wall time only", []barrierSample{read(0, 4), read(6, 8), read(12, 15), read(17, 19), read(20, 22), read(23, 25)}, "at least"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			judged, err := judgeBarrier(test.samples, span, false)
+			switch {
+			case test.wantErr == "" && (err != nil || judged.HeldFor != 22*time.Second):
+				t.Fatalf("judgement %+v, error %v", judged, err)
+			case test.wantErr != "" && (err == nil || !strings.Contains(err.Error(), test.wantErr)):
+				t.Fatalf("error %v, want %q", err, test.wantErr)
+			}
+		})
 	}
 }

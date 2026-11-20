@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"io"
 	"slices"
@@ -102,10 +103,13 @@ type rgwLifecycleContainer struct {
 	running                    bool
 	startError, terminateError error
 	starts, stops, terminates  int
+	generation                 int
 }
 
+func (c *rgwLifecycleContainer) GetContainerID() string { return "gateway" }
+
 func (c *rgwLifecycleContainer) State(context.Context) (*container.State, error) {
-	return &container.State{Running: c.running}, nil
+	return &container.State{Running: c.running, StartedAt: fmt.Sprintf("generation-%d", c.generation)}, nil
 }
 func (c *rgwLifecycleContainer) Stop(context.Context, *time.Duration) error {
 	c.stops++
@@ -120,6 +124,7 @@ func (c *rgwLifecycleContainer) Start(context.Context) error {
 		return err
 	}
 	c.running = true
+	c.generation++
 	return nil
 }
 func (c *rgwLifecycleContainer) Terminate(context.Context, ...testcontainers.TerminateOption) error {

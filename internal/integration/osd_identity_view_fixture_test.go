@@ -5,6 +5,7 @@
 package integration_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -122,4 +123,107 @@ func osdDrop(id int, entry map[string]any) {
 	if id == 1 {
 		delete(entry, "uuid")
 	}
+}
+
+func TestOSDIdentityRejectsIncompleteForeignRejectionEvidence(t *testing.T) {
+	// These replies retain the foreign UUID whenever the record exists, so the
+	// scenario's UUID precondition alone cannot justify the unchanged verdict.
+	const entry = `{"osd":1,"uuid":"foreign","up":0,"in":0,"weight":0,"primary_affinity":0}`
+	const node = `{"id":1,"type":"osd","crush_weight":0}`
+	valid := [2]string{`{"epoch":40,"osds":[` + entry + `]}`, `{"nodes":[` + node + `]}`}
+	cases := map[string][2]string{}
+	for _, field := range []string{"osd", "uuid", "up", "in", "weight", "primary_affinity"} {
+		for _, mode := range []string{"missing", "null"} {
+			var record map[string]any
+			if err := json.Unmarshal([]byte(entry), &record); err != nil {
+				t.Fatal(err)
+			}
+			delete(record, field)
+			if mode == "null" {
+				record[field] = nil
+			}
+			encoded, err := json.Marshal(record)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cases["dump/"+field+"/"+mode] = [2]string{`{"epoch":40,"osds":[` + string(encoded) + `]}`, valid[1]}
+		}
+	}
+	for _, field := range []string{"id", "type", "crush_weight"} {
+		for _, mode := range []string{"missing", "null"} {
+			var record map[string]any
+			if err := json.Unmarshal([]byte(node), &record); err != nil {
+				t.Fatal(err)
+			}
+			delete(record, field)
+			if mode == "null" {
+				record[field] = nil
+			}
+			encoded, err := json.Marshal(record)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cases["tree/"+field+"/"+mode] = [2]string{valid[0], `{"nodes":[` + string(encoded) + `]}`}
+		}
+	}
+	for name, dump := range map[string]string{
+		"missing osds": `{"epoch":40}`, "null osds": `{"epoch":40,"osds":null}`,
+		"null dump": `null`, "missing epoch": `{"osds":[]}`, "null epoch": `{"epoch":null,"osds":[]}`,
+		"duplicate ID": `{"epoch":40,"osds":[` + entry + `,` + entry + `]}`,
+	} {
+		cases["dump/"+name] = [2]string{dump, valid[1]}
+	}
+	for name, tree := range map[string]string{
+		"missing nodes": `{}`, "null nodes": `{"nodes":null}`, "null tree": `null`,
+		"duplicate ID":     `{"nodes":[` + node + `,` + node + `]}`,
+		"unregistered OSD": `{"nodes":[{"id":2,"type":"osd","crush_weight":0}]}`,
+		"OSD ID as bucket": `{"nodes":[{"id":1,"type":"host","crush_weight":0}]}`,
+		"bucket ID as OSD": `{"nodes":[{"id":-1,"type":"osd","crush_weight":0}]}`,
+	} {
+		cases["tree/"+name] = [2]string{valid[0], tree}
+	}
+	for name, docs := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := parseOSDIdentityView([]byte(docs[0]), []byte(docs[1])); err == nil {
+				t.Error("incomplete identity evidence decoded without an error")
+			}
+			for _, observations := range [][2][2]string{{docs, valid}, {valid, docs}, {docs, docs}} {
+				if err := foreignRejectionVerdict(observations[0], observations[1]); err == nil {
+					t.Fatal("incomplete observations reached the unchanged foreign-OSD verdict")
+				}
+			}
+		})
+	}
+	if err := foreignRejectionVerdict(valid, valid); err != nil {
+		t.Fatalf("explicit zero fields rejected: %v", err)
+	}
+	valid[1] = `{"nodes":[],"stray":[{"id":1}]}`
+	if err := foreignRejectionVerdict(valid, valid); err != nil {
+		t.Fatalf("registered OSD absent from CRUSH rejected: %v", err)
+	}
+	if _, err := parseOSDIdentityView([]byte(`{"epoch":0,"osds":[]}`), []byte(`{"nodes":[]}`)); err != nil {
+		t.Fatalf("explicit empty observations rejected: %v", err)
+	}
+}
+
+// foreignRejectionVerdict follows the removal scenario's observation, foreign
+// UUID precondition and unchanged-state verdict with supplied before/after
+// replies. The independent call counters are zero for this pure oracle test.
+func foreignRejectionVerdict(beforeDocs, afterDocs [2]string) error {
+	before, err := parseOSDIdentityView([]byte(beforeDocs[0]), []byte(beforeDocs[1]))
+	if err != nil {
+		return err
+	}
+	if before.OSDs[1].UUID != "foreign" {
+		return fmt.Errorf("foreign UUID was not observed")
+	}
+	after, err := parseOSDIdentityView([]byte(afterDocs[0]), []byte(afterDocs[1]))
+	if err != nil {
+		return err
+	}
+	problems := (osdRejectionSideEffects{MapChanges: osdIdentityChanges(before, after), EpochBefore: before.Epoch, EpochAfter: after.Epoch}).problems()
+	if len(problems) != 0 {
+		return fmt.Errorf("rejection side effects: %v", problems)
+	}
+	return nil
 }

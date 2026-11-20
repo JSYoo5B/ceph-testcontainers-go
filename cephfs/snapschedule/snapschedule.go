@@ -53,8 +53,8 @@ type Status struct {
 	Path, Schedule string
 	Active         bool
 	// Start is the schedule's first time slot and Added the time the module
-	// added it, both in UTC; with Path and Schedule they identify one
-	// schedule, since a directory can have several with the same repeat.
+	// added it, both in UTC. The module records Added to the second.
+	// With Path and Schedule these are the available identity fields.
 	Start, Added time.Time
 	// Retention is the module's retention specification. The module keeps it
 	// per directory: every schedule of the directory shares it, and it stays
@@ -75,6 +75,10 @@ type Status struct {
 // Lease owns one snapshot schedule of a directory and the retention rules
 // that it added. Restore removes them; the snapshots stay. Retain a non-nil
 // lease returned with an error: the schedule may have been added.
+// Native identity has one-second timestamp resolution. A same-repeat, same-start
+// external replacement within that second is indistinguishable to Watch and
+// Restore. External schedule writers must leave the leased path alone until
+// Restore completes, including between calls.
 type Lease struct {
 	// Path, Repeat, Start and Retention are copies of the request that Add
 	// accepted, Start in UTC. The lease's operations and Restore use the
@@ -543,6 +547,9 @@ print(json.dumps(names))
 //
 // Restore refuses a lease whose filesystem was removed or replaced, even by
 // one of the same name.
+// The module provides no distinct identity for a schedule re-created with
+// the same path, repeat, start and creation second. Restore can remove it.
+// Keep external writers off the leased path until Restore completes.
 //
 //purpose:construction,lifetime
 func (l *Lease) Restore(ctx context.Context) error {

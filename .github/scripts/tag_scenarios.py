@@ -81,6 +81,17 @@ EXECUTIONS = (GO_TEST, TEST_BINARY)
 # The directory, under a native run's output, that Go's -artifacts flag
 # fills with each test's retained ArtifactDir.
 TEST_ARTIFACTS = "test-artifacts"
+# GitHub's limit of a job's timeout-minutes on a hosted runner.
+MAX_JOB_TIMEOUT = 360
+# A release candidate runs the parent tests that failed in a native run once
+# more, in the same job, when the first run proves which tests failed and
+# that every other test passed (docs/contributing/ci.md, "Release retry").
+RETRY_SCHEMA = SCHEMA + "/retry"
+RETRYABLE = ("native-test-failure", "native-registry-transport")
+# The margin of the retry budget for the steps after the native phase.
+RETRY_MARGIN_SECONDS = 300
+# How long a retry waits for the first run's labelled containers to go.
+RETRY_SETTLE_SECONDS = 120
 # The integration test packages: ./internal/integration and the test packages
 # under it. Their runtime profiles need Ceph, and internal/tools/batchselect
 # analyses their batches together with the shared harness, whose
@@ -353,7 +364,7 @@ def parse_metadata(file):
     if not re.fullmatch(r"[1-9][0-9]{0,2}", values["job-timeout"]):
         raise ValueError(file["path"] + ": invalid job timeout")
     job_timeout = int(values["job-timeout"])
-    if not 1 <= job_timeout <= 360 or seconds >= job_timeout * 60:
+    if not 1 <= job_timeout <= MAX_JOB_TIMEOUT or seconds >= job_timeout * 60:
         raise ValueError(file["path"] + ": job timeout must exceed the process timeout")
     checker = values.get("checker", "none")
     case = values.get("case", "")
@@ -384,6 +395,7 @@ def parse_metadata(file):
                              + ",".join(IMAGE_ROLES) + ", essential included")
         image_roles = ",".join(role for role in IMAGE_ROLES if role in roles)
     return {"timeout": values["timeout"], "job_timeout": job_timeout,
+            "retry_job_timeout": min(MAX_JOB_TIMEOUT, 2 * job_timeout),
             "checker": checker, "case": case, "image_roles": image_roles, "representative": representative,
             "architecture": architecture}
 
@@ -1596,6 +1608,129 @@ def run_profile(catalog, plan, category, batch, package, directory, root=ROOT, t
     return result
 
 
+def retry_selection(report, compiled, log=""):
+    """The parent tests that a retry of the first native report runs, and
+    the reason a retry is refused (None when it is not).
+
+    A retry needs a first run whose failure is attributed to named tests:
+    no build or process failure, no skipped fixture, a process that ended
+    as Go ends failed tests (exit status 1 and a final FAIL) without a
+    panic, fatal runtime error or signal, and every compiled parent that did
+    not fail has run and passed. A checker profile retries
+    all of its parents, because its checker validates one complete run."""
+    if report.get("classification") not in RETRYABLE:
+        return [], "first run is " + str(report.get("classification")) + ", not a failure of named tests"
+    completed = report.get("completion") or {}
+    failed = [name for name in completed.get("failed_tests") or [] if name != "package failure"]
+    parents = sorted({name.split("/", 1)[0] for name in failed})
+    if not parents or not set(parents) <= set(compiled):
+        return [], "first run names no failed compiled parent test"
+    if completed.get("skipped_tests"):
+        return [], "first run skipped tests"
+    if report.get("exit_code") != 1 or not ordinary_failure_end(log, report.get("execution", TEST_BINARY)):
+        return [], "first run did not end as an ordinary test failure (exit status 1 and a final FAIL)"
+    if any(ABNORMAL_END.match(line) for line in log.splitlines()):
+        return [], "first run crashed or panicked, so its process failed beyond its failed tests"
+    passes = Counter(name for name in completed.get("observed_passes") or [] if "/" not in name)
+    if any(passes[name] != 1 for name in compiled if name not in parents):
+        return [], "a parent test that did not fail lacks exactly one PASS"
+    if (report.get("profile") or {}).get("checker", "none") != "none":
+        return sorted(compiled), None
+    return parents, None
+
+
+# Lines of a Go test process that ended abnormally: a panic (a test timeout
+# included), a fatal runtime error such as concurrent map writes, or a signal.
+ABNORMAL_END = re.compile(r"^(?:panic: |fatal error: |SIG[A-Z]+: )")
+
+
+def ordinary_failure_end(log, execution):
+    """Whether a native log ends as Go ends a run whose tests failed: a test
+    binary prints FAIL last; go test prints FAIL, the package's FAIL line and
+    a final FAIL."""
+    lines = [line for line in log.splitlines() if line.strip()]
+    if not lines or lines[-1] != "FAIL":
+        return False
+    if execution == TEST_BINARY:
+        return True
+    return len(lines) >= 3 and re.fullmatch(r"FAIL\s+\S+\s+[0-9.]+s", lines[-2]) is not None and lines[-3] == "FAIL"
+
+
+def leftover_containers(output):
+    """The IDs in docker ps output of ID and Ryuk label lines whose container
+    is not Ryuk. An ordinary testcontainers container has no Ryuk label."""
+    leftover = []
+    for line in output.splitlines():
+        fields = line.split()
+        if not fields:
+            continue
+        if fields[1:] != ["true"]:
+            leftover.append(fields[0])
+    return leftover
+
+
+def settle_engine(timeout=RETRY_SETTLE_SECONDS, docker="docker"):
+    """Wait until the engine runs no testcontainers container except Ryuk,
+    so that a retry starts from the state the first run started from."""
+    deadline = time.monotonic() + timeout
+    while True:
+        listed = subprocess.run([docker, "ps", "--filter", "label=org.testcontainers=true",
+                                 "--format", '{{.ID}} {{.Label "org.testcontainers.ryuk"}}'],
+                                capture_output=True, text=True, timeout=30)
+        if listed.returncode != 0:
+            return "docker ps failed: " + listed.stderr.strip()[:200]
+        leftover = leftover_containers(listed.stdout)
+        if not leftover:
+            return None
+        if time.monotonic() >= deadline:
+            return ("testcontainers containers of the first run remain after " + str(timeout) + " s: "
+                    + " ".join(leftover[:10]))
+        time.sleep(5)
+
+
+def retry_profile(catalog, plan, category, batch, package, first, directory, binary=None, profile_tags=None,
+                  root=ROOT, settle=settle_engine, run=None):
+    """Run the failed parent tests of the native run in first once more.
+
+    The first run's receipts stay as they are; the retry writes its own run
+    under directory/attempt and a report that names both. passed is true
+    only when the retry ran and passed. A refused retry is recorded with its
+    reason and fails."""
+    run = run or run_profile
+    report = json.loads((first / "report.json").read_text(encoding="utf-8"))
+    log = (first / "native.log").read_text(encoding="utf-8", errors="replace")
+    compiled = report.get("compiled_tests") or []
+    tests, reason = retry_selection(report, compiled, log)
+    timeout = 0
+    if reason is None:
+        matches = [profile for profile in plan["include"] if profile["category"] == category
+                   and profile["batch"] == batch and (package is None or profile["package"] == package)]
+        if len(matches) != 1:
+            raise ValueError("requested category/batch/package is unsupported or ambiguous")
+        profile = matches[0]
+        budget = (profile["retry_job_timeout"] - profile["job_timeout"]) * 60
+        timeout = min(duration_seconds(profile["timeout"]), budget - RETRY_MARGIN_SECONDS)
+        if timeout <= 0:
+            reason = "the job's retry budget leaves no time for a retry"
+    if reason is None:
+        reason = settle()
+    directory.mkdir(parents=True, exist_ok=False)
+    result = {"schema": RETRY_SCHEMA, "first_classification": report.get("classification"),
+              "first_failed_tests": (report.get("completion") or {}).get("failed_tests") or [],
+              "retried_tests": tests if reason is None else [], "refused": reason, "passed": False}
+    if reason is None:
+        whole = sorted(tests) == sorted(compiled)
+        attempt = run(catalog, plan, category, batch, package, directory / "attempt", root=root,
+                      binary=binary, profile_tags=profile_tags, timeout_seconds=timeout,
+                      selected_tests_text="" if whole else ",".join(tests),
+                      tests=os.environ.get("SCENARIO_TESTS", "") if whole else "")
+        result["timeout_seconds"] = timeout
+        result["attempt_classification"] = attempt["classification"]
+        result["passed"] = attempt["passed"] is True
+    (directory / "report.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
+    return result
+
+
 def duration_seconds(value):
     """The integer seconds of a source-owned Go test timeout."""
     parts = re.findall(r"(\d+)(h|m|s)", value)
@@ -1813,6 +1948,14 @@ def main(argv=None):
                                  help="Bound a sampled execution within its source-owned timeout")
             command.add_argument("--binary", type=Path,
                                  help="Compile directory; run its verified test binary instead of go test")
+    command = commands.add_parser("retry", parents=[selection, entry])
+    command.add_argument("--category", required=True, choices=CATEGORIES)
+    command.add_argument("--batch", required=True)
+    command.add_argument("--package")
+    command.add_argument("--first", required=True, type=Path, help="Directory of the failed native run")
+    command.add_argument("--directory", required=True, type=Path)
+    command.add_argument("--binary", type=Path,
+                         help="Compile directory; run its verified test binary instead of go test")
     command = commands.add_parser("releases")
     command.add_argument("--scope", choices=RELEASE_SCOPES, required=True)
     command.add_argument("--check-prefix", required=True)
@@ -1901,7 +2044,10 @@ def main(argv=None):
             report = warm_build_cache(plan, args.directory)
             print(json.dumps(report, indent=2, sort_keys=True))
             return 0 if report["passed"] else 1
-        if args.command == "run":
+        if args.command == "retry":
+            report = retry_profile(catalog, plan, args.category, args.batch, args.package, args.first, args.directory,
+                                   binary=args.binary, profile_tags=args.profile_tags)
+        elif args.command == "run":
             report = run_profile(catalog, plan, args.category, args.batch, args.package, args.directory,
                                  tests=args.tests, binary=args.binary, profile_tags=args.profile_tags,
                                  selected_tests_text=args.selected_tests, timeout_seconds=args.timeout_seconds)

@@ -73,13 +73,14 @@ type zoneRouter struct {
 // it is a member of its zone only once complete: after its agent, its own
 // routes and the other members' routes to it are all in place.
 type zoneMemberState struct {
-	clusterOwned bool // The member carried this cluster's owner label at enrollment.
-	endpoint     zoneEndpoint
-	startedAt    string
-	ifaces       map[NetworkPlane]string
-	agent        testcontainers.Container
-	routes       map[netip.Addr]zoneRouteRecord
-	complete     bool
+	clusterOwned      bool // The member carried this cluster's owner label at enrollment.
+	endpoint          zoneEndpoint
+	startedAt         string
+	ifaces            map[NetworkPlane]string
+	agent             testcontainers.Container
+	routes            map[netip.Addr]zoneRouteRecord
+	routeCheckPending bool
+	complete          bool
 }
 
 // enrolledFor reports whether m is a complete enrollment of the start at
@@ -498,6 +499,7 @@ func (b *zoneBoundary) applyRoutes(ctx context.Context, ops []zoneRouteOp) error
 		for _, op := range byHolder[holder] {
 			if !op.remove {
 				op.dev = member.ifaces[op.plane]
+				member.routeCheckPending = true
 				member.routes[op.dest] = zoneRouteRecord{plane: op.plane, via: op.via, dev: op.dev}
 			}
 			script = append(script, zoneRouteCommand(op))
@@ -527,11 +529,14 @@ func zoneRouteCommand(op zoneRouteOp) string {
 	dest := op.dest.String() + "/32"
 	owned := dest + " via " + op.via.String() + " dev " + op.dev + " proto " + zoneRouteProtocol
 	if op.remove {
-		return "ip route del " + owned + " 2>/dev/null || true; test -z \"$(ip -o -4 route show exact " + owned + ")\""
+		return "ip route del " + owned + " 2>/dev/null || true; routes=$(ip -o -4 route show exact " + owned + ") || exit $?; test -z \"$routes\""
 	}
-	return "n=$(ip -o -4 route show exact " + dest + " | wc -l); o=$(ip -o -4 route show exact " + owned + " | wc -l); " +
-		"if [ $n -eq 0 ]; then ip route add " + owned + "; " +
-		"elif [ $n -ne $o ]; then echo \"a route to " + dest + " that the zone boundary does not own is in place: $(ip -o -4 route show exact " + dest + ")\" >&2; exit 1; fi"
+	// A filtered ip route show can omit fields from its output (for example,
+	// proto). Compare counts after both lookups have succeeded.
+	return "routes=$(ip -o -4 route show exact " + dest + ") || exit $?; own=$(ip -o -4 route show exact " + owned + ") || exit $?; " +
+		"if [ -z \"$routes\" ]; then ip route add " + owned + "; " +
+		"elif [ -z \"$own\" ] || [ \"$(printf '%s\\n' \"$routes\" | wc -l)\" -ne \"$(printf '%s\\n' \"$own\" | wc -l)\" ]; then " +
+		"echo \"a route to " + dest + " that the zone boundary does not own is in place: $routes\" >&2; exit 1; fi"
 }
 
 // planZoneEnrollment returns the routes that enrolling joining needs: in its
@@ -752,7 +757,8 @@ func (b *zoneBoundary) close(ctx context.Context) ([]error, map[string]bool) {
 			continue
 		}
 		live := inspectErr == nil && info.running && info.startedAt == member.startedAt
-		if live && len(member.routes) > 0 {
+		if live && (len(member.routes) > 0 || member.routeCheckPending) {
+			member.routeCheckPending = true
 			var ops []zoneRouteOp
 			for dest, record := range member.routes {
 				ops = append(ops, record.removal(id, dest))
@@ -771,6 +777,7 @@ func (b *zoneBoundary) close(ctx context.Context) ([]error, map[string]bool) {
 				errs = append(errs, fmt.Errorf("%s keeps routes of the zone boundary: %s", member.endpoint.name, left))
 				continue
 			}
+			member.routeCheckPending = false
 		}
 		// A member that is gone or restarted has lost its namespace and routes.
 		if err := member.agent.Terminate(ctx, testcontainers.StopTimeout(0)); !onlyMissingHostResource(err) {

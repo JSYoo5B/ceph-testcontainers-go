@@ -56,7 +56,8 @@ type finalizationCaptureReport struct {
 // return instead of abandoning it, because the capture's target must not be
 // removed underneath a running settlement. An explicit Stop that already ran
 // is not repeated; its report is the one kept. Settlement errors fail the
-// test, and the report is kept for the archive even then. Nil sessions
+// test, including a nil return after that context expires, and the report is
+// kept for the archive even then. Nil sessions
 // (including a typed nil pointer) and registration after finalization started
 // fail the test instead.
 //

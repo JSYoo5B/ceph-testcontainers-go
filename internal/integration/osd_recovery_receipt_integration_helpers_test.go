@@ -87,7 +87,8 @@ func parsePGQuery(data []byte) (pgQuery, error) {
 	return query, nil
 }
 
-// backfillTargets returns the backfill targets of the primary's active state.
+// backfillTargets returns the primary's reported targets. A nil list means
+// the observation did not supply an array; an explicit empty array is evidence.
 func (q pgQuery) backfillTargets() []string {
 	for _, state := range q.RecoveryState {
 		if state.Progress != nil {
@@ -141,6 +142,9 @@ func pgRecoveryPath(q pgQuery, replica int, stoppedAt eversion) (string, error) 
 	}
 	peer := q.PeerInfo[index]
 	targets := q.backfillTargets()
+	if targets == nil {
+		return "", fmt.Errorf("the primary did not report backfill targets in state %s", q.State)
+	}
 	inUp, inActing := slices.Contains(q.Up, replica), slices.Contains(q.Acting, replica)
 	switch {
 	case inUp && inActing && len(targets) == 0 && peer.LastBackfill == "MAX" && !stoppedAt.less(tail) &&

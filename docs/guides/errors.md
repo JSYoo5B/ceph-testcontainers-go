@@ -145,7 +145,9 @@ and control characters are removed.
 It can name resources of the request, such as a pool. Some operations hide
 native output entirely, such as Cephx identity changes, configuration
 overrides and RGW administration; their errors keep a `*NativeFailure`
-without `Reason`, so `ExitCode`, `Errno` and the category stay available.
+without `Reason`. For example, a missing RGW bucket can produce exit code 2
+with an empty `Errno`. A missing notification topic whose diagnostic identifies
+`ENOENT` produces an error that matches `fs.ErrNotExist`.
 
 `RunNativeCommand` is different: it returns a nonzero exit as
 `NativeCommandResult.ExitCode`, not as an error, so that your own oracle
@@ -162,8 +164,8 @@ decides what an exit means. Its errors are about running the command:
 
 ## Unsupported features
 
-`ErrUnsupported` is decided before any change, from evidence about the
-target that the request needs:
+`ErrUnsupported` means the target lacks a capability the request needs.
+Preflight can establish this from the following evidence:
 
 - **The target's own tools**, when they reveal the feature. The control
   image's `ceph-authtool` decides whether `WithAuth` and `CreateClient` can
@@ -175,6 +177,11 @@ target that the request needs:
   namespaces.
 - **A documented limit of the release** that no tool reveals. Squid RGW
   resolves no source for a user-mode sync pipe of an account principal.
+
+Some checks require a running target. Dual-stack admission checks the
+addresses published after daemons start, during initial cluster startup and
+when adding a manager. Keep any returned partial handle and arrange its
+cleanup even when the error is `ErrUnsupported`.
 
 Each side of a link is judged on its own: a mirror between a Tentacle source
 and a Squid destination is refused with `Target` `destination cluster` and

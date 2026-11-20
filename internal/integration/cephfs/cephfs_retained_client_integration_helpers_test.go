@@ -177,6 +177,37 @@ func (run *cephFSActorRun) exited(ctx context.Context) string {
 	return fmt.Sprintf("exit=%d timed_out=%t err=%v stderr=%s", run.Result.ExitCode, run.Result.TimedOut, run.Err, stderr)
 }
 
+// readPublished orders a missing-file observation after producer completion
+// before reporting a missing terminal receipt. A completed failed command can
+// never authorize a receipt, even if its file is present.
+func (run *cephFSActorRun) readPublished(ctx context.Context, path string) (string, bool, bool, error) {
+	completed := func() bool {
+		select {
+		case <-run.Done:
+			return true
+		default:
+			return false
+		}
+	}
+	terminal := completed()
+	for {
+		if terminal && (run.Err != nil || run.Result.ExitCode != 0 || !run.Result.Complete()) {
+			return "", false, true, fmt.Errorf("actor failed: %s", run.exited(ctx))
+		}
+		code, out, err := harness.SessionExec(ctx, run.client, "cat", path)
+		if err == nil && code == 0 {
+			return out, true, terminal, nil
+		}
+		if terminal {
+			return out, false, true, fmt.Errorf("actor ended without %s: read exit %d: %v; %s", path, code, err, run.exited(ctx))
+		}
+		if !completed() {
+			return out, false, false, nil
+		}
+		terminal = true
+	}
+}
+
 // receipt waits for receipt phase and rejects one of another run or phase.
 // It fails at once when the actor ends without publishing it.
 func (run *cephFSActorRun) Receipt(t *testing.T, ctx context.Context, phase int) cephFSActorReceipt {
@@ -184,8 +215,11 @@ func (run *cephFSActorRun) Receipt(t *testing.T, ctx context.Context, phase int)
 	path := run.workdir + "/receipt-" + strconv.Itoa(phase)
 	deadline := time.Now().Add(3 * time.Minute)
 	for {
-		code, out, err := harness.SessionExec(ctx, run.client, "cat", path)
-		if err == nil && code == 0 {
+		out, present, _, err := run.readPublished(ctx, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if present {
 			decoder := json.NewDecoder(strings.NewReader(out))
 			decoder.DisallowUnknownFields()
 			var receipt cephFSActorReceipt
@@ -196,11 +230,6 @@ func (run *cephFSActorRun) Receipt(t *testing.T, ctx context.Context, phase int)
 				t.Fatalf("receipt %d belongs to another run or phase: %+v", phase, receipt)
 			}
 			return receipt
-		}
-		select {
-		case <-run.Done:
-			t.Fatalf("actor ended without receipt %d: %s", phase, run.exited(ctx))
-		default:
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("receipt %d did not appear", phase)
@@ -239,8 +268,11 @@ func (run *cephFSActorRun) progress(t *testing.T, ctx context.Context, baseline 
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Minute)
 	for {
-		code, out, err := harness.SessionExec(ctx, run.client, "cat", run.workdir+"/progress")
-		if err == nil && code == 0 {
+		out, present, terminal, err := run.readPublished(ctx, run.workdir+"/progress")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if present {
 			decoder := json.NewDecoder(strings.NewReader(out))
 			decoder.DisallowUnknownFields()
 			var next cephFSStreamProgress
@@ -255,10 +287,8 @@ func (run *cephFSActorRun) progress(t *testing.T, ctx context.Context, baseline 
 				return next
 			}
 		}
-		select {
-		case <-run.Done:
+		if terminal {
 			t.Fatalf("actor ended at %d records, before %d: %s", last.Count, count, run.exited(ctx))
-		default:
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("the stream stayed at %d records, want %d", last.Count, count)
@@ -728,15 +758,41 @@ type mdsSubtree struct {
 // parseMDSSubtrees decodes "get subtrees", a list or a list wrapped in an
 // object.
 func parseMDSSubtrees(data []byte) ([]mdsSubtree, error) {
-	var subtrees []mdsSubtree
-	if err := json.Unmarshal(data, &subtrees); err != nil {
+	var entries []json.RawMessage
+	if err := json.Unmarshal(data, &entries); err != nil {
 		var wrapped struct {
-			Subtrees []mdsSubtree `json:"subtrees"`
+			Subtrees []json.RawMessage `json:"subtrees"`
 		}
 		if err := json.Unmarshal(data, &wrapped); err != nil {
 			return nil, err
 		}
-		subtrees = wrapped.Subtrees
+		entries = wrapped.Subtrees
+	}
+	if entries == nil {
+		return nil, errors.New("get subtrees has no non-null subtree array")
+	}
+	subtrees := make([]mdsSubtree, 0, len(entries))
+	for _, entry := range entries {
+		var required struct {
+			IsAuth     *bool `json:"is_auth"`
+			AuthFirst  *int  `json:"auth_first"`
+			AuthSecond *int  `json:"auth_second"`
+			ExportPin  *int  `json:"export_pin"`
+			Dir        struct {
+				Path *string `json:"path"`
+			} `json:"dir"`
+		}
+		if err := json.Unmarshal(entry, &required); err != nil {
+			return nil, err
+		}
+		if required.IsAuth == nil || required.AuthFirst == nil || required.AuthSecond == nil || required.ExportPin == nil || required.Dir.Path == nil {
+			return nil, errors.New("get subtrees has an incomplete subtree identity or authority")
+		}
+		var subtree mdsSubtree
+		if err := json.Unmarshal(entry, &subtree); err != nil {
+			return nil, err
+		}
+		subtrees = append(subtrees, subtree)
 	}
 	return subtrees, nil
 }
@@ -1722,6 +1778,9 @@ func parseClientMDSRequests(data []byte) ([]clientMDSRequest, error) {
 			if err := decoder.Decode(&list); err != nil {
 				return nil, err
 			}
+			if list == nil {
+				return nil, errors.New("mds_requests has a null requests array")
+			}
 			requests = append(requests, list...)
 		case "request":
 			var request clientMDSRequest
@@ -1738,6 +1797,11 @@ func parseClientMDSRequests(data []byte) ([]clientMDSRequest, error) {
 	}
 	if _, err := decoder.Token(); err != io.EOF {
 		return nil, errors.New("mds_requests has data after its object")
+	}
+	for _, request := range requests {
+		if request.TID == 0 {
+			return nil, errors.New("mds_requests contains a request without a nonzero tid")
+		}
 	}
 	return requests, nil
 }
@@ -2353,6 +2417,9 @@ func parseClientCache(data []byte, inode uint64) (clientInodeCaps, bool, error) 
 		}
 		entries = *wrapped.Cache
 	}
+	if entries == nil {
+		return clientInodeCaps{}, false, errors.New("dump_cache has no non-null cache array")
+	}
 	want := fmt.Sprintf("0x%x", inode)
 	for _, entry := range entries {
 		var caps clientInodeCaps
@@ -2360,6 +2427,17 @@ func parseClientCache(data []byte, inode uint64) (clientInodeCaps, bool, error) 
 			return clientInodeCaps{}, false, fmt.Errorf("dump_cache entry: %v: %.256s", err, entry)
 		}
 		if caps.Ino == want && caps.SnapID != nil && *caps.SnapID == "head" {
+			// Native Inode::dump emits both fields only while flushing_caps is
+			// nonzero. A partial observation cannot prove acknowledgement.
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(entry, &fields); err != nil {
+				return clientInodeCaps{}, false, err
+			}
+			_, hasCaps := fields["flushings_caps"]
+			_, hasTIDs := fields["flushing_cap_tid"]
+			if hasCaps != hasTIDs || (hasCaps && (caps.FlushingCaps == "" || len(caps.FlushingTIDs) == 0)) {
+				return clientInodeCaps{}, false, errors.New("dump_cache has incomplete flushing capability evidence")
+			}
 			return caps, true, nil
 		}
 	}

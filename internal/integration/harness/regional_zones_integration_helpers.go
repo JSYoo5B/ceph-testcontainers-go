@@ -266,7 +266,7 @@ type ZoneRTT struct {
 
 func (s ZoneRTT) String() string {
 	if s.OK == 0 {
-		return fmt.Sprintf("0/%d", s.Requested)
+		return fmt.Sprintf("0/%d %v", s.Requested, s.Errors)
 	}
 	return fmt.Sprintf("%d/%d median %.3f ms (p10 %.3f, p90 %.3f)", s.OK, s.Requested, s.Median, s.P10, s.P90)
 }
@@ -360,10 +360,17 @@ func CheckZoneShaped(base, observed ZoneRTT, added time.Duration) error {
 	return nil
 }
 
-// CheckZoneCut says whether no probe on a path completed.
+// CheckZoneCut requires one timeout per probe, a result compatible with
+// packet loss. Refusals, resets and routing errors do not show that the
+// partition dropped packets.
 func CheckZoneCut(observed ZoneRTT) error {
-	if observed.Requested == 0 || observed.OK != 0 {
-		return fmt.Errorf("%d of %d probes completed across a partitioned boundary", observed.OK, observed.Requested)
+	if observed.Requested <= 0 || observed.OK != 0 || len(observed.Errors) != observed.Requested {
+		return fmt.Errorf("expected %d probe timeouts across the partition, observed %s", observed.Requested, observed)
+	}
+	for _, failure := range observed.Errors {
+		if detail, ok := strings.CutPrefix(failure, "TimeoutError: "); !ok || detail == "" {
+			return fmt.Errorf("probe returned %q instead of timing out across the partition", failure)
+		}
 	}
 	return nil
 }

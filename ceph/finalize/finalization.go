@@ -50,11 +50,16 @@ type Config struct {
 	ArchiveDirectory string
 	// Scenario labels the manifest, for example with a batch or profile name.
 	Scenario string
-	// CheckTimeout bounds all checks together (default 2 minutes),
-	// ArchiveTimeout the whole archive with both collectors and every write
-	// (default 3 minutes), and CleanupTimeout the cleanups together and
-	// Terminate separately (default 3 minutes). Each is at most 10 minutes;
-	// invalid fields are refused before anything is registered.
+	// CheckTimeout gives all checks together a cooperative context budget
+	// (default 2 minutes), ArchiveTimeout the archive preparation, collectors
+	// and snapshot writes (default 3 minutes), and CleanupTimeout the cleanups
+	// together and Terminate separately (default 3 minutes). Callbacks and local
+	// filesystem calls are joined, never abandoned or overlapped with later
+	// cleanup; they can delay finalization indefinitely if they do not return.
+	// Completion after expiry is recorded as a failure or incomplete archive.
+	// The final manifest rewrite after termination is outside ArchiveTimeout.
+	// Each budget is at most 10 minutes; invalid fields are refused before
+	// anything is registered.
 	CheckTimeout   time.Duration
 	ArchiveTimeout time.Duration
 	CleanupTimeout time.Duration
@@ -156,8 +161,9 @@ const (
 // the archive should still see through Finalization.Cleanup: test cleanups
 // registered later run before it.
 //
-// Every phase uses a fresh context bounded by its own timeout, because the
-// test's context has ended by then. Check, collection and storage errors
+// Every phase uses a fresh context with its own cooperative timeout, because
+// the test's context has ended by then. Steps must honor cancellation: an
+// uncooperative step delays subsequent cleanup until it returns. Check, collection and storage errors
 // never skip the cleanups or Terminate. A check's error and Terminate's error
 // fail the test; collection and storage errors are logged and recorded in the
 // manifest. With Config.Archive and a test binary deadline, it also arms the
@@ -437,6 +443,7 @@ func (f *Finalization) runStep(ctx context.Context, step finalizationStep) (outc
 		returned = true
 	}()
 	<-done
+	err = errors.Join(err, ctx.Err())
 	outcome.FinishedAt = f.now()
 	if err != nil {
 		outcome.Error = f.redact(err.Error())
@@ -473,10 +480,14 @@ func (f *Finalization) redactor() func(string) string {
 // out still masks the earlier ones. Each phase that can report an error
 // calls it once before it starts.
 func (f *Finalization) refreshSecrets() {
+	f.refreshSecretsWithin(context.Background())
+}
+
+func (f *Finalization) refreshSecretsWithin(parent context.Context) {
 	if f.clusterSecrets == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), secretLookupTimeout)
+	ctx, cancel := context.WithTimeout(parent, secretLookupTimeout)
 	fresh := f.clusterSecrets(ctx)
 	cancel()
 	f.secretsMu.Lock()
@@ -498,15 +509,17 @@ func boundedName(name string) string {
 	return name
 }
 
-// archive collects both reports independently, within one bound, and
+// archive gives preparation and both collectors one cooperative budget and
 // writes each one that it got, then the manifest.
 func (f *Finalization) archive(run *finalizationRun, phase string) {
 	run.archiveAttempted = true
-	f.refreshSecrets()
+	ctx, cancel := context.WithTimeout(context.Background(), f.config.ArchiveTimeout)
+	defer cancel()
 	m := &run.manifest
+	m.Archive.StartedAt = f.now()
+	f.refreshSecretsWithin(ctx)
 	m.Phase = phase
 	f.snapshotDebugWindows(m, phase, false)
-	m.Archive.StartedAt = f.now()
 	m.Archive.Timeout = f.config.ArchiveTimeout.String()
 	directory, retained, err := f.archiveDirectory(run)
 	m.Archive.Retained = retained
@@ -517,8 +530,6 @@ func (f *Finalization) archive(run *finalizationRun, phase string) {
 	}
 	run.directory = directory
 	m.Archive.ID = filepath.Base(directory)
-	ctx, cancel := context.WithTimeout(context.Background(), f.config.ArchiveTimeout)
-	defer cancel()
 	var collected *diagnostics.Report
 	var crash *diagnostics.CrashMetadataReport
 	var collectors sync.WaitGroup
@@ -529,6 +540,7 @@ func (f *Finalization) archive(run *finalizationRun, phase string) {
 		collected, collectErr = collectSafely(func() (*diagnostics.Report, error) {
 			return f.collectDiagnostics(ctx, f.config.Diagnostics)
 		})
+		collectErr = errors.Join(collectErr, ctx.Err())
 		m.Collectors[0].FinishedAt = f.now()
 		m.Collectors[0].record(collected != nil, collected != nil && collected.Complete, collectErr, f.redact)
 	})
@@ -538,6 +550,7 @@ func (f *Finalization) archive(run *finalizationRun, phase string) {
 		crash, collectErr = collectSafely(func() (*diagnostics.CrashMetadataReport, error) {
 			return f.collectCrash(ctx, f.config.CrashMetadata)
 		})
+		collectErr = errors.Join(collectErr, ctx.Err())
 		m.Collectors[1].FinishedAt = f.now()
 		m.Collectors[1].record(crash != nil, crash != nil && crash.Complete, collectErr, f.redact)
 		if crash != nil {
@@ -584,7 +597,19 @@ func (f *Finalization) archive(run *finalizationRun, phase string) {
 	for _, file := range m.Files {
 		m.Archive.Complete = m.Archive.Complete && file.Error == ""
 	}
+	if err := ctx.Err(); err != nil {
+		m.Archive.Complete = false
+		m.Archive.Error = f.redact(err.Error())
+	}
 	manifestErr := f.writeManifest(run)
+	// A local manifest write can finish after the budget too. Preserve it,
+	// then publish the incomplete outcome instead of abandoning the writer.
+	if err := ctx.Err(); err != nil && m.Archive.Error == "" {
+		m.Archive.Complete = false
+		m.Archive.Error = f.redact(err.Error())
+		m.Archive.FinishedAt = f.now()
+		manifestErr = errors.Join(manifestErr, f.writeManifest(run))
+	}
 	summary := []string{}
 	for _, collector := range m.Collectors {
 		state := "complete"

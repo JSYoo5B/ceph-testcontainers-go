@@ -411,3 +411,34 @@ func TestWaitContextPendingObservationReleasesGateBeforeDelay(t *testing.T) {
 		})
 	}
 }
+
+func TestWaitForCleanPinsOwnedCountAtEntry(t *testing.T) {
+	f := newWaitContextFixture(t, "Clean")
+	control := f.control.Container.(*poolFixtureContainer)
+	ready := control.Output[f.finalQuery]
+	control.Output[f.finalQuery] = strings.Replace(ready, `"available":true`, `"available":false`, 1)
+	expanded := strings.NewReplacer(`"num_osds":1`, `"num_osds":2`, `"num_up_osds":1`, `"num_up_osds":2`, `"num_in_osds":1`, `"num_in_osds":2`).Replace(ready)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var polls int
+	f.control.after = func([]string) {
+		polls++
+		switch polls {
+		case 1:
+			f.cluster.mu.Lock()
+			f.cluster.fleet.osdHandles.register(1, &OSDContainer{ID: 1})
+			f.cluster.mu.Unlock()
+			control.Output[f.finalQuery] = expanded
+		case 3:
+			cancel()
+		}
+	}
+	if err := f.wait(ctx); !errors.Is(err, context.Canceled) || polls != 3 {
+		t.Fatalf("wait spanning membership change: polls=%d err=%v", polls, err)
+	}
+	f.control.after = nil
+	if err := f.wait(t.Context()); err != nil {
+		t.Fatalf("wait started after membership change: %v", err)
+	}
+}

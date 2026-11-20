@@ -137,7 +137,7 @@ func startOSDWatch(ctx context.Context, settings watch.Settings, read osdSampleR
 			}
 			states, err := resolveWatchedOSDs(dump, owned, cohort)
 			if err != nil {
-				return osdSample{}, watch.Fatal(err)
+				return osdSample{}, err
 			}
 			return osdSample{epoch: dump.epoch, states: states}, nil
 		},
@@ -174,19 +174,27 @@ func pinOSDCohort(dump osdPolicySnapshot, owned map[int]*osdRegistration, cohort
 	return osdSample{epoch: dump.epoch, states: states}, nil
 }
 
-// resolveWatchedOSDs checks the watched OSDs of one successful read. Every
-// refusal is an identity change that a later read cannot undo.
+// resolveWatchedOSDs checks the watched cohort. An unreadable native UUID
+// creates a gap unless the sample already proves an identity loss.
 func resolveWatchedOSDs(dump osdPolicySnapshot, owned map[int]*osdRegistration, cohort map[int]uuid.UUID) ([]OSDState, error) {
 	states := make([]OSDState, 0, len(cohort))
+	var gap error
 	for id, pinned := range cohort {
 		state, err := resolveOwnedOSDState(dump, id, owned[id])
 		if err != nil {
-			return nil, fmt.Errorf("watch OSDs: watched osd.%d: %w", id, err)
+			if errors.Is(err, errUnreadableOSDUUID) {
+				gap = err
+				continue
+			}
+			return nil, watch.Fatal(fmt.Errorf("watch OSDs: watched osd.%d: %w", id, err))
 		}
 		if uuid.MustParse(state.UUID) != pinned {
-			return nil, fmt.Errorf("watch OSDs: watched osd.%d now has native UUID %s instead of %s", id, state.UUID, pinned)
+			return nil, watch.Fatal(fmt.Errorf("watch OSDs: watched osd.%d now has native UUID %s instead of %s", id, state.UUID, pinned))
 		}
 		states = append(states, state)
+	}
+	if gap != nil {
+		return nil, gap
 	}
 	slices.SortFunc(states, func(a, b OSDState) int { return a.ID - b.ID })
 	return states, nil

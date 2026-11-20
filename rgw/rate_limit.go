@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/mutation"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/strictjson"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
@@ -66,9 +67,10 @@ type RateLimitOverrideHandle struct {
 // rateLimitState is the shared restoration state of one override. It is read
 // and written with the owning cluster's mutex held.
 type rateLimitState struct {
-	target rateLimitTarget
-	key    string
-	prior  rateLimitPolicy
+	command mutation.Fence
+	target  rateLimitTarget
+	key     string
+	prior   rateLimitPolicy
 	// owned lists the native policies that this override can have left: the
 	// policy after its last confirmed command, or the two sides of a command
 	// whose outcome is unknown. Restore refuses any other policy.
@@ -196,6 +198,11 @@ func (u *User) OverrideRateLimit(ctx context.Context, scope RateLimitScope, limi
 // Gateways see the restored policy after their metadata caches update; poll
 // with new requests before relying on unthrottled access.
 //
+// Restore waits for canceled writes to finish before reading the policy.
+// A transport failure or native execution timeout can lose the completion
+// reply. In that case restoration keeps ownership and returns an error, even
+// if the local process has stopped; terminate the disposable cluster.
+//
 //purpose:condition,lifetime
 func (change *RateLimitOverrideHandle) Restore(ctx context.Context) error {
 	if change == nil || change.state == nil {
@@ -222,6 +229,9 @@ func (change *RateLimitOverrideHandle) Restore(ctx context.Context) error {
 	}
 	return change.user.withGateway(ctx, func(ctx context.Context, g *gwbase.Core, user *gwbase.User, native *gwbase.NativeUser) error {
 		state := change.state
+		if err := state.command.Wait(ctx); err != nil {
+			return err
+		}
 		if state.restored {
 			return nil
 		}
@@ -305,7 +315,7 @@ func (s *rateLimitState) transition(ctx context.Context, g *gwbase.Core, user *g
 		if next.equal(current) {
 			continue
 		}
-		if _, err := g.UserCommand(ctx, user, slices.Concat(step.args, s.target.selector())...); err != nil {
+		if err := s.command.Record(g.MutateUser(ctx, user, slices.Concat(step.args, s.target.selector())...)); err != nil {
 			s.owned = []rateLimitPolicy{current, next}
 			return fmt.Errorf("change RGW rate-limit policy (%s): %w", strings.Join(step.args[:2], " "), err)
 		}

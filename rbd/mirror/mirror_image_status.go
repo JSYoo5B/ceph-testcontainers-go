@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/rbdobservation"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -17,8 +18,10 @@ import (
 // selected source and destination namespaces. State, Description and LastUpdate
 // are the destination's native local status, not its remote peer status.
 // ReplayReady means an owned receiving process is currently replaying this
-// source-primary/destination-secondary pair. It proves neither completion of a
-// particular write nor completion of a mirror snapshot. Verify application data
+// source-primary/destination-secondary pair, with its selected peer and namespace
+// discovered and the same process generation around the socket read. This is
+// not an atomic snapshot or a whole-cohort election verdict. It proves neither
+// completion of a particular write nor completion of a mirror snapshot. Verify application data
 // or the application's explicit checkpoint separately.
 //
 // GlobalID is the native global mirror image ID, equal on both sides.
@@ -52,35 +55,48 @@ func (m *Container) ImageStatus(ctx context.Context, imageName string) (ImageSta
 	if m == nil {
 		return result, rbdImageGuardError("RBD mirror fixture is unavailable")
 	}
+	caller := ctx
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	observation := rbdobservation.Begin(caller, "owner-image")
+	var observationErr error
+	defer func() { observation.Finish(ctx, observationErr) }()
 	// Hold the mutation lock for one bounded observation, never across a poll.
-	if err := multicluster.LockObservation(ctx, &m.mu); err != nil {
-		return result, err
+	if observationErr = multicluster.LockObservation(ctx, &m.mu); observationErr != nil {
+		return result, observationErr
 	}
-	defer m.mu.Unlock()
+	defer func() {
+		observation.Releasing()
+		m.mu.Unlock()
+	}()
+	observation.Acquired()
 	if m.closed || m.pair.sourceClient == nil || m.pair.destinationClient == nil || m.pair.config.Source == nil || m.pair.config.Destination == nil {
-		return result, rbdImageGuardError("RBD mirror fixture is unavailable or terminated")
+		observationErr = rbdImageGuardError("RBD mirror fixture is unavailable or terminated")
+		return result, observationErr
 	}
 	// Do not allow a hand-constructed or partially bootstrapped public handle
 	// to claim readiness without a confirmed pool/policy identity.
 	if m.pair.poolIdentities == nil || m.pair.policyIdentities == nil {
-		return result, rbdImageGuardError("RBD mirror pool and policies are not confirmed")
+		observationErr = rbdImageGuardError("RBD mirror pool and policies are not confirmed")
+		return result, observationErr
 	}
-	return m.observeRBDMirrorImageLocked(ctx, imageName, nil, nil)
+	result, observationErr = m.observeRBDMirrorImageLocked(ctx, imageName, nil, nil, observation)
+	return result, observationErr
 }
 
 // The original owner's gate is held throughout this bounded read. A non-nil
 // scope belongs to a retained view; it never replaces the owner's config.
-func (m *Container) observeRBDMirrorImageLocked(ctx context.Context, imageName string, scope *rbdReceiverScope, witness *rbdReceiverWitness) (ImageStatus, error) {
+func (m *Container) observeRBDMirrorImageLocked(ctx context.Context, imageName string, scope *rbdReceiverScope, witness *rbdReceiverWitness, observation *rbdobservation.Attempt) (ImageStatus, error) {
 	o := m.imageObservation(imageName, scope, witness)
-	source, destination, settled, err := o.readSites(ctx)
+	source, destination, settled, err := o.readSites(ctx, observation)
 	if err != nil || settled {
 		return o.result, err
 	}
-	if err := o.readReplay(ctx, source, destination); err != nil {
+	observation.Stage("read-replay-status")
+	if err := o.readReplay(ctx, source, destination, observation); err != nil {
 		return o.result, err
 	}
+	observation.Stage("confirm-image-identities")
 	if err := o.confirm(ctx, source, destination); err != nil {
 		o.result.ReplayReady = false
 		return o.result, err
@@ -133,7 +149,8 @@ func (o *rbdImageObservation) readInfo(ctx context.Context, client testcontainer
 // settled reports a final result without a replay status: an unscoped image
 // whose mirroring is still being enabled or disabled is valid but never
 // replay-ready, and its identities are kept so a wait can pin them.
-func (o *rbdImageObservation) readSites(ctx context.Context) (source, destination rbdObservedInfo, settled bool, err error) {
+func (o *rbdImageObservation) readSites(ctx context.Context, observation *rbdobservation.Attempt) (source, destination rbdObservedInfo, settled bool, err error) {
+	observation.Stage("validate-original-identities")
 	if err := o.checkIdentities(ctx); err != nil {
 		return source, destination, false, err
 	}
@@ -144,6 +161,7 @@ func (o *rbdImageObservation) readSites(ctx context.Context) (source, destinatio
 		}
 		o.mode, o.result.Mode = mode, mode
 	}
+	observation.Stage("read-source-image-info")
 	source, err = o.readInfo(ctx, o.m.pair.sourceClient, o.sourceSpec())
 	if err != nil {
 		return source, destination, false, err
@@ -156,6 +174,7 @@ func (o *rbdImageObservation) readSites(ctx context.Context) (source, destinatio
 			return source, destination, false, rbdImageGuardError("RBD pool-scoped image must use journal mirroring")
 		}
 	}
+	observation.Stage("read-destination-image-info")
 	destination, err = o.readInfo(ctx, o.m.pair.destinationClient, o.destinationSpec())
 	if errors.Is(err, errRBDImageMirroringDisabled) {
 		// rbd-mirror creates the destination image first and enables mirroring
@@ -174,6 +193,7 @@ func (o *rbdImageObservation) readSites(ctx context.Context) (source, destinatio
 	// Creating/disabling are valid transitions, never replay-ready. Native status
 	// refuses these states. Preserve identities and let Wait retry.
 	if o.scope == nil && (source.State != "enabled" || destination.State != "enabled") {
+		observation.Stage("confirm-transition-identities")
 		if err := o.checkIdentities(ctx); err != nil {
 			return source, destination, false, err
 		}
@@ -185,7 +205,7 @@ func (o *rbdImageObservation) readSites(ctx context.Context) (source, destinatio
 // readReplay reads the destination's replay status and, for an up/replaying
 // report, attributes it to a running owned process. A native "up" entry may
 // outlive the process, so the report alone never makes the image ready.
-func (o *rbdImageObservation) readReplay(ctx context.Context, source, destination rbdObservedInfo) error {
+func (o *rbdImageObservation) readReplay(ctx context.Context, source, destination rbdObservedInfo, observation *rbdobservation.Attempt) error {
 	var status rbdObservedStatus
 	if source.State == "enabled" && destination.State == "enabled" {
 		var err error
@@ -198,6 +218,7 @@ func (o *rbdImageObservation) readReplay(ctx context.Context, source, destinatio
 	if !source.Primary || destination.Primary || status.State != "up+replaying" || status.Service == nil {
 		return nil
 	}
+	observation.Stage("attribute-receiving-process")
 	if o.scope != nil {
 		return o.attributeScoped(ctx, status.Service)
 	}
@@ -225,7 +246,8 @@ func (o *rbdImageObservation) attributeScoped(ctx context.Context, service *rbdO
 }
 
 // attributeOwned matches the reporting service to a fixture daemon and
-// requires that running process to replay the pool with the same instance.
+// requires a stable running process to discover the selected peer and namespace
+// with the same instance. Other receivers and election readiness are not required.
 func (o *rbdImageObservation) attributeOwned(ctx context.Context, service *rbdObservedService) error {
 	for _, daemon := range o.m.roster.daemons {
 		if daemon == nil || daemon.Container == nil {
@@ -239,20 +261,32 @@ func (o *rbdImageObservation) attributeOwned(ctx context.Context, service *rbdOb
 			continue
 		}
 		o.result.DaemonName, o.result.InstanceID = daemon.DaemonName, service.InstanceID
-		state, err := daemon.State(ctx)
+		if o.m.receiver.peer == nil {
+			return nil // No recorded peer can attribute this discovery report.
+		}
+		before, err := daemon.State(ctx)
 		if err != nil {
 			return rbdImageQueryError("inspect RBD receiving process", err)
 		}
-		if state == nil || !state.Running || state.Paused || state.Restarting || state.Dead {
+		if !normalRBDReceiverProcess(before) {
 			return nil
 		}
-		native, err := rbdObservedRead.daemonStatus(ctx, daemon.Container, "read RBD receiving process status")
+		// Copy generation fields before another container inspection can update
+		// an implementation's reused State value.
+		pid, started := before.Pid, before.StartedAt
+		data, err := rbdObservedRead.exec(ctx, daemon.Container, "read RBD receiving process status", "ceph", "--admin-daemon", "/tmp/rbd-mirror.asok", "rbd", "mirror", "status")
 		if err != nil {
 			return err
 		}
-		o.result.ReplayReady = slices.ContainsFunc(native.PoolReplayers, func(pool PoolReplayerStatus) bool {
-			return pool.Pool == o.m.pair.config.Pool && pool.State == "running" && pool.InstanceID == service.InstanceID
-		})
+		native, present, err := decodeRBDReceiverDiscovery(data, o.m.pair.config.Pool, o.m.receiver.peer)
+		if err != nil {
+			return rbdImageGuardError("decode RBD receiving process discovery")
+		}
+		after, err := daemon.State(ctx)
+		if err != nil {
+			return rbdImageQueryError("recheck RBD receiving process", err)
+		}
+		o.result.ReplayReady = normalRBDReceiverProcess(after) && pid == after.Pid && started == after.StartedAt && present && native.state == "running" && native.instance == service.InstanceID && slices.Contains(native.namespaces, rbdReceiverNamespace{o.m.pair.config.DestinationNamespace, o.m.pair.config.SourceNamespace})
 		return nil
 	}
 	return nil
@@ -467,6 +501,12 @@ func readRBDMirrorObservedInfo(ctx context.Context, client testcontainers.Contai
 
 func decodeRBDMirrorObservedInfo(data []byte, name string, mode Mode) (rbdObservedInfo, error) {
 	var result rbdObservedInfo
+	if err := rbdObservedRead.json(data); err != nil {
+		return result, err
+	}
+	var fields map[string]json.RawMessage
+	_ = json.Unmarshal(data, &fields)
+
 	// Explicit native key tags matter: global_id is not Go's GlobalID.
 	var tagged struct {
 		Name      *string `json:"name"`
@@ -480,6 +520,17 @@ func decodeRBDMirrorObservedInfo(data []byte, name string, mode Mode) (rbdObserv
 	}
 	if json.Unmarshal(data, &tagged) != nil || tagged.Name == nil || tagged.ID == nil || *tagged.Name != name || *tagged.ID == "" {
 		return result, rbdImageGuardError("decode RBD mirror image info: missing or differing name/identity")
+	}
+	if raw, present := fields["mirroring"]; present {
+		var mirrorFields map[string]json.RawMessage
+		if string(raw) == "null" || json.Unmarshal(raw, &mirrorFields) != nil {
+			return result, rbdImageGuardError("decode RBD mirror image info: null mirroring")
+		}
+		for _, key := range []string{"mode", "state", "global_id", "primary"} {
+			if value, exists := mirrorFields[key]; exists && string(value) == "null" {
+				return result, rbdImageGuardError("decode RBD mirror image info: null mirroring field")
+			}
+		}
 	}
 	mirror := tagged.Mirroring
 	// rbd info prints mirroring for a disabled image only when it has the
@@ -521,6 +572,12 @@ func readRBDMirrorObservedStatus(ctx context.Context, client testcontainers.Cont
 
 func decodeRBDMirrorObservedStatus(data []byte, name, globalID string) (rbdObservedStatus, error) {
 	var result rbdObservedStatus
+	if err := rbdObservedRead.json(data); err != nil {
+		return result, err
+	}
+	var fields map[string]json.RawMessage
+	_ = json.Unmarshal(data, &fields)
+
 	var native struct {
 		Name        *string             `json:"name"`
 		GlobalID    *string             `json:"global_id"`
@@ -532,11 +589,12 @@ func decodeRBDMirrorObservedStatus(data []byte, name, globalID string) (rbdObser
 	if json.Unmarshal(data, &native) != nil || native.Name == nil || *native.Name != name || native.GlobalID == nil || *native.GlobalID != globalID {
 		return result, rbdImageGuardError("decode RBD mirror image status: missing, malformed or differing identity")
 	}
+	if service, present := fields["daemon_service"]; present && string(service) == "null" {
+		return result, rbdImageGuardError("decode RBD mirror image status: null daemon service")
+	}
 	// Ceph omits all local fields when no local site report exists yet.
 	// This supported initial state is non-ready, not a malformed schema.
 	if native.State == nil && native.Description == nil && native.LastUpdate == nil && native.Service == nil {
-		var fields map[string]json.RawMessage
-		_ = json.Unmarshal(data, &fields)
 		for _, key := range []string{"state", "description", "last_update", "daemon_service"} {
 			if _, exists := fields[key]; exists {
 				return result, rbdImageGuardError("decode RBD mirror image status: null local fields")

@@ -57,7 +57,8 @@ type ImmutableObjectCache struct {
 type ImmutableObjectCacheStatus struct {
 	// Running means that the daemon the lease started still runs.
 	Running bool
-	// PID is the daemon's process ID in the client container.
+	// PID is the owned daemon's observed process ID in the client container,
+	// including after an unconfirmed start. It is zero when Running is false.
 	PID int
 	// CachedObjects and CachedBytes count the daemon's object files and
 	// their bytes. Lease ownership records are excluded.
@@ -510,14 +511,19 @@ status)
     test "$pid" -gt 0 || pid=$(cat "$private_pid" 2>/dev/null)
     if ours "$pid" "$private_pid" "$private_sock"; then
         echo running=1
+        echo "pid=$pid"
         echo "perf=$(ceph --admin-daemon "$private_admin" perf dump objecter 2>/dev/null | tr -d '\n')"
     else
         echo running=0
+        echo pid=0
     fi
     if test -d "$path/$marker/objects"; then
         test "$(readlink "$path/$marker/owner")" = "$0:$control" || exit 1
         echo dir=1
-        find "$path/$marker/objects" -type f -printf '%s\n' | awk '{ n++; b += $1 } END { printf "files=%d\nbytes=%.0f\n", n, b }'
+        { find "$path/$marker/objects" -type f -printf '%s\n'; printf 'status=%s\n' "$?"; } |
+            awk '/^status=/ { complete=($0 == "status=0"); next }
+                 { n++; b += $1 }
+                 END { if (!complete) exit 1; printf "files=%d\nbytes=%.0f\n", n, b }' || exit 1
     else
         echo dir=0
     fi
@@ -742,12 +748,12 @@ func StartImmutableObjectCache(ctx context.Context, client testcontainers.Contai
 		createdPath: state.path == "none",
 	}
 	lease.claim = state.claim
-	claimReport, err := supervised.RunShell(ctx, client, immutableCacheReserveLabel, 0, "sh", "-c", immutableObjectCacheScript, lease.owner, "claim", lease.claim, lease.pidFile+".lease")
+	claimReport, err := runImmutableCacheCommand(ctx, client, immutableCacheReserveLabel, 0, 0, "sh", "-c", immutableObjectCacheScript, lease.owner, "claim", lease.claim, lease.pidFile+".lease")
 	if err != nil {
 		lease.reserveMarker, _ = supervised.Unconfirmed(err)
 		return lease, fmt.Errorf("claim immutable object cache path: %w", err)
 	}
-	if claimReport.Stopped {
+	if claimReport.TimedOut {
 		return lease.rollbackStart(ctx, errors.New("immutable object cache path claim timed out"))
 	}
 	if claimReport.ExitCode != 0 {
@@ -770,8 +776,8 @@ func StartImmutableObjectCache(ctx context.Context, client testcontainers.Contai
 		if i == 1 && !lease.createdPath {
 			parentIdentity = state.identity
 		}
-		report, err := supervised.RunShell(ctx, client, immutableCacheReserveLabel, 0, "sh", "-c", immutableObjectCacheScript, lease.owner, "reserve", directory, parentIdentity)
-		if err == nil && !report.Stopped && report.ExitCode != 0 {
+		report, err := runImmutableCacheCommand(ctx, client, immutableCacheReserveLabel, 0, 0, "sh", "-c", immutableObjectCacheScript, lease.owner, "reserve", directory, parentIdentity)
+		if err == nil && !report.TimedOut && report.ExitCode != 0 {
 			failure := fmt.Errorf("%s: exit %d", immutableCacheReserveLabel, report.ExitCode)
 			if report.ExitCode == 3 {
 				failure = immutableCacheConflict()
@@ -785,14 +791,14 @@ func StartImmutableObjectCache(ctx context.Context, client testcontainers.Contai
 			return lease.rollbackStart(ctx, failure)
 		}
 		lease.reservations = append(lease.reservations, directory)
-		if err != nil || report.Stopped {
+		if err != nil || report.TimedOut {
 			lease.uncertainReservation = directory
 		}
 		if err != nil {
 			lease.reserveMarker, _ = supervised.Unconfirmed(err)
 			return lease, fmt.Errorf("%s: %w", immutableCacheReserveLabel, err)
 		}
-		if report.Stopped {
+		if report.TimedOut {
 			return lease.rollbackStart(ctx, errors.New("immutable object cache lease reservation timed out"))
 		}
 		out, verifyErr := immutableObjectCacheOp(ctx, client, lease.owner, "confirm-reservation", directory)
@@ -850,7 +856,7 @@ func (l *ImmutableObjectCacheLease) rollbackStart(ctx context.Context, cause err
 
 // The client reports Linux errno values even when the Go caller runs elsewhere.
 // Zero denotes a completed syscall that violated the no-replace postconditions.
-func cacheRenameProbeError(directory string, report supervised.ShellReport) error {
+func cacheRenameProbeError(directory string, report supervised.Report) error {
 	value, err := strconv.ParseUint(strings.TrimSpace(string(report.Stdout)), 10, 8)
 	if err != nil {
 		return fmt.Errorf("probe RENAME_NOREPLACE at %s: invalid probe report", path.Dir(directory))
@@ -950,7 +956,7 @@ func (l *ImmutableObjectCacheLease) status(ctx context.Context) (ImmutableObject
 	if err != nil {
 		return ImmutableObjectCacheStatus{}, fmt.Errorf("read the immutable object cache: %w", err)
 	}
-	return parseImmutableObjectCacheStatus(out, l.pid)
+	return parseImmutableObjectCacheStatus(out)
 }
 
 // Stop stops the daemon, with SIGTERM and then SIGKILL, and keeps the cache
@@ -975,7 +981,7 @@ func (l *ImmutableObjectCacheLease) stop(ctx context.Context) error {
 	}
 	if !l.launchSent {
 		if l.reserveMarker != "" {
-			if err := supervised.CancelShell(ctx, l.client, immutableCacheReserveLabel, l.reserveMarker); err != nil {
+			if err := supervised.Cancel(ctx, l.client, immutableCacheReserveLabel, l.reserveMarker); err != nil {
 				return err
 			}
 			l.reserveMarker = ""
@@ -1118,7 +1124,7 @@ func (l *ImmutableObjectCacheLease) confirmRemoval(ctx context.Context, op strin
 func (l *ImmutableObjectCacheLease) cleanupOp(ctx context.Context, op string, args ...string) (immutableObjectCacheOutput, error) {
 	const label = "reconcile the immutable object cache"
 	if l.cleanupMarker != "" {
-		if err := supervised.CancelShell(ctx, l.client, label, l.cleanupMarker); err != nil {
+		if err := supervised.Cancel(ctx, l.client, label, l.cleanupMarker); err != nil {
 			return immutableObjectCacheOutput{}, err
 		}
 		l.cleanupMarker = ""
@@ -1135,18 +1141,26 @@ func (l *ImmutableObjectCacheLease) cleanupOp(ctx context.Context, op string, ar
 		seconds := int64((remaining-1)/time.Second) + 1
 		limit = int(min(seconds, int64(math.MaxInt)))
 	}
-	report, err := supervised.RunShellLimited(ctx, l.client, label, limit, 1024, argv...)
+	report, err := runImmutableCacheCommand(ctx, l.client, label, limit, 1024, argv...)
 	if err != nil {
 		l.cleanupMarker, _ = supervised.Unconfirmed(err)
 		return immutableObjectCacheOutput{}, err
 	}
-	if report.Stopped {
+	if report.TimedOut {
 		return immutableObjectCacheOutput{}, context.DeadlineExceeded
 	}
 	if report.ExitCode != 0 || report.StdoutTruncated {
 		return immutableObjectCacheOutput{}, fmt.Errorf("immutable cache %s command failed with exit %d", op, report.ExitCode)
 	}
 	return immutableObjectCacheOutput{op: op, out: report.Stdout}, nil
+}
+
+func runImmutableCacheCommand(ctx context.Context, client testcontainers.Container, label string, limit, stdoutLimit int, argv ...string) (supervised.Report, error) {
+	report, err := supervised.RunRoleCommand(ctx, client, label, limit, stdoutLimit, argv...)
+	if supervised.MissingPython(err) {
+		return supervised.Report{}, &ceph.OperationError{Kind: ceph.ErrImageCapability, Op: label, Capability: "python3", Err: err}
+	}
+	return report, err
 }
 
 // immutableObjectCacheOp runs one operation of immutableObjectCacheScript and

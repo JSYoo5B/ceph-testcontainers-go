@@ -349,9 +349,6 @@ func (snapshot *Snapshot) Clone(ctx context.Context, config CloneConfig) (*Clone
 	if selectedPool == "" {
 		selectedPool = snapshot.identity.dataPool
 	}
-	if err := fs.CheckSubvolumeDataPool(ctx, selectedPool); err != nil {
-		return nil, err
-	}
 	if _, err := checkSnapshotIdentity(ctx, fs, fsID, snapshot.identity); err != nil {
 		return nil, err
 	}
@@ -361,6 +358,9 @@ func (snapshot *Snapshot) Clone(ctx context.Context, config CloneConfig) (*Clone
 	}
 	if slices.Contains(names, config.Name) {
 		return nil, servicehook.Invalid(fmt.Errorf("clone target subvolume %q already exists", config.Name))
+	}
+	if err := fs.CheckSubvolumeDataPool(ctx, selectedPool); err != nil {
+		return nil, err
 	}
 	identity := &cloneRecord{filesystem: fs, filesystemID: fsID, source: snapshot.identity, name: config.Name, group: config.GroupName, dataPool: config.DataPool}
 	clone := &Clone{Name: config.Name, GroupName: config.GroupName, FilesystemName: fs.Name(), identity: identity}
@@ -431,7 +431,7 @@ func decodeCloneStatus(data []byte) (*CloneStatus, error) {
 }
 
 func validateCloneHandle(fs *fsbase.Core, clone *Clone) error {
-	if fs == nil || fs.Cluster() == nil || clone == nil || clone.identity == nil || clone.identity.filesystem != fs || !clone.identity.submitted || clone.identity.removed {
+	if fs == nil || fs.Cluster() == nil || clone == nil || clone.identity == nil || clone.identity.filesystem != fs || !clone.identity.submitted {
 		return servicehook.Invalid(errors.New("clone must be a successfully submitted resource created by this filesystem"))
 	}
 	if clone.identity.incarnation == nil {
@@ -498,9 +498,6 @@ func (clone *Clone) statusSample(ctx context.Context, fs *fsbase.Core, begin fun
 		return nil, err
 	}
 	defer done()
-	if clone.identity.removed {
-		return nil, cloneIdentityRefusal("partial clone target was removed by Clone.RemovePartial")
-	}
 	return clone.identity.checkedStatus(ctx, fs, fsID)
 }
 

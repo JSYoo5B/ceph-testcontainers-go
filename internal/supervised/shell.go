@@ -24,17 +24,13 @@ const (
 	// grace and a second to notice the acknowledgment, with room to spare
 	// within CancelTimeout.
 	shellCancelWait = 8
-	// ShellEndPrefix starts the last line of a ShellScript's standard error,
-	// which carries the command's exit status; RunShell removes it.
+	// ShellEndPrefix starts the supervisor trailer's last line, which
+	// carries the invocation marker, command exit status and deadline flag; RunShell removes it.
 	ShellEndPrefix = "tc-supervised-sh: end "
-	// ShellDeadlineLine is the line of standard error before the end line of
-	// a ShellScript that stopped its command at its limit; RunShell removes
-	// it and reports Stopped.
-	ShellDeadlineLine = "tc-supervised-sh: deadline"
 )
 
 // ShellScript is a supervisor for containers that have a POSIX shell but no
-// python3, such as the RGW role image: it needs only sh, its kill builtin,
+// python3, such as journal diagnostic images: it needs only sh, its kill builtin,
 // sleep, cat, awk, mkdir and rm, and a writable /tmp. Its arguments are the
 // invocation's marker, a limit in seconds (0 for none), the stop grace in
 // seconds and the command.
@@ -52,9 +48,9 @@ const (
 // Both waits discard the shell's own standard error: bash, the sh of the
 // official image, reports a job that a signal ended there.
 //
-// Its last line of standard error is ShellEndPrefix and the command's exit
-// status, after ShellDeadlineLine when the limit stopped it. A run without
-// that line did not finish: a signal killed the supervisor.
+// Its trailer is a separating newline, ShellEndPrefix, the command's exit
+// status and an explicit deadline flag, bound to the invocation marker. RunShell removes exactly that trailer
+// so native stderr bytes cannot supply the deadline flag.
 const ShellScript = `marker=$1 limit=$2 grace=$3
 shift 3
 mkdir -p "${marker%/*}" 2>/dev/null
@@ -90,11 +86,10 @@ wait "$pid" 2>/dev/null
 code=$?
 kill "$watcher" 2>/dev/null
 wait "$watcher" 2>/dev/null
-stopped=
+stopped=0
 [ -e "$marker.deadline" ] && stopped=1
 rm -f "$marker.deadline" "$marker"
-[ -n "$stopped" ] && echo "` + ShellDeadlineLine + `" >&2
-echo "` + ShellEndPrefix + `$code" >&2
+printf '\n` + ShellEndPrefix + `%s %s %s\n' "$marker" "$code" "$stopped" >&2
 exit "$code"
 `
 
@@ -173,13 +168,13 @@ func RunShellLimited(ctx context.Context, ctr testcontainers.Container, label st
 			err = &BackendError{Op: "read " + label + " supervisor", Err: copyErr}
 		}
 	}
-	end := -1
+	end, stopped := -1, false
 	if err == nil {
-		end = shellEnd(&stderr)
+		end, stopped = shellEnd(&stderr, marker)
 	}
 	if err == nil && ctx.Err() == nil && end == code {
 		report := ShellReport{Stdout: stdout.Bytes(), ExitCode: code, StdoutTruncated: stdout.truncated}
-		report.Stderr, report.Stopped = bytes.CutSuffix(stderr.Bytes(), []byte(ShellDeadlineLine+"\n"))
+		report.Stderr, report.Stopped = stderr.Bytes(), stopped
 		return report, nil
 	}
 	// The supervisor did not report: the exec may still run, or start later,
@@ -215,25 +210,32 @@ func (b *prefixBuffer) Write(p []byte) (int, error) {
 	return b.Buffer.Write(p)
 }
 
-// shellEnd removes the end line from stderr and returns its status, or -1
-// when stderr does not end with one.
-func shellEnd(stderr *bytes.Buffer) int {
+// shellEnd removes the supervisor trailer and returns its status and deadline
+// flag. A missing or malformed trailer returns -1 and leaves stderr intact.
+func shellEnd(stderr *bytes.Buffer, marker string) (int, bool) {
 	data := stderr.Bytes()
 	if !bytes.HasSuffix(data, []byte("\n")) {
-		return -1
+		return -1, false
 	}
-	start := bytes.LastIndexByte(data[:len(data)-1], '\n') + 1
-	line := string(data[start : len(data)-1])
-	status, ok := strings.CutPrefix(line, ShellEndPrefix)
+	start := bytes.LastIndexByte(data[:len(data)-1], '\n')
+	if start < 0 {
+		return -1, false
+	}
+	line := string(data[start+1 : len(data)-1])
+	status, ok := strings.CutPrefix(line, ShellEndPrefix+marker+" ")
 	if !ok {
-		return -1
+		return -1, false
 	}
-	code, err := strconv.Atoi(status)
+	fields := strings.Split(status, " ")
+	if len(fields) != 2 || (fields[1] != "0" && fields[1] != "1") {
+		return -1, false
+	}
+	code, err := strconv.Atoi(fields[0])
 	if err != nil || code < 0 {
-		return -1
+		return -1, false
 	}
 	stderr.Truncate(start)
-	return code
+	return code, fields[1] == "1"
 }
 
 // CancelShell stops the ShellScript invocation that owns marker in ctr and

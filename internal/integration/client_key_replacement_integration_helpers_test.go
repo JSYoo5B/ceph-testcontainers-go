@@ -8,7 +8,6 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"io"
 	"maps"
 	"regexp"
 	"slices"
@@ -105,7 +104,10 @@ func prepareHeldObject(t *testing.T, ctx context.Context, cluster *ceph.Containe
 		t.Fatal(err)
 	}
 	if code, reader, err := control.Exec(ctx, []string{"rados", "-p", heldPool, "-N", heldNamespace, "put", heldObject, "/tmp/held-object"}, tcexec.Multiplexed()); err != nil || code != 0 {
-		out, _ := io.ReadAll(reader)
+		var out []byte
+		if reader != nil {
+			out = readNativeEvidence(t, reader)
+		}
 		t.Fatalf("write %s: exit %d, %v: %s", heldObject, code, err, out)
 	}
 	return payload
@@ -284,16 +286,11 @@ func runClientKeyReplacement(t *testing.T) {
 			if resolveErr != nil {
 				t.Fatalf("after a call canceled after %v (%v), the next call returned %v", delay, err, resolveErr)
 			}
-			switch {
-			case err == nil && resolved != attempted:
-				t.Fatalf("a call that finished within %v returned another descriptor than the next call", delay)
-			case err == nil:
-				t.Logf("a call with %v finished in time", delay)
-			case attempted == resolved:
-				t.Logf("a call canceled after %v applied, which the next call confirmed: %v", delay, err)
-			default:
-				t.Logf("a call canceled after %v did not apply, and the next call replaced the key: %v", delay, err)
+			evidence, evidenceErr := replacementAttemptEvidence(attempted, resolved, err)
+			if evidenceErr != nil {
+				t.Fatal(evidenceErr)
 			}
+			t.Logf("replacement with %v: %s", delay, evidence)
 			if authEntry(t, ctx, cluster, client.Name()).Key != keyOf(t, resolved) {
 				t.Fatalf("after a call canceled after %v, the MONs hold another key than the resolved descriptor", delay)
 			}
@@ -325,8 +322,7 @@ func clientKeyCiphers(t *testing.T, ctx context.Context, image string) ([]ceph.C
 	if err != nil {
 		t.Fatal(err)
 	}
-	usage, _ := io.ReadAll(reader)
-	if !strings.Contains(string(usage), "--key-type") {
+	if !keyTypesFromHelp(t, reader) {
 		return []ceph.CephxCipher{ceph.CipherAES}, auth
 	}
 	// The service cipher stays fixed whatever key type the clients have.
@@ -379,7 +375,7 @@ func clientCommand(t *testing.T, ctx context.Context, ctr testcontainers.Contain
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, _ := io.ReadAll(reader)
+	out := readNativeEvidence(t, reader)
 	if code != 0 && code != 13 && !strings.Contains(string(out), "ermission denied") {
 		t.Fatalf("%s failed for another reason than authentication: exit %d: %s", strings.Join(argv, " "), code, out)
 	}
@@ -437,10 +433,13 @@ func heldSessionLog(t *testing.T, ctx context.Context, ctr testcontainers.Contai
 func containerTime(t *testing.T, ctx context.Context, ctr testcontainers.Container) float64 {
 	t.Helper()
 	code, reader, err := ctr.Exec(ctx, []string{"python3", "-c", "import time; print(time.time())"}, tcexec.Multiplexed())
-	out, _ := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal("read the container clock", err)
+	}
+	out := readNativeEvidence(t, reader)
 	at, parseErr := strconv.ParseFloat(strings.TrimSpace(string(out)), 64)
-	if err != nil || code != 0 || parseErr != nil {
-		t.Fatalf("read the container clock: %q %v", out, err)
+	if code != 0 || parseErr != nil {
+		t.Fatalf("read the container clock: exit %d, %q, %v", code, out, parseErr)
 	}
 	return at
 }
@@ -602,4 +601,19 @@ func authenticatedMonitorOverrides(t *testing.T, ctx context.Context, cluster *c
 		overrides = append(overrides, endpoint)
 	}
 	return overrides
+}
+
+// Unusable attempted descriptors do not expose whether an uncertain import
+// applied. Only a confirmed call has an identity-preserving descriptor check.
+func replacementAttemptEvidence(attempted, resolved *ceph.ClientConfig, callErr error) (string, error) {
+	if resolved == nil {
+		return "", fmt.Errorf("replacement has no resolved descriptor")
+	}
+	if callErr != nil {
+		return "resolved/current; initial import application unverified", nil
+	}
+	if attempted != resolved {
+		return "", fmt.Errorf("confirmed replacement changed descriptor")
+	}
+	return "confirmed replacement", nil
 }

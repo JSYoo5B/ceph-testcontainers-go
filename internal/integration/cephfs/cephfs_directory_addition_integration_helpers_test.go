@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"slices"
 	"strings"
@@ -17,9 +18,40 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	cephfsmirror "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/mirror"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
+
+// Report typed outcomes without printing native stdout, stderr or a nested
+// Docker error.
+func directoryAdditionObservationDiagnostics(ctx context.Context, err error, elapsed time.Duration) string {
+	var timedOut *supervised.ProcessTimeoutError
+	var native *ceph.NativeFailure
+	var supervisor *supervised.ExitError
+	var backend *supervised.BackendError
+	outcome := "no command outcome"
+	switch {
+	case errors.As(err, &timedOut):
+		outcome = fmt.Sprintf("native process timeout, exit=%d", timedOut.ExitCode)
+	case errors.As(err, &native):
+		outcome = fmt.Sprintf("native command exit=%d", native.ExitCode)
+	case errors.As(err, &supervisor):
+		outcome = fmt.Sprintf("supervisor exit=%d", supervisor.Code)
+	case errors.As(err, &backend):
+		switch backend.Op {
+		case "exec monitor quorum supervisor":
+			outcome = "Docker exec failed"
+		case "read monitor quorum supervisor":
+			outcome = "supervisor report read failed"
+		default:
+			outcome = "supervisor transport failed"
+		}
+	}
+	_, stopUnconfirmed := supervised.Unconfirmed(err)
+	return fmt.Sprintf("elapsed=%s observation_deadline=%t observation_canceled=%t caller_context=%v outcome=%s stop_unconfirmed=%t",
+		elapsed.Round(time.Millisecond), errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled), ctx.Err(), outcome, stopUnconfirmed)
+}
 
 func runCephFSDirectoryAdditionIntent(t *testing.T, host bool) {
 	t.Helper()
@@ -222,8 +254,13 @@ func runCephFSDirectoryAdditionIntent(t *testing.T, host bool) {
 	if err := harness.CephFSDirectoryAdditionCheckScope(ctx, policy, []string{seed, foreign, outside, added}); err != nil {
 		t.Fatal("native refusal changed owned or foreign policy", err)
 	}
-	if status, err := applied.Status(ctx); err != nil || !status.Registered || !status.PolicyPresent {
-		t.Fatalf("settling refusal lost previous addition: %+v, %v", status, err)
+	started := time.Now()
+	status, err = applied.Status(ctx)
+	if err != nil {
+		t.Fatalf("observe previous addition after settling refusals: %v (%s)", err, directoryAdditionObservationDiagnostics(ctx, err, time.Since(started)))
+	}
+	if !status.Registered || !status.PolicyPresent {
+		t.Fatalf("settling refusal lost previous addition: %+v", status)
 	}
 	receiver, err := mirror.AddDaemon(ctx, "addition-receiver")
 	if err != nil || receiver == nil || len(mirror.Daemons()) != 1 || customizers.Load() != 2 {
