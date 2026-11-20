@@ -464,19 +464,18 @@ func zoneProbePhase(t *testing.T, ctx context.Context, b *zoneBoundary, phase st
 	}
 	results := map[string]zoneRTT{}
 	for _, p := range paths {
-		r, err := b.probe(ctx, p.From, p.To, count, timeout)
+		s, err := b.probe(ctx, p.From, p.To, count, timeout)
 		if err != nil {
 			t.Fatalf("%s %s: %v", phase, p.Name, err)
 		}
-		s := summarizeZoneRTT(r)
 		results[p.Name] = s
 		kind := "same-zone"
 		if p.Cross {
 			kind = "cross-zone"
 		}
 		detail := ""
-		if len(r.Errors) > 0 {
-			detail = fmt.Sprintf(" errors %q", r.Errors[0])
+		if len(s.Errors) > 0 {
+			detail = fmt.Sprintf(" errors %q", s.Errors[0])
 		}
 		t.Logf("RTT %-24s %-10s %-28s %s %s%s", phase, kind, p.Name, p.To, s, detail)
 	}
@@ -633,6 +632,19 @@ func zonePartition(t *testing.T, ctx context.Context, b *zoneBoundary, observer 
 ) zoneObject {
 	t.Helper()
 	requirePartitionStat(t, ctx, clientB, zonePool, "zone-object-1", zoneObjectSize, false)
+	// The router each cross-zone path leaves through, read before the cut:
+	// CheckZoneCut accepts a failed neighbour resolution of that router only.
+	gateways := map[string]netip.Addr{}
+	for _, p := range paths {
+		if !p.Cross {
+			continue
+		}
+		lookup, err := b.routeLookup(ctx, p.From, p.To.Addr())
+		if err != nil || !lookup.Via.IsValid() {
+			t.Fatalf("%s before the partition: route %+v, %v", p.Name, lookup, err)
+		}
+		gateways[p.Name] = lookup.Via
+	}
 	zoneShapeAll(t, ctx, b, []string{"a", "b"}, fault.NetworkProfile{HelperImage: helperImage, Loss: 100})
 	cutAt := time.Now()
 	zoneLeaseStatus(t, ctx, b, "partitioned")
@@ -641,13 +653,12 @@ func zonePartition(t *testing.T, ctx context.Context, b *zoneBoundary, observer 
 		if p.Cross {
 			count, timeout = 5, time.Second
 		}
-		r, err := b.probe(ctx, p.From, p.To, count, timeout)
+		s, err := b.probe(ctx, p.From, p.To, count, timeout)
 		if err != nil {
 			t.Fatal(err)
 		}
-		s := summarizeZoneRTT(r)
 		if p.Cross {
-			err = harness.CheckZoneCut(s)
+			err = harness.CheckZoneCut(s, gateways[p.Name])
 		} else {
 			err = checkZoneControl(base[p.Name], s)
 		}
@@ -790,11 +801,10 @@ func zonePartialTeardown(t *testing.T, ctx context.Context, docker *testcontaine
 		if p.From != "client-a" || !p.Cross {
 			continue
 		}
-		r, err := partial.probe(ctx, p.From, p.To, zoneSamples, 2*time.Second)
+		s, err := partial.probe(ctx, p.From, p.To, zoneSamples, 2*time.Second)
 		if err != nil {
 			t.Fatal(err)
 		}
-		s := summarizeZoneRTT(r)
 		t.Logf("RTT %-24s %-28s %s", "direct after release", p.Name, s)
 		if err := checkZoneControl(base[p.Name], s); err != nil {
 			t.Fatalf("direct %s after the release: %v", p.Name, err)
@@ -815,7 +825,7 @@ func zonePartialTeardown(t *testing.T, ctx context.Context, docker *testcontaine
 		t.Fatal(err)
 	}
 	t.Logf("partial setup: a probe to an unused address failed: %v", r.Errors)
-	if len(r.Samples) != 0 {
+	if r.OK != 0 {
 		t.Fatal("a probe to an unused address completed")
 	}
 	if err := partial.close(ctx); err != nil {
@@ -978,15 +988,15 @@ while True:
 	}
 	probe := func(from testcontainers.Container, to netip.Addr) zoneRTT {
 		t.Helper()
-		out, err := zoneExecOK(ctx, from, "python3", "-c", zoneProbeScript, to.String(), "7000", "5", "1", "0.05")
+		out, err := zoneExecOK(ctx, from, "python3", "-c", harness.ZoneProbeScript, to.String(), "7000", "5", "1", "0.05")
 		if err != nil {
 			t.Fatal(err)
 		}
-		r, err := parseZoneProbe(5, out)
+		r, err := harness.SummarizeZoneProbe(5, out)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return summarizeZoneRTT(r)
+		return r
 	}
 	// control waits for a listener that was just started in the background.
 	control := func(what string, from testcontainers.Container, to netip.Addr) {

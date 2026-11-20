@@ -6,6 +6,7 @@ package integration_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -156,21 +157,29 @@ func TestRoutesThroughAndInterfaces(t *testing.T) {
 }
 
 func TestZoneProbeAndRTT(t *testing.T) {
-	r, err := parseZoneProbe(4, `{"samples_ms": [0.21, 0.19, 0.25, 0.2], "errors": []}`)
+	base, err := harness.SummarizeZoneProbe(4, `{"samples_ms": [0.21, 0.19, 0.25, 0.2], "errors": []}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := summarizeZoneRTT(r)
 	if base.OK != 4 || math.Abs(base.Median-0.205) > 1e-9 || base.P10 != 0.19 || base.P90 != 0.25 {
 		t.Fatalf("summary %+v", base)
 	}
 	for _, bad := range []string{`{"samples_ms": [0.2], "errors": []}`, `{"samples_ms": [-1, 1, 1, 1], "errors": []}`, `not json`} {
-		if _, err := parseZoneProbe(4, bad); err == nil {
+		if _, err := harness.SummarizeZoneProbe(4, bad); err == nil {
 			t.Errorf("parsed %q", bad)
 		}
 	}
 	summary := func(samples ...float64) zoneRTT {
-		return summarizeZoneRTT(zoneProbeResult{Requested: len(samples), Samples: samples})
+		t.Helper()
+		raw, err := json.Marshal(map[string]any{"samples_ms": samples, "errors": []string{}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, err := harness.SummarizeZoneProbe(len(samples), string(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
 	}
 	shaped := summary(40.9, 40.8, 41.0, 40.95)
 	if err := checkZoneShaped(base, shaped, 40*time.Millisecond); err != nil {
@@ -197,25 +206,150 @@ func TestZoneProbeAndRTT(t *testing.T) {
 	}{
 		"two timeouts":       {[]string{"TimeoutError: timed out", "TimeoutError: timed out"}, true},
 		"missing evidence":   {[]string{"TimeoutError: timed out"}, false},
+		"empty timeout":      {[]string{"TimeoutError: timed out", "TimeoutError: "}, false},
 		"connection refused": {[]string{"TimeoutError: timed out", "ConnectionRefusedError: [Errno 111] Connection refused"}, false},
 		"connection reset":   {[]string{"TimeoutError: timed out", "ConnectionResetError: [Errno 104] Connection reset by peer"}, false},
 		"no route":           {[]string{"TimeoutError: timed out", "OSError: [Errno 101] Network is unreachable"}, false},
+		"host unreachable":   {[]string{"TimeoutError: timed out", "OSError: [Errno 113] No route to host"}, false},
+		"host down":          {[]string{"TimeoutError: timed out", "OSError: [Errno 112] Host is down"}, false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			got := summarizeZoneRTT(zoneProbeResult{Requested: 2, Errors: check.errors})
-			if err := harness.CheckZoneCut(got); (err == nil) != check.timeout {
-				t.Fatalf("partition verdict: %v, want timeout=%t", err, check.timeout)
+			got := zoneRTT{Requested: 2, Errors: check.errors}
+			// Without the kernel state of the failed attempt, no gateway
+			// makes a failure other than a timeout acceptable.
+			for _, gateway := range []netip.Addr{{}, zoneAddr("172.19.0.3")} {
+				if err := harness.CheckZoneCut(got, gateway); (err == nil) != check.timeout {
+					t.Fatalf("partition verdict with the gateway %v: %v, want timeout=%t", gateway, err, check.timeout)
+				}
 			}
 			if out := classifyTwoSubnetPath(got); (out == "timed out") != check.timeout {
 				t.Fatalf("two-subnet outcome: %q, want timeout=%t", out, check.timeout)
 			}
 		})
 	}
-	if err := harness.CheckZoneCut(zoneRTT{Requested: 1, OK: 1}); err == nil {
+	if err := harness.CheckZoneCut(zoneRTT{Requested: 1, OK: 1}, zoneAddr("172.19.0.3")); err == nil {
 		t.Fatal("accepted a completed probe across a partition")
 	}
 	if got := classifyTwoSubnetPath(summary(1, 1, 1)); got != "forwarded" {
 		t.Fatal(got)
+	}
+}
+
+// zoneCutProbe is the probe output of five attempts across a cut on the
+// cluster plane, the third of which failed with errno and message while the
+// kernel reported route for the target and neighbours as its neighbour table.
+func zoneCutProbe(t *testing.T, errno, message, route, neighbours string) zoneRTT {
+	t.Helper()
+	timeout := "TimeoutError: timed out"
+	raw, err := json.Marshal(map[string]any{
+		"samples_ms": []float64{},
+		"errors":     []string{timeout, timeout, message, timeout, timeout},
+		"failures":   []map[string]any{{"error": 2, "errno": errno, "route": route, "neighbours": neighbours}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := harness.SummarizeZoneProbe(5, string(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// TestZoneCutUnresolvedGateway covers the one failure besides a timeout that
+// shows a dropping partition: EHOSTUNREACH raised by the sender's own kernel
+// because the ARP replies of its zone router are dropped as well. The same
+// errno with any other kernel state came over the wire or from a changed
+// route, and stays rejected.
+func TestZoneCutUnresolvedGateway(t *testing.T) {
+	const (
+		unreachable = "OSError: [Errno 113] No route to host"
+		routed      = "172.19.0.5 via 172.19.0.3 dev eth1 src 172.19.0.6 uid 0 \n    cache \n"
+		peers       = "172.19.0.4 dev eth1 lladdr 02:42:ac:13:00:04 REACHABLE \n172.18.0.3 dev eth0 FAILED \n"
+	)
+	gateway := zoneAddr("172.19.0.3")
+	for name, check := range map[string]struct {
+		errno, message, route, neighbours string
+		gateway                           netip.Addr
+		cut                               bool
+	}{
+		"gateway resolution failed":      {"EHOSTUNREACH", unreachable, routed, peers + "172.19.0.3 dev eth1 FAILED \n", gateway, true},
+		"gateway resolution in progress": {"EHOSTUNREACH", unreachable, routed, peers + "172.19.0.3 dev eth1 INCOMPLETE \n", gateway, true},
+		"flagged entry failed":           {"EHOSTUNREACH", unreachable, routed, "172.19.0.3 dev eth1 router FAILED \n", gateway, true},
+
+		// A router that rejects with ICMP host-unreachable or
+		// host-prohibited was reached through a resolved neighbour entry.
+		"ICMP reject, gateway reachable": {"EHOSTUNREACH", unreachable, routed, peers + "172.19.0.3 dev eth1 lladdr 02:42:ac:13:00:03 REACHABLE \n", gateway, false},
+		"ICMP reject, gateway stale":     {"EHOSTUNREACH", unreachable, routed, peers + "172.19.0.3 dev eth1 lladdr 02:42:ac:13:00:03 STALE \n", gateway, false},
+		"ICMP reject, gateway delayed":   {"EHOSTUNREACH", unreachable, routed, peers + "172.19.0.3 dev eth1 lladdr 02:42:ac:13:00:03 DELAY \n", gateway, false},
+		"ICMP reject, gateway probed":    {"EHOSTUNREACH", unreachable, routed, peers + "172.19.0.3 dev eth1 lladdr 02:42:ac:13:00:03 PROBE \n", gateway, false},
+		"static gateway entry":           {"EHOSTUNREACH", unreachable, routed, "172.19.0.3 dev eth1 lladdr 02:42:ac:13:00:03 PERMANENT \n", gateway, false},
+		"no gateway entry":               {"EHOSTUNREACH", unreachable, routed, peers, gateway, false},
+		"failed entry of another host":   {"EHOSTUNREACH", unreachable, routed, peers + "172.19.0.33 dev eth1 FAILED \n", gateway, false},
+		"failed entry on another device": {"EHOSTUNREACH", unreachable, routed, peers + "172.19.0.3 dev eth0 FAILED \n", gateway, false},
+		"neighbour table unread":         {"EHOSTUNREACH", unreachable, routed, "ip did not run: [Errno 2] No such file or directory: 'ip'", gateway, false},
+
+		// A changed route: the target is unreachable by route, on-link, or
+		// behind another router whose own entry failed.
+		"unreachable route":      {"EHOSTUNREACH", unreachable, "ip exited 2: RTNETLINK answers: No route to host", peers + "172.19.0.3 dev eth1 FAILED \n", gateway, false},
+		"on-link route":          {"EHOSTUNREACH", unreachable, "172.19.0.5 dev eth1 src 172.19.0.6 uid 0 \n", peers + "172.19.0.5 dev eth1 FAILED \n172.19.0.3 dev eth1 FAILED \n", gateway, false},
+		"another gateway":        {"EHOSTUNREACH", unreachable, "172.19.0.5 via 172.19.0.2 dev eth1 src 172.19.0.6 uid 0 \n", peers + "172.19.0.2 dev eth1 FAILED \n", gateway, false},
+		"no gateway to resolve":  {"EHOSTUNREACH", unreachable, routed, peers + "172.19.0.3 dev eth1 FAILED \n", netip.Addr{}, false},
+		"gateway of other plane": {"EHOSTUNREACH", unreachable, routed, peers + "172.19.0.3 dev eth1 FAILED \n", zoneAddr("172.18.0.3"), false},
+
+		// Other errnos, even with a failed gateway entry recorded.
+		"refused":             {"ECONNREFUSED", "ConnectionRefusedError: [Errno 111] Connection refused", routed, peers + "172.19.0.3 dev eth1 FAILED \n", gateway, false},
+		"reset":               {"ECONNRESET", "ConnectionResetError: [Errno 104] Connection reset by peer", routed, peers + "172.19.0.3 dev eth1 FAILED \n", gateway, false},
+		"network unreachable": {"ENETUNREACH", "OSError: [Errno 101] Network is unreachable", routed, peers + "172.19.0.3 dev eth1 FAILED \n", gateway, false},
+		"host down":           {"EHOSTDOWN", "OSError: [Errno 112] Host is down", routed, peers + "172.19.0.3 dev eth1 FAILED \n", gateway, false},
+		"unnamed errno":       {"", unreachable, routed, peers + "172.19.0.3 dev eth1 FAILED \n", gateway, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := zoneCutProbe(t, check.errno, check.message, check.route, check.neighbours)
+			err := harness.CheckZoneCut(got, check.gateway)
+			if (err == nil) != check.cut {
+				t.Fatalf("partition verdict %v for %s, want cut=%t", err, got, check.cut)
+			}
+			if classifyTwoSubnetPath(got) == "timed out" {
+				t.Fatalf("a path without a recorded gateway classified %s as timed out", got)
+			}
+		})
+	}
+
+	// The record belongs to one attempt: it does not excuse another one.
+	other := zoneCutProbe(t, "EHOSTUNREACH", unreachable, routed, "172.19.0.3 dev eth1 FAILED \n")
+	other.Errors[3] = "ConnectionRefusedError: [Errno 111] Connection refused"
+	if err := harness.CheckZoneCut(other, gateway); err == nil {
+		t.Fatal("accepted a refusal next to an unresolved gateway")
+	}
+	other = zoneCutProbe(t, "EHOSTUNREACH", unreachable, routed, "172.19.0.3 dev eth1 FAILED \n")
+	other.Errors[3] = unreachable
+	if err := harness.CheckZoneCut(other, gateway); err == nil {
+		t.Fatal("accepted a second EHOSTUNREACH without its own record")
+	}
+	for _, bad := range []string{
+		`{"samples_ms": [], "errors": ["a"], "failures": [{"error": 1, "errno": "EHOSTUNREACH"}]}`,
+		`{"samples_ms": [], "errors": ["a"], "failures": [{"error": -1, "errno": "EHOSTUNREACH"}]}`,
+		`{"samples_ms": [], "errors": ["a"], "failures": [{"error": 0}, {"error": 0}]}`,
+	} {
+		if _, err := harness.SummarizeZoneProbe(1, bad); err == nil {
+			t.Errorf("parsed %s", bad)
+		}
+	}
+}
+
+func TestParseNeighbour(t *testing.T) {
+	table := "172.19.0.3 dev eth1 lladdr 02:42:ac:13:00:03 REACHABLE \n172.19.0.4 dev eth1 FAILED \n172.18.0.3 dev eth0 lladdr 02:42:ac:12:00:03 router STALE \nfe80::1 dev eth1 INCOMPLETE \n"
+	for _, check := range []struct{ addr, dev, state string }{
+		{"172.19.0.3", "eth1", "REACHABLE"}, {"172.19.0.4", "eth1", "FAILED"}, {"172.18.0.3", "eth0", "STALE"},
+		{"172.19.0.4", "eth0", ""}, {"172.19.0.40", "eth1", ""}, {"172.19.0.5", "eth1", ""},
+	} {
+		if got := harness.ParseNeighbour(table, zoneAddr(check.addr), check.dev); got != check.state {
+			t.Errorf("%s on %s: %q, want %q", check.addr, check.dev, got, check.state)
+		}
+	}
+	if got := harness.ParseNeighbour("", zoneAddr("172.19.0.3"), "eth1"); got != "" {
+		t.Errorf("empty table: %q", got)
 	}
 }
 

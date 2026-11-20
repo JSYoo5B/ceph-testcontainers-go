@@ -706,6 +706,19 @@ func requirePartitionStat(t *testing.T, ctx context.Context, client testcontaine
 func regionalPartition(t *testing.T, ctx context.Context, top *regionalTopology, paths []regionalPath, base map[string]harness.ZoneRTT) regionalObject {
 	t.Helper()
 	requirePartitionStat(t, ctx, top.clientB, regionalPool, "regional-object-1", regionalObjectSize, false)
+	// The router each cross-zone path leaves through, read before the cut:
+	// CheckZoneCut accepts a failed neighbour resolution of that router only.
+	gateways := map[string]netip.Addr{}
+	for _, p := range paths {
+		if !p.Cross {
+			continue
+		}
+		lookup, err := top.probes[p.From].RouteGet(ctx, p.To.Addr())
+		if err != nil || !lookup.Via.IsValid() {
+			t.Fatalf("%s before the partition: route %+v, %v", p.Name, lookup, err)
+		}
+		gateways[p.Name] = lookup.Via
+	}
 	leases := regionalShape(t, ctx, top, []string{"a", "b"}, fault.NetworkProfile{HelperImage: top.helper, Loss: 100})
 	cutAt := time.Now()
 	regionalLeaseStatus(t, ctx, "partitioned", leases)
@@ -719,7 +732,7 @@ func regionalPartition(t *testing.T, ctx context.Context, top *regionalTopology,
 			t.Fatal(err)
 		}
 		if p.Cross {
-			err = harness.CheckZoneCut(s)
+			err = harness.CheckZoneCut(s, gateways[p.Name])
 		} else {
 			err = harness.CheckZoneControl(base[p.Name], s)
 		}
