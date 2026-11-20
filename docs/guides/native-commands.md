@@ -687,6 +687,12 @@ stats, err := gateways[0].Admin(ctx, "bucket", "stats", "--bucket", "photos")
   `reshard process`, a deadline that fits it. When the deadline is near, the
   gateway's supervisor stops `radosgw-admin` and Admin reports that it was
   stopped; the command is never repeated.
+- A command that hangs uses its whole deadline, so give each command a
+  context with its own bound instead of the test's. The supervisor stops the
+  command with SIGABRT, and the error then says where it waited: `radosgw-admin
+  still ran after 105s and was stopped; when it was stopped, thread
+  radosgw-admin was in ...`, followed by the first frames of that thread
+  (function names of the binary, without arguments or addresses).
 
 Commands that RGW tests commonly need:
 

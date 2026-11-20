@@ -138,14 +138,20 @@ type UserInfo struct {
 // The call is bounded by ctx alone, like Container.Ceph: the cluster's startup
 // timeout bounds bootstrap, readiness and the typed operations, not a native
 // command whose duration the caller chooses, so give ctx the deadline the
-// command needs. No radosgw-admin outlives the call: a small sh supervisor in
-// the gateway container stops the command with SIGTERM, then SIGKILL after
-// 2 s, 15 s before ctx's deadline (at half the remaining time for a short one;
-// ceph.ErrNativeFailure, "radosgw-admin still ran after Ns and was stopped"),
-// when ctx ends first (Admin then stops
-// it under its own budget of about 10 s and returns ctx's error only after the
+// command needs. No radosgw-admin outlives the call: a supervisor in the
+// gateway container stops the command 15 s before ctx's deadline (at half the
+// remaining time for a short one; ceph.ErrNativeFailure, "radosgw-admin still
+// ran after Ns and was stopped"), when ctx ends first (Admin then stops it
+// under its own budget of about 10 s and returns ctx's error only after the
 // command is gone; a call that ends before Docker started the command makes
-// sure it never starts), or when the cluster's Terminate starts. When Admin
+// sure it never starts), or when the cluster's Terminate starts. The stop is
+// SIGTERM, then SIGKILL after 2 s. At the supervisor's own limit the first
+// signal is SIGABRT instead, which makes radosgw-admin report its main
+// thread's backtrace; the error text then also says "when it was stopped,
+// thread radosgw-admin was in" and names the first frames, functions of the
+// binary without arguments or addresses, so that a command that hung says
+// where. Give a command whose normal duration is known a ctx of its own with
+// that bound, not the whole test's. When Admin
 // cannot confirm the stop, for example because the gateway is paused or the
 // engine is unreachable, it returns a *ceph.NativeCommandUnstoppedError whose
 // Stop retries; Terminate retries too. Stopping radosgw-admin does not undo a

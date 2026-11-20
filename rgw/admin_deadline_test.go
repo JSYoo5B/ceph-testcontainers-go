@@ -46,6 +46,27 @@ func TestRGWAdminReportsAStoppedCommand(t *testing.T) {
 	if !errors.Is(err, ceph.ErrNativeFailure) || !strings.Contains(err.Error(), "still ran after") {
 		t.Fatalf("a stopped radosgw-admin: %v", err)
 	}
+	// A command that reported where it was when the supervisor stopped it:
+	// the error names the thread and its frames and nothing else of the
+	// native output.
+	const stopped = "ERROR: secret PRIVATE\n*** Caught signal (Aborted) **\n in thread 7f0e5c0d5980 thread_name:radosgw-admin\n" +
+		" 1: /lib64/libc.so.6(+0x8b3ba) [0x7f0e5d08b3ba]\n 2: pthread_cond_wait()\n" +
+		" 3: (RGWSI_BucketIndex_RADOS::cls_bucket_head(DoutPrefixProvider const*, RGWBucketInfo const&, int, optional_yield)+0x2e1) [0x5560f1d07e41]\n 4: main()\n"
+	gateway, ctr := newRGWAdminTestGateway(Config{}, rgwAdminResponse{code: 134, stopped: true, data: stopped})
+	_, err = gateway.Admin(ctx, "bucket", "stats", "--bucket", "b")
+	if !errors.Is(err, ceph.ErrNativeFailure) || !strings.HasSuffix(err.Error(), "s and was stopped; when it was stopped, thread radosgw-admin was in "+
+		"libc.so.6(+0x8b3ba) < pthread_cond_wait < RGWSI_BucketIndex_RADOS::cls_bucket_head+0x2e1 < main") {
+		t.Fatalf("a stopped radosgw-admin with a report: %v", err)
+	}
+	for _, leaked := range []string{"PRIVATE", "0x7f0e5d08b3ba", "/lib64", "RGWBucketInfo"} {
+		if strings.Contains(err.Error(), leaked) {
+			t.Fatalf("the stop report exposes %q: %v", leaked, err)
+		}
+	}
+	// The supervisor is asked to stop the command with SIGABRT at its limit.
+	if len(ctr.signals) != 1 || ctr.signals[0] != "6" {
+		t.Fatalf("deadline signals: %v", ctr.signals)
+	}
 	// Another failure stays redacted.
 	gateway, _ = newRGWAdminTestGateway(Config{}, rgwAdminResponse{code: 22, data: "Error: invalid secret PRIVATE"})
 	if _, err := gateway.Admin(ctx, "user", "list"); err == nil || strings.Contains(err.Error(), "still ran after") || strings.Contains(err.Error(), "PRIVATE") {

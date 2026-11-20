@@ -40,6 +40,9 @@ type rgwAdminTestContainer struct {
 	// limits holds the supervisor's own stop limit, in seconds, of each
 	// supervised call in calls.
 	limits []string
+	// signals holds the deadline signal that each supervised call asked
+	// its supervisor for, "" for none.
+	signals []string
 	// stopped makes State report an exited container; paused and restarting
 	// report a container whose Running flag stays true but refuses Exec.
 	stopped, paused, restarting bool
@@ -56,7 +59,7 @@ func (ctr *rgwAdminTestContainer) State(context.Context) (*container.State, erro
 	return &container.State{Running: !ctr.stopped, Paused: ctr.paused, Restarting: ctr.restarting}, nil
 }
 
-func (ctr *rgwAdminTestContainer) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+func (ctr *rgwAdminTestContainer) Exec(_ context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
 	if gwtest.IsCancel(args) {
 		if ctr.stopFailures > 0 {
 			ctr.stopFailures--
@@ -70,6 +73,17 @@ func (ctr *rgwAdminTestContainer) Exec(_ context.Context, args []string, _ ...tc
 			return ctr.supervisorExit, nil, nil
 		}
 		ctr.limits = append(ctr.limits, args[5])
+		options := tcexec.NewProcessOptions(nil)
+		for _, opt := range opts {
+			opt.Apply(options)
+		}
+		signal := ""
+		for _, variable := range options.ExecConfig.Env {
+			if value, ok := strings.CutPrefix(variable, "TC_SUPERVISED_DEADLINE_SIGNAL="); ok {
+				signal = value
+			}
+		}
+		ctr.signals = append(ctr.signals, signal)
 	}
 	args = gwtest.Argv(args)
 	if ctr.onExec != nil {

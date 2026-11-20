@@ -134,6 +134,15 @@ const incompleteFrame = "an incomplete frame"
 const (
 	// maxSignalFrames bounds the backtrace frames of a fatal signal report.
 	maxSignalFrames = 8
+	// maxStopFrames bounds the frames of a stopped command's report. A
+	// command that waits for RADOS spends about eight frames in the C
+	// library and librados before the first RGW function.
+	maxStopFrames = 16
+	// stopSignal is the signal that stops a command at the supervisor's own
+	// limit, SIGABRT: Ceph's handler of it writes the fatal signal report of
+	// the thread that took it, the main thread of a Ceph command, whose
+	// other threads block signals.
+	stopSignal = 6
 	// maxFrameBytes bounds one frame.
 	maxFrameBytes = 120
 	// maxFrameGap is how many lines (the thread, the version and blank
@@ -148,6 +157,62 @@ const (
 // report. Frames are names from the binary, not data of the request. When cut
 // is true the last line was cut short, and a frame there is incomplete.
 func fatalSignalReport(lines []string, cut bool) string {
+	report, ok := parseSignalReport(lines, cut, maxSignalFrames)
+	if !ok {
+		return ""
+	}
+	text := "radosgw-admin reported fatal signal " + report.signal
+	if report.thread != "" {
+		text += " in thread " + report.thread
+	}
+	if len(report.frames) == 0 {
+		return text + ", without a backtrace"
+	}
+	return text + ", backtrace " + report.backtrace()
+}
+
+// stopReport says where a command that the supervisor stopped with stopSignal
+// was: the thread that took the signal and its first frames, read from the
+// fatal signal report in the command's standard error as fatalSignalReport
+// reads it. It returns "" when stderr holds no report with a backtrace, as
+// for a command that the signal could not reach in time. A report of another
+// signal is of a crash that the stop found, and is described as one.
+func stopReport(stderr []byte) string {
+	lines := strings.Split(string(stderr), "\n")
+	report, ok := parseSignalReport(lines, false, maxStopFrames)
+	switch {
+	case !ok:
+		return ""
+	case report.signal != "Aborted":
+		return fatalSignalReport(lines, false)
+	case len(report.frames) == 0:
+		return ""
+	}
+	thread := "a thread"
+	if report.thread != "" {
+		thread = "thread " + report.thread
+	}
+	return "when it was stopped, " + thread + " was in " + report.backtrace()
+}
+
+// signalReport is the first fatal signal report of a command's output.
+type signalReport struct {
+	signal, thread string
+	frames         []string
+	extra          int
+}
+
+func (r signalReport) backtrace() string {
+	text := strings.Join(r.frames, " < ")
+	if r.extra > 0 {
+		text += fmt.Sprintf(" < %d more frames", r.extra)
+	}
+	return text
+}
+
+// parseSignalReport reads the first fatal signal report in lines, keeping at
+// most maxFrames frames, under the rules of fatalSignalReport.
+func parseSignalReport(lines []string, cut bool, maxFrames int) (signalReport, bool) {
 	start := -1
 	signal := ""
 	for i, line := range lines {
@@ -157,7 +222,7 @@ func fatalSignalReport(lines []string, cut bool) string {
 		}
 	}
 	if start < 0 {
-		return ""
+		return signalReport{}, false
 	}
 	thread := ""
 	var frames []string
@@ -168,13 +233,13 @@ func fatalSignalReport(lines []string, cut bool) string {
 			break
 		}
 		if cut && i == len(lines)-1 {
-			if (len(frames) > 0 || frameNumber.MatchString(line)) && len(frames) < maxSignalFrames {
+			if (len(frames) > 0 || frameNumber.MatchString(line)) && len(frames) < maxFrames {
 				frames = append(frames, incompleteFrame)
 			}
 			break
 		}
 		if match := backtraceFrame.FindStringSubmatch(line); match != nil {
-			if len(frames) == maxSignalFrames {
+			if len(frames) == maxFrames {
 				extra++
 				continue
 			}
@@ -193,18 +258,7 @@ func fatalSignalReport(lines []string, cut bool) string {
 			thread = match[1]
 		}
 	}
-	text := "radosgw-admin reported fatal signal " + signal
-	if thread != "" {
-		text += " in thread " + thread
-	}
-	if len(frames) == 0 {
-		return text + ", without a backtrace"
-	}
-	text += ", backtrace " + strings.Join(frames, " < ")
-	if extra > 0 {
-		text += fmt.Sprintf(" < %d more frames", extra)
-	}
-	return text
+	return signalReport{signal: signal, thread: thread, frames: frames, extra: extra}, true
 }
 
 // backtraceFrameName shortens one frame: "(ns::f(args) const+0x1f)" to
@@ -318,7 +372,7 @@ func (c *Core) supervisedPrefix(ctx context.Context, target testcontainers.Conta
 		return nil, false, servicehook.Invalid(errors.New("RGW gateway is no longer owned by this cluster"))
 	}
 	limit := adminLimit(ctx)
-	report, err := servicehook.RunOwnedRoleCommand(ctx, c.cluster, target, "radosgw-admin", limit, maxBytes, argv...)
+	report, err := servicehook.RunOwnedRoleCommand(supervised.WithDeadlineSignal(ctx, stopSignal), c.cluster, target, "radosgw-admin", limit, maxBytes, argv...)
 	var unstopped *ceph.NativeCommandUnstoppedError
 	switch {
 	case errors.As(err, &unstopped):
@@ -337,8 +391,11 @@ func (c *Core) supervisedPrefix(ctx context.Context, target testcontainers.Conta
 		// The command may have run: its outcome is unknown.
 		return nil, false, servicehook.ClassifyExec(ctx, err)
 	case report.TimedOut:
-		return nil, false, &ceph.OperationError{Kind: ceph.ErrNativeFailure, Op: "radosgw-admin",
-			Err: fmt.Errorf("radosgw-admin still ran after %ds and was stopped", limit)}
+		text := fmt.Sprintf("radosgw-admin still ran after %ds and was stopped", limit)
+		if where := stopReport(report.Stderr); where != "" {
+			text += "; " + where
+		}
+		return nil, false, &ceph.OperationError{Kind: ceph.ErrNativeFailure, Op: "radosgw-admin", Err: errors.New(text)}
 	case report.ExitCode != 0:
 		return nil, false, adminRunFailure(report)
 	}
@@ -347,8 +404,8 @@ func (c *Core) supervisedPrefix(ctx context.Context, target testcontainers.Conta
 
 // adminLimit is how long radosgw-admin may run before the gateway's
 // supervisor stops it on its own: the call's bound less a margin for stopping
-// it and returning, so that a command that runs too long is reported as such
-// within the bound. Without a bound, it is 0. A call whose context ends first
+// it and returning, so that a command that runs too long is reported as such,
+// with where it was (stopReport), within the bound. Without a bound, it is 0. A call whose context ends first
 // stops the command itself.
 func adminLimit(ctx context.Context) int {
 	deadline, ok := ctx.Deadline()
