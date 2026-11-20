@@ -24,10 +24,11 @@ import (
 )
 
 const (
-	localityPool   = "tc-locality"
-	localityImage  = "locality"
-	localityOneWay = 20 * time.Millisecond
-	localitySize   = 4 << 20
+	localityPool    = "tc-locality"
+	localityImage   = "locality"
+	localitySettled = "locality-settled"
+	localityOneWay  = 20 * time.Millisecond
+	localitySize    = 4 << 20
 )
 
 // localityMap is `ceph osd map` for one object.
@@ -150,6 +151,17 @@ func testRBDZoneLocality(t *testing.T) {
 	}
 	t.Logf("data object %s: PG %s acting %v primary osd.%d (zone b), replica osd.%d (zone a), epoch %d; client %s in zone a at %v",
 		object, placement.PGID, placement.Acting, placement.ActingPrimary, osdA.ID, placement.Epoch, clientMember.Name, clientMember.PublicAddress)
+	// A replica serves a read of an object only when it knows that the
+	// object's last write is committed on every replica, and it learns that
+	// from the next write to the PG, never from time passing: until then it
+	// answers EAGAIN and the client reads from the primary. The import's
+	// trailing image updates are not a stated guarantee of that, so a write
+	// to another object of the pool's one PG, sent after the import has
+	// returned, settles the data object on the replica.
+	harness.ExecOutput(t, ctx, client, "rados", "-p", localityPool, "create", localitySettled)
+	if settled := localityObjectMap(t, ctx, cluster, localitySettled); settled.PGID != placement.PGID {
+		t.Fatalf("the settling write went to PG %s, not to the data object's PG %s", settled.PGID, placement.PGID)
+	}
 
 	// The boundary delays only the client's packets to and from osd.B.
 	native, err := observer.DaemonAddresses(ctx)
@@ -352,11 +364,27 @@ func localityLog(t *testing.T, ctx context.Context, osd *ceph.OSDContainer) []by
 	return data
 }
 
+// localityBounces returns the lines of an OSD's debug_osd 20 log window in
+// which the OSD refuses to serve a read of object as a replica and sends the
+// client to the primary. Each line starts with the PG's state, whose pct is
+// the version the replica knows to be committed everywhere.
+func localityBounces(window []byte, object string) []string {
+	var lines []string
+	for line := range strings.SplitSeq(string(window), "\n") {
+		if strings.Contains(line, object) && strings.Contains(line, "bouncing to primary") {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
 // localityReadOnce reads the image with a fresh rbd process without cache,
 // with policy and the declared CRUSH location, and attributes its data read
-// with harness.RBDReadServers. Each OSD logs its messages at debug_ms 1 for
-// the read, through an override.SetDebugLevel window, and the log window after the read gives the replies to the
-// client's reads of the object. When an OSD replied without a history entry, or no OSD has
+// with harness.RBDReadServers. Each OSD logs its messages at debug_ms 1 and
+// its request handling at debug_osd 20 for the read, through
+// override.SetDebugLevel windows, and the log window after the read gives the
+// replies to the client's reads of the object. An OSD that refused the read
+// as a replica fails the test with its PG state. When an OSD replied without a history entry, or no OSD has
 // either, the history is observed again for a bounded time; entries that
 // appear then count, and the raw entries that name the object are logged
 // from before, after and the later observation, so that a delayed,
@@ -379,24 +407,28 @@ func localityReadOnce(t *testing.T, ctx context.Context, cluster *ceph.Container
 		// lost, and each restoration uses a fresh bounded context, so the
 		// cleanup still restores a window the read's own restoration could
 		// not, and reports what it could not restore.
-		handle, err := override.SetDebugLevel(ctx, cluster, override.DebugLevelSetting{Daemon: fmt.Sprintf("osd.%d", osd.ID), Name: "debug_ms", Level: "1/5"})
-		restored := false
-		restore := func() {
-			if restored {
-				return
+		// debug_osd 20 makes an OSD that bounces the read log why, with its
+		// PG state.
+		for _, level := range [][2]string{{"debug_ms", "1/5"}, {"debug_osd", "20/5"}} {
+			handle, err := override.SetDebugLevel(ctx, cluster, override.DebugLevelSetting{Daemon: fmt.Sprintf("osd.%d", osd.ID), Name: level[0], Level: level[1]})
+			restored := false
+			restore := func() {
+				if restored {
+					return
+				}
+				restoreCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+				defer cancel()
+				if err := handle.Restore(restoreCtx); err != nil {
+					t.Errorf("osd.%d: restore %s: %v", osd.ID, level[0], err)
+					return
+				}
+				restored = true
 			}
-			restoreCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
-			defer cancel()
-			if err := handle.Restore(restoreCtx); err != nil {
-				t.Errorf("osd.%d: restore debug_ms: %v", osd.ID, err)
-				return
+			t.Cleanup(restore)
+			defer restore()
+			if err != nil {
+				t.Fatalf("osd.%d: raise %s: %v", osd.ID, level[0], err)
 			}
-			restored = true
-		}
-		t.Cleanup(restore)
-		defer restore()
-		if err != nil {
-			t.Fatalf("osd.%d: raise debug_ms: %v", osd.ID, err)
 		}
 		logs[osd.ID] = localityLog(t, ctx, osd)
 		before[osd.ID] = localityObserve(t, ctx, osd, object)
@@ -423,6 +455,10 @@ func localityReadOnce(t *testing.T, ctx context.Context, cluster *ceph.Container
 			if strings.Contains(line, object) && strings.Contains(line, "osd_op_reply(") {
 				t.Logf("read %d: osd.%d log: %s", n, osd.ID, line)
 			}
+		}
+		if bounced := localityBounces(window, object); len(bounced) > 0 {
+			t.Fatalf("read %d: osd.%d did not serve the read of %s and sent the client to the primary; its PG state and reason:\n%s",
+				n, osd.ID, object, strings.Join(bounced, "\n"))
 		}
 		read.Evidence[osd.ID] = harness.RBDReadEvidence{History: newReads(before[osd.ID].Reads, after[osd.ID].Reads), Replies: replies, Before: before[osd.ID].Counters, After: after[osd.ID].Counters}
 	}

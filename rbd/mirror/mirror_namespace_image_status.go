@@ -14,8 +14,9 @@ import (
 // destination; pool-scoped policies require journal mode. ReplayReady attributes
 // an up+replaying report to one original owned live receiver, without requiring
 // the whole cohort's election readiness or proving write/checkpoint delivery.
-// It creates no resources or checkpoints. Admission and native/process reads
-// take at most 30 seconds, bounded by ctx; a partial report can accompany an error.
+// It creates no resources or checkpoints. The wait for the owner's gate is
+// bounded by ctx alone; once the gate is held, the native and process reads take
+// at most 30 seconds or until ctx ends. A partial report can accompany an error.
 //
 //purpose:observation
 func (v *Namespace) ImageStatus(ctx context.Context, imageName string) (ImageStatus, error) {
@@ -84,11 +85,12 @@ func (v *Namespace) imageStatus(ctx context.Context, imageName string, previous 
 	if v == nil || v.owner == nil || v.scope.binding == nil {
 		return result, previous, rbdImageGuardError("RBD namespace binding is unavailable")
 	}
-	caller := ctx
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	observation := rbdobservation.Begin(caller, "namespace-image")
-	defer func() { observation.Finish(ctx, observationErr) }()
+	observation := rbdobservation.Begin(ctx, "namespace-image")
+	var cancel context.CancelFunc = func() {}
+	defer func() {
+		observation.Finish(ctx, observationErr)
+		cancel()
+	}()
 	m := v.owner
 	if err := multicluster.LockObservation(ctx, &m.mu); err != nil {
 		return result, previous, scopedRBDImageError(ctx, err)
@@ -98,6 +100,7 @@ func (v *Namespace) imageStatus(ctx context.Context, imageName string, previous 
 		m.mu.Unlock()
 	}()
 	observation.Acquired()
+	ctx, cancel = rbdGateContext(ctx)
 	observation.Stage("capture-receiver-witness")
 	witness, err := m.receiverWitness(&v.scope, nil, previous)
 	if err != nil {

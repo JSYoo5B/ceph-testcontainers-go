@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -21,16 +22,92 @@ const OwnerLabel = "org.testcontainers.ceph.cluster"
 
 // LockMutex acquires mutex unless ctx ends first. The caller owns Unlock after
 // success. No goroutine remains waiting after cancellation.
+//
+// Callers that find the mutex busy are served in arrival order: only the
+// longest-waiting caller tries the mutex, so a caller that arrives later
+// cannot take it first, however long each holder keeps it. A caller that
+// gives up leaves the queue without delaying those behind it. A plain Lock
+// or TryLock on the same mutex is outside this order.
 func LockMutex(ctx context.Context, mutex *sync.Mutex) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	w, locked := lockQueues.enter(mutex)
+	if !locked {
+		if err := w.acquire(ctx, mutex); err != nil {
+			return err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		mutex.Unlock()
+		return err
+	}
+	return nil
+}
+
+// lockQueues holds the callers of LockMutex that wait for a busy mutex, in
+// arrival order. A mutex has an entry only while a caller waits for it.
+var lockQueues lockQueueSet
+
+type lockQueueSet struct {
+	mu      sync.Mutex
+	waiting map[*sync.Mutex][]*lockWaiter
+}
+
+// lockWaiter is one queued caller. turn is closed when it reaches the head.
+type lockWaiter struct {
+	turn chan struct{}
+}
+
+// enter takes a free mutex that nobody waits for, or queues the caller.
+func (s *lockQueueSet) enter(mutex *sync.Mutex) (*lockWaiter, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	queue := s.waiting[mutex]
+	if len(queue) == 0 && mutex.TryLock() {
+		return nil, true
+	}
+	w := &lockWaiter{turn: make(chan struct{})}
+	if len(queue) == 0 {
+		close(w.turn)
+	}
+	if s.waiting == nil {
+		s.waiting = make(map[*sync.Mutex][]*lockWaiter)
+	}
+	s.waiting[mutex] = append(queue, w)
+	return w, false
+}
+
+// leave removes w, which took the mutex or gave up, and passes the head on.
+func (s *lockQueueSet) leave(mutex *sync.Mutex, w *lockWaiter) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	queue := s.waiting[mutex]
+	index := slices.Index(queue, w)
+	queue = slices.Delete(queue, index, index+1)
+	if len(queue) == 0 {
+		delete(s.waiting, mutex)
+		return
+	}
+	if index == 0 {
+		close(queue[0].turn)
+	}
+	s.waiting[mutex] = queue
+}
+
+// acquire waits for w's turn and then polls the mutex until it is free.
+func (w *lockWaiter) acquire(ctx context.Context, mutex *sync.Mutex) error {
+	defer lockQueues.leave(mutex, w)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-w.turn:
+	}
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		if mutex.TryLock() {
-			if err := ctx.Err(); err != nil {
-				mutex.Unlock()
-				return err
-			}
 			return nil
 		}
 		select {

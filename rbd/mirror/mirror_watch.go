@@ -13,6 +13,18 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/watch"
 )
 
+// rbdGateBound bounds the native reads that one status observation or one
+// namespace binding makes while it holds the fixture gate. The wait for the
+// gate comes before it and is bounded by the caller's context alone: a caller
+// queued behind other observations, each of which may hold the gate for many
+// seconds, does not spend this bound on them.
+const rbdGateBound = 30 * time.Second
+
+// rbdGateContext starts rbdGateBound. Call it once the gate is held.
+func rbdGateContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, rbdGateBound)
+}
+
 // rbdWatchSettings validates cfg for one Watch of this package with the
 // target's default interval.
 func rbdWatchSettings(operation string, cfg ceph.WatchConfig, defaultInterval time.Duration) (watch.Settings, error) {

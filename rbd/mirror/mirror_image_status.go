@@ -46,6 +46,10 @@ type ImageStatus struct {
 // are checked before and after reading the image. Source/destination global IDs
 // must agree. A non-zero partial observation can accompany an error.
 //
+// The wait for the fixture's gate, behind another observation or a mutation, is
+// bounded by ctx alone. Once the gate is held, the reads take at most 30 seconds
+// or until ctx ends.
+//
 //purpose:observation
 func (m *Container) ImageStatus(ctx context.Context, imageName string) (ImageStatus, error) {
 	var result ImageStatus
@@ -55,12 +59,13 @@ func (m *Container) ImageStatus(ctx context.Context, imageName string) (ImageSta
 	if m == nil {
 		return result, rbdImageGuardError("RBD mirror fixture is unavailable")
 	}
-	caller := ctx
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	observation := rbdobservation.Begin(caller, "owner-image")
+	observation := rbdobservation.Begin(ctx, "owner-image")
 	var observationErr error
-	defer func() { observation.Finish(ctx, observationErr) }()
+	var cancel context.CancelFunc = func() {}
+	defer func() {
+		observation.Finish(ctx, observationErr)
+		cancel()
+	}()
 	// Hold the mutation lock for one bounded observation, never across a poll.
 	if observationErr = multicluster.LockObservation(ctx, &m.mu); observationErr != nil {
 		return result, observationErr
@@ -70,6 +75,7 @@ func (m *Container) ImageStatus(ctx context.Context, imageName string) (ImageSta
 		m.mu.Unlock()
 	}()
 	observation.Acquired()
+	ctx, cancel = rbdGateContext(ctx)
 	if m.closed || m.pair.sourceClient == nil || m.pair.destinationClient == nil || m.pair.config.Source == nil || m.pair.config.Destination == nil {
 		observationErr = rbdImageGuardError("RBD mirror fixture is unavailable or terminated")
 		return result, observationErr

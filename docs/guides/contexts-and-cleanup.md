@@ -51,7 +51,7 @@ shorten:
 | `multisite.Fixture.WaitSyncReady`, `SyncGroup.WaitBucketSyncReady`, `SyncGroup.WaitBucketPolicyReady` | 4 minutes |
 | `cephfsmirror.Container.WaitDirectoryReady`, `WaitSnapshotSynced` | 4 minutes |
 | `cephfsmirror.DirectoryRemoval.WaitReleased`, `cephfsmirror.PeerRemoval.WaitDrained` | 2 minutes |
-| `rbdmirror.Container.ReceiverStatus`, `BindNamespace` | 30 seconds |
+| `rbdmirror.Container.ReceiverStatus`, `ImageStatus` and `BindNamespace`, `rbdmirror.Namespace.ReceiverStatus` and `ImageStatus` | 30 seconds once the mirror's gate is held; the wait for the gate is bounded by your context alone |
 | `rbdmirror.Container.RefreshMonitorConfig` | 2 minutes |
 | `cephfsmirror.Run` waiting for the MGR `mirroring` module | 90 seconds |
 | `diagnostics.Collect` | `diagnostics.Config.Timeout` (1 minute by default) |
@@ -68,7 +68,8 @@ and removing daemons, creating services, interrupting networks, pausing
 containers, terminating, and creating or changing Cephx clients and CephFS
 subvolumes.
 
-Waiting for the gate honors your context. A call that is cancelled before it
+Waiting for the gate honors your context, and waiting calls get the gate in
+the order they arrived. A call that is cancelled before it
 gets the gate returns the context error and has made no native change, stopped
 no container and changed no ownership. It checks the context again right after
 getting the gate. You can retry the same call with a fresh context.
