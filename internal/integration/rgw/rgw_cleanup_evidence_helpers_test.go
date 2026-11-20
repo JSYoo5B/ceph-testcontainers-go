@@ -11,18 +11,31 @@ import (
 	"strings"
 )
 
+// multisiteObjectMatches reports whether one GET answer is the state the
+// caller waits for: HTTP 200 with exactly payload, HTTP 404 with an S3
+// NoSuchKey error, or an explicitly expected HTTP 301 cross-zonegroup
+// redirect. A redirect is judged by its status alone: some releases send a
+// Location that names the wrong zonegroup endpoint, and the caller does not
+// follow it. Any other status, or a status the caller did not ask for, does
+// not match.
 func multisiteObjectMatches(status int, body []byte, wantStatus int, payload []byte) bool {
 	if status != wantStatus {
 		return false
 	}
-	if wantStatus == http.StatusNotFound {
+	switch wantStatus {
+	case http.StatusOK:
+		return bytes.Equal(body, payload)
+	case http.StatusNotFound:
 		var failure struct {
 			XMLName xml.Name `xml:"Error"`
 			Code    string   `xml:"Code"`
 		}
 		return xml.Unmarshal(body, &failure) == nil && failure.Code == "NoSuchKey"
+	case http.StatusMovedPermanently:
+		return true
+	default:
+		return false
 	}
-	return wantStatus == http.StatusOK && bytes.Equal(body, payload)
 }
 
 func notificationLogWhileStopped(prior, observed, queued []string) error {

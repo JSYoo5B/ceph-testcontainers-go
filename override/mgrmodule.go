@@ -173,16 +173,21 @@ func setMGRModuleLocked(ctx context.Context, c *ceph.Container, name string, ena
 	change.state.pending = &mgrModuleChange{enabled: enabled, replaced: activeGID}
 	setErr := change.state.command.Record(overridehook.SetMGRModule(ctx, c, name, enabled))
 	if setErr == nil {
-		// The change respawns the MGR. Wait, within the operation's bound, for
-		// the membership and an available respawned active MGR.
-		if err := overridehook.WaitMGRModuleMembership(ctx, c, name, enabled, module.AlwaysOn, activeGID); err != nil {
-			return change, err
+		// The change respawns the MGR. Wait, within the operation's bound and
+		// the caller's context, for the membership and an available respawned
+		// active MGR.
+		if setErr = ctx.Err(); setErr == nil {
+			if err := overridehook.WaitMGRModuleMembership(ctx, c, name, enabled, module.AlwaysOn, activeGID); err != nil {
+				return change, err
+			}
+			change.state.pending = nil
+			return change, nil
 		}
-		change.state.pending = nil
-		return change, nil
 	}
-	// A lost reply cannot prove that the MON did not persist membership. Keep
-	// the lease and reconcile with a fresh bounded read, retaining the error.
+	// A lost reply cannot prove that the MON did not persist membership, and a
+	// write that completed as the caller's context ended has no read of its
+	// respawn yet. Keep the lease and reconcile with a fresh bounded read,
+	// retaining the error.
 	readTimeout := 5 * time.Second
 	if timeout > 0 && timeout < readTimeout {
 		readTimeout = timeout
