@@ -16,6 +16,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
@@ -217,4 +218,71 @@ func TestRGWAdminCommandLifetime(t *testing.T) {
 	t.Logf("Terminate ended Admin after %s; the pre-stop observation confirmed its process gone", time.Since(started))
 	// The test's client still uses the network, which final cleanup removes.
 	t.Logf("Terminate: %v", terminateErr)
+}
+
+// TestRGWAdminStoppedCommandSaysWhereItWas checks with a real radosgw-admin
+// that a command which hangs ends at its caller's bound with an error that
+// says where it waited. The cluster's only OSD is paused, so the command's
+// first RADOS read never completes; the gateway's supervisor stops it at its
+// own limit, and the error names frames of the command's main thread. After
+// the OSD resumes, the next command completes.
+func TestRGWAdminStoppedCommandSaysWhereItWas(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
+	defer cancel()
+	cluster, _ := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
+	gateway, err := rgw.Start(ctx, cluster, rgw.Config{SkipUserCreation: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rgwAdminStep(ctx, gateway, "user", "list"); err != nil {
+		t.Fatalf("radosgw-admin before the pause: %v", err)
+	}
+	osds, err := cluster.OSDs(ctx)
+	if err != nil || len(osds) != 1 {
+		t.Fatalf("the cluster's OSD: %d, %v", len(osds), err)
+	}
+	pause, err := fault.Pause(ctx, cluster, osds[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumed := false
+	resume := func() {
+		if resumed {
+			return
+		}
+		resumed = true
+		resumeCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer stop()
+		if err := pause.Resume(resumeCtx); err != nil {
+			t.Errorf("resume the OSD: %v", err)
+		}
+	}
+	t.Cleanup(resume)
+
+	// A 30 s bound leaves the supervisor 15 s before it stops the command.
+	const bound = 30 * time.Second
+	step, stop := context.WithTimeout(ctx, bound)
+	started := time.Now()
+	_, err = gateway.Admin(step, "user", "list")
+	took := time.Since(started)
+	stop()
+	const stopped, where = "radosgw-admin still ran after 15s and was stopped", "; when it was stopped, thread radosgw-admin was in "
+	if !errors.Is(err, ceph.ErrNativeFailure) || !strings.Contains(err.Error(), stopped+where) || took >= bound {
+		t.Fatalf("a radosgw-admin that waits for a paused OSD returned after %s: %v", took, err)
+	}
+	_, frames, _ := strings.Cut(err.Error(), where)
+	if len(strings.Split(frames, " < ")) < 4 || strings.Contains(frames, "0x7") || strings.Contains(frames, "/lib") {
+		t.Fatalf("the stop report is not a bounded list of frames: %q", frames)
+	}
+	t.Logf("a hung radosgw-admin returned after %s: %v", took, err)
+
+	resume()
+	if _, err := rgwAdminStep(ctx, gateway, "user", "list"); err != nil {
+		t.Fatalf("radosgw-admin after the OSD resumed: %v", err)
+	}
+	if code, reader, err := gateway.Exec(ctx, []string{"ls", "-A", supervised.MarkerDir}, tcexec.Multiplexed()); err != nil || code != 0 {
+		t.Fatalf("list the supervisor's markers: %d, %v", code, err)
+	} else if out, _ := io.ReadAll(reader); strings.TrimSpace(string(out)) != "" {
+		t.Fatalf("the supervisor left markers: %q", out)
+	}
 }
