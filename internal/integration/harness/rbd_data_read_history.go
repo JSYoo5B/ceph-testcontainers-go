@@ -165,27 +165,44 @@ func RBDDataReadReplies(log []byte, object string, client netip.Addr) ([]RBDRead
 	return replies, nil
 }
 
-// OSDLogBeforeMarker cuts an OSD's debug_ms 1 log window at the reply to
-// the first request for the object marker, which a test issues after the
-// reads it judges: it returns the window before that reply's line and the
-// address of the client that sent the marker. found is false while the
-// window holds no such reply yet. The messenger logs a reply when it queues
-// it for sending, before the client can receive it, and the log is written
-// in the order its lines were submitted. A reply that a client received
-// before it sent the marker is therefore in the returned window, whatever
-// PG served it.
-func OSDLogBeforeMarker(window []byte, marker string) (before []byte, client netip.Addr, found bool, err error) {
-	reply := regexp.MustCompile(` --> (\S+) -- osd_op_reply\(\d+ ` + regexp.QuoteMeta(marker) + ` \[`)
-	m := reply.FindSubmatchIndex(window)
-	if m == nil {
-		return nil, netip.Addr{}, false, nil
+// OSDLogBetweenMarkers returns the part of an OSD's debug_ms 1 log between
+// the replies to the first requests for the objects open and close, and the
+// address of the client that sent both. A test sends the open marker before
+// and the close marker after the reads it judges. The messenger logs a reply
+// when it queues it for sending, before the client can receive it, and the
+// log is written in the order its lines were submitted. A reply that the
+// client received before it sent the open marker is therefore logged before
+// the open marker's reply, and one it received before it sent the close
+// marker before the close marker's reply, whatever PG served it and however
+// late the log reaches its reader. found is false while either reply is
+// missing.
+func OSDLogBetweenMarkers(log []byte, open, close string) (window []byte, client netip.Addr, found bool, err error) {
+	start, end, openClient, closeClient := -1, -1, netip.Addr{}, netip.Addr{}
+	for _, m := range []struct {
+		object string
+		at     *int
+		client *netip.Addr
+	}{{open, &start, &openClient}, {close, &end, &closeClient}} {
+		reply := regexp.MustCompile(` --> (\S+) -- osd_op_reply\(\d+ ` + regexp.QuoteMeta(m.object) + ` \[`)
+		idx := reply.FindSubmatchIndex(log)
+		if idx == nil {
+			return nil, netip.Addr{}, false, nil
+		}
+		peer, err := msgrPeerAddr(string(log[idx[2]:idx[3]]))
+		if err != nil {
+			return nil, netip.Addr{}, false, fmt.Errorf("reply to marker %s: %w", m.object, err)
+		}
+		*m.at, *m.client = idx[0], peer.Addr()
 	}
-	peer, err := msgrPeerAddr(string(window[m[2]:m[3]]))
-	if err != nil {
-		return nil, netip.Addr{}, false, fmt.Errorf("marker reply: %w", err)
+	if openClient != closeClient {
+		return nil, netip.Addr{}, false, fmt.Errorf("marker %s was sent from %v and marker %s from %v", open, openClient, close, closeClient)
 	}
-	line := bytes.LastIndexByte(window[:m[0]], '\n') + 1
-	return window[:line], peer.Addr(), true, nil
+	if end < start {
+		return nil, netip.Addr{}, false, fmt.Errorf("marker %s was answered before marker %s", close, open)
+	}
+	from := start + bytes.IndexByte(log[start:], '\n') + 1
+	to := bytes.LastIndexByte(log[:end], '\n') + 1
+	return log[from:to], closeClient, true, nil
 }
 
 // msgrPeerAddr parses a messenger address, "[v2:ip:port/nonce,...]",

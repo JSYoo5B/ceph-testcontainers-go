@@ -96,15 +96,17 @@ exec `+realRM+` "$@"`)
 	}
 }
 
-// TestImmutableCacheReadsCountRepliesBeforeTheMarker covers the judgement of
-// TestImmutableObjectCache with debug_ms 1 reply lines: replies to the
-// client's reads of parent objects before its marker count, other objects,
-// other clients, failed replies and replies after the marker do not. The
-// interleaving in which the marker already reached the op history while an
-// earlier parent read has not is judged by the replies, so a cache-hit read
-// that reached RADOS fails and a fallback read is counted.
-func TestImmutableCacheReadsCountRepliesBeforeTheMarker(t *testing.T) {
-	const marker = "tc-reply-marker-1"
+// TestImmutableCacheReadsCountRepliesBetweenTheMarkers covers the
+// judgement of TestImmutableObjectCache with debug_ms 1 reply lines: replies
+// to the client's reads of parent objects between its opening and closing
+// markers count; other objects, other clients, failed and non-read replies
+// and replies outside the markers do not. Two interleavings are covered: a
+// reply of the preceding phase that reached the log only after an earlier
+// look at it, but was logged before the opening marker, is not counted; and
+// a read that the op history has not recorded yet while it already holds the
+// closing marker is counted, so a cache-hit read that reached RADOS fails.
+func TestImmutableCacheReadsCountRepliesBetweenTheMarkers(t *testing.T) {
+	const open, close = "tc-reply-open-1", "tc-reply-close-1"
 	objects := map[string]bool{"rbd_data.12.0000000000000000": true, "rbd_data.12.0000000000000001": true}
 	line := func(peer, tid, object, ops, result string) string {
 		return "2026-11-20T01:02:46.408+0000 7f -- [v2:10.0.0.2:6802/7,v1:10.0.0.2:6803/7] --> " + peer + " -- osd_op_reply(" + tid + " " + object + " [" + ops + "] v0'0 uv5 ondisk = " + result + ") -- 0x1 con 0x2\n"
@@ -113,12 +115,14 @@ func TestImmutableCacheReadsCountRepliesBeforeTheMarker(t *testing.T) {
 	read := func(peer, tid, object string) string {
 		return line(peer, tid, object, "sparse-read 0~4194304 out=4194304b", "0")
 	}
-	markerReply := line("10.0.0.9:0/42", "7", marker, "stat", "-2 ((2) No such file or directory)")
+	marker := func(object string) string {
+		return line("10.0.0.9:0/42", "7", object, "stat", "-2 ((2) No such file or directory)")
+	}
 	judge := func(log string) map[string]bool {
 		t.Helper()
-		window, from, found, err := harness.OSDLogBeforeMarker([]byte(log), marker)
+		window, from, found, err := harness.OSDLogBetweenMarkers([]byte(log), open, close)
 		if err != nil || !found {
-			t.Fatalf("marker reply in %q: %t, %v", log, found, err)
+			t.Fatalf("markers in %q: %t, %v", log, found, err)
 		}
 		replied, err := immutableCacheParentReplies(window, from, objects)
 		if err != nil {
@@ -127,33 +131,48 @@ func TestImmutableCacheReadsCountRepliesBeforeTheMarker(t *testing.T) {
 		return replied
 	}
 	both := read(client, "27", "rbd_data.12.0000000000000000") + read(client, "28", "rbd_data.12.0000000000000001")
-	if err := immutableCacheReadCount(judge(both+markerReply), 2); err != nil {
+	if err := immutableCacheReadCount(judge(marker(open)+both+marker(close)), 2); err != nil {
 		t.Fatal(err)
 	}
 	ignored := read(client, "29", "rbd_data.12.00000000000000010") + // another object
 		read(other, "30", "rbd_data.12.0000000000000000") + // another client
 		line(client, "31", "rbd_data.12.0000000000000000", "sparse-read 0~4194304", "-2") + // a failed read
 		line(client, "32", "rbd_data.12.0000000000000000", "stat", "0") // not a read
-	if err := immutableCacheReadCount(judge(ignored+markerReply+both), 0); err != nil {
+	if err := immutableCacheReadCount(judge(both+marker(open)+ignored+marker(close)+both), 0); err != nil {
 		t.Fatal(err)
 	}
-	// The history already holds the marker's stat, but not the earlier read
-	// of object 0, whose request reference was released later. The history
-	// alone would report no parent read; the reply before the marker
-	// counts it.
-	history := `{"ops":[{"description":"osd_op(client.4.0:7 2.3 2:abc:::` + marker + `:head [stat] ondisk+read e20)","initiated_at":"2"}]}`
+	// The warmup's reply was submitted before the opening marker but had not
+	// reached the container log when the test last read it. Wherever the
+	// reader's earlier look ended, the line stays before the opening marker
+	// and the cache-hit window is empty.
+	warmup := read(client, "26", "rbd_data.12.0000000000000000")
+	seenEarlier := len(warmup) / 2
+	delivered := warmup + marker(open) + marker(close)
+	if seenEarlier >= len(delivered) || delivered[:seenEarlier] != warmup[:seenEarlier] {
+		t.Fatal("the earlier look is not a prefix of the delivered log")
+	}
+	if err := immutableCacheReadCount(judge(delivered), 0); err != nil {
+		t.Fatalf("a delayed warmup reply was counted in the cache-hit window: %v", err)
+	}
+	// The history already holds the closing marker's stat, but not the
+	// earlier read of object 0, whose request reference was released later.
+	// The history alone would report no parent read; the reply between the
+	// markers counts it.
+	history := `{"ops":[{"description":"osd_op(client.4.0:7 2.3 2:abc:::` + close + `:head [stat] ondisk+read e20)","initiated_at":"2"}]}`
 	if reads, err := harness.RBDDataReadsInHistory([]byte(history), objects); err != nil || len(reads) != 0 {
 		t.Fatalf("history control: %v, %v", reads, err)
 	}
-	early := read(client, "27", "rbd_data.12.0000000000000000") + markerReply
+	early := marker(open) + read(client, "27", "rbd_data.12.0000000000000000") + marker(close)
 	if err := immutableCacheReadCount(judge(early), 0); err == nil {
 		t.Fatal("a cache hit accepted a parent read that the history had not recorded yet")
 	}
 	if err := immutableCacheReadCount(judge(early), 1); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, found, err := harness.OSDLogBeforeMarker([]byte(both), marker); err != nil || found {
-		t.Fatalf("judged a window without the marker reply: %t, %v", found, err)
+	for _, log := range []string{marker(open) + both, both + marker(close)} {
+		if _, _, found, err := harness.OSDLogBetweenMarkers([]byte(log), open, close); err != nil || found {
+			t.Fatalf("judged a window without both marker replies: %t, %v", found, err)
+		}
 	}
 }
 

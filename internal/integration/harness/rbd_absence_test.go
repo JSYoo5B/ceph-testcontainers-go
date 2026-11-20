@@ -54,23 +54,34 @@ func TestRBDHistoryRequiresDescriptionsBeforeExcludingOperations(t *testing.T) {
 	}
 }
 
-func TestOSDLogBeforeMarkerCutsAtTheMarkerReply(t *testing.T) {
-	const marker = "tc-reply-marker-1"
-	read := "2026-11-20T01:02:46.408+0000 7f -- [v2:10.0.0.2:6802/7,v1:10.0.0.2:6803/7] --> 10.0.0.9:0/41 -- osd_op_reply(27 rbd_data.1.0000 [sparse-read 0~4194304 out=4194304b] v0'0 uv5 ondisk = 0) -- 0x1 con 0x2\n"
-	other := "2026-11-20T01:02:46.409+0000 7f -- [v2:10.0.0.2:6802/7,v1:10.0.0.2:6803/7] --> 10.0.0.9:0/43 -- osd_op_reply(3 tc-reply-marker-10 [stat] v0'0 uv0 ondisk = -2 ((2) No such file or directory)) -- 0x3 con 0x4\n"
-	reply := "2026-11-20T01:02:46.410+0000 7f -- [v2:10.0.0.2:6802/7,v1:10.0.0.2:6803/7] --> 10.0.0.9:0/42 -- osd_op_reply(7 tc-reply-marker-1 [stat] v0'0 uv0 ondisk = -2 ((2) No such file or directory)) -- 0x5 con 0x6\n"
-	late := "2026-11-20T01:02:46.411+0000 7f -- [v2:10.0.0.2:6802/7,v1:10.0.0.2:6803/7] --> 10.0.0.9:0/44 -- osd_op_reply(28 rbd_data.1.0001 [sparse-read 0~4194304 out=4194304b] v0'0 uv5 ondisk = 0) -- 0x7 con 0x8\n"
-	for _, window := range []string{"", read, read + other} {
-		if _, _, found, err := OSDLogBeforeMarker([]byte(window), marker); err != nil || found {
-			t.Fatalf("found the marker in %q: %t, %v", window, found, err)
+func TestOSDLogBetweenMarkersCutsAtBothMarkerReplies(t *testing.T) {
+	const open, close = "tc-reply-open-1", "tc-reply-close-1"
+	line := func(peer, tid, object, ops, result string) string {
+		return "2026-11-20T01:02:46.408+0000 7f -- [v2:10.0.0.2:6802/7,v1:10.0.0.2:6803/7] --> " + peer + " -- osd_op_reply(" + tid + " " + object + " [" + ops + "] v0'0 uv5 ondisk = " + result + ") -- 0x1 con 0x2\n"
+	}
+	enoent := "-2 ((2) No such file or directory)"
+	before := line("10.0.0.9:0/40", "26", "rbd_data.1.0000", "sparse-read 0~4194304 out=4194304b", "0")
+	opened := line("10.0.0.9:0/41", "3", open, "stat", enoent)
+	read := line("10.0.0.9:0/42", "27", "rbd_data.1.0001", "sparse-read 0~4194304 out=4194304b", "0")
+	similar := line("10.0.0.9:0/43", "4", close+"0", "stat", enoent)
+	closed := line("10.0.0.9:0/44", "5", close, "stat", enoent)
+	after := line("10.0.0.9:0/45", "28", "rbd_data.1.0002", "sparse-read 0~4194304 out=4194304b", "0")
+	for _, log := range []string{"", before + opened + read, before + read + closed, opened + read + similar} {
+		if _, _, found, err := OSDLogBetweenMarkers([]byte(log), open, close); err != nil || found {
+			t.Fatalf("judged %q without both markers: %t, %v", log, found, err)
 		}
 	}
-	before, client, found, err := OSDLogBeforeMarker([]byte(read+other+reply+late), marker)
-	if err != nil || !found || client != netip.MustParseAddr("10.0.0.9") || string(before) != read+other {
-		t.Fatalf("cut %q at %v: %t, %v", before, client, found, err)
+	window, client, found, err := OSDLogBetweenMarkers([]byte(before+opened+read+similar+closed+after), open, close)
+	if err != nil || !found || client != netip.MustParseAddr("10.0.0.9") || string(window) != read+similar {
+		t.Fatalf("cut %q at %v: %t, %v", window, client, found, err)
 	}
-	broken := "x -- a --> not-an-address -- osd_op_reply(7 tc-reply-marker-1 [stat] v0'0 uv0 ondisk = -2) -- 0x5\n"
-	if _, _, _, err := OSDLogBeforeMarker([]byte(broken), marker); err == nil {
-		t.Fatal("accepted a marker reply without a client address")
+	for name, log := range map[string]string{
+		"close before open": closed + opened,
+		"another client":    opened + line("10.0.0.8:0/46", "6", close, "stat", enoent),
+		"broken address":    opened + "x -- a --> not-an-address -- osd_op_reply(7 " + close + " [stat] v0'0 uv0 ondisk = -2) -- 0x5\n",
+	} {
+		if _, _, _, err := OSDLogBetweenMarkers([]byte(log), open, close); err == nil {
+			t.Fatalf("%s: accepted %q", name, log)
+		}
 	}
 }

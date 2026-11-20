@@ -5,7 +5,6 @@
 package integration_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -110,9 +109,12 @@ func TestImmutableObjectCache(t *testing.T) {
 	// last reference to the request is released, after the reply and in no
 	// fixed order across PGs, so the history can lag a read that the
 	// client already received. The messenger logs a reply before it sends
-	// it, so after each read the client stats a new, absent marker object,
-	// and every reply the client received before that stat is logged before
-	// the marker's reply.
+	// it, and the bytes of the log seen so far are no boundary either: lines
+	// already submitted can reach the container log later. So the client
+	// stats a new, absent marker object before and another after each read,
+	// and the window is the log between the two markers' replies. Every
+	// reply the client received before a marker is logged before that
+	// marker's reply.
 	level, err := override.SetDebugLevel(ctx, cluster, override.DebugLevelSetting{Daemon: fmt.Sprintf("osd.%d", osds[0].ID), Name: "debug_ms", Level: "1/5"})
 	t.Cleanup(func() {
 		restoreCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -133,18 +135,8 @@ func TestImmutableObjectCache(t *testing.T) {
 		return data, errors.Join(err, logs.Close())
 	}
 	markers := 0
-	// parentReads runs read and returns the parent data objects whose reads
-	// the OSD answered to the client from the start of read until the
-	// client's marker.
-	parentReads := func(read func()) map[string]bool {
+	stat := func(marker string) {
 		t.Helper()
-		start, err := osdLog(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		read()
-		markers++
-		marker := fmt.Sprintf("tc-reply-marker-%d", markers)
 		code, out, err := client.Exec(ctx, []string{"rados", "--id", id, "-p", pool, "stat", marker}, tcexec.Multiplexed())
 		if err != nil {
 			t.Fatal(err)
@@ -153,15 +145,23 @@ func TestImmutableObjectCache(t *testing.T) {
 		if code == 0 || !strings.Contains(string(text), "No such file or directory") {
 			t.Fatalf("stat of the absent marker %s exited %d: %s", marker, code, text)
 		}
+	}
+	// parentReads runs read between an opening and a closing marker and
+	// returns the parent data objects whose reads the OSD answered to the
+	// client between the two markers' replies.
+	parentReads := func(read func()) map[string]bool {
+		t.Helper()
+		markers++
+		open, close := fmt.Sprintf("tc-reply-open-%d", markers), fmt.Sprintf("tc-reply-close-%d", markers)
+		stat(open)
+		read()
+		stat(close)
 		observed, err := harness.Observe(ctx, 30*time.Second, 10*time.Second, 100*time.Millisecond, func(probeCtx context.Context) (map[string]bool, bool, error) {
-			full, err := osdLog(probeCtx)
+			log, err := osdLog(probeCtx)
 			if err != nil {
 				return nil, false, err
 			}
-			if !bytes.HasPrefix(full, start) {
-				return nil, false, fmt.Errorf("the OSD log of %d bytes does not continue the %d bytes before the read", len(full), len(start))
-			}
-			window, from, found, err := harness.OSDLogBeforeMarker(full[len(start):], marker)
+			window, from, found, err := harness.OSDLogBetweenMarkers(log, open, close)
 			if err != nil || !found {
 				return nil, false, err
 			}
@@ -169,7 +169,7 @@ func TestImmutableObjectCache(t *testing.T) {
 			return replied, err == nil, err
 		})
 		if err != nil {
-			t.Fatalf("OSD replies up to marker %s: %v", marker, err)
+			t.Fatalf("OSD replies between markers %s and %s: %v", open, close, err)
 		}
 		return observed.Value
 	}
