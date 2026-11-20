@@ -65,7 +65,12 @@ if err != nil {
   `FailureDomain: "zone"` puts each replica in a distinct zone. A client's
   own `crush_location` (for example `zone=a` for replica reads) is the
   client's setting; the fixture places its container, not its Ceph
-  configuration.
+  configuration. A replica serves a read of an object only once a later
+  write to the same PG has told it that the object's last write is committed
+  on every replica. Until then it answers `EAGAIN` and the client reads from
+  the primary, however long the PG stays idle. A test that attributes a
+  replica read writes another object of that PG after its data and before
+  the read (`TestRBDZoneLocality`).
 - **Addresses.** The cluster keeps its public bridge, and its replication
   bridge with `NetworkConfig.WithSeparateClusterNetwork`. Every zone shares
   each bridge's subnet, so `public_network` and `cluster_network` are
