@@ -23,6 +23,14 @@ import tag_scenarios as engine
 ROOT = Path(__file__).resolve().parents[2]
 
 
+# The runtime job's budget: a release candidate keeps a second one for its
+# retry of failed tests.
+RUNTIME_TIMEOUT = "${{ inputs.require_profiles && matrix.retry_job_timeout || matrix.job_timeout }}"
+# The release candidate runs whose first native failure a retry judges.
+RELEASE_RETRY = "${{ inputs.require_profiles && matrix.category != 'optional' }}"
+# The failure reports run for a failed job and for a retried first failure.
+FAILED_NATIVE = "failure() || steps.native.outcome == 'failure'"
+
 class PublicBlockIOQualificationTests(unittest.TestCase):
     def test_disposable_qualification_is_explicit_and_uses_source_owned_batch(self):
         workflow = (ROOT / '.github/workflows/block-fault-probe.yml').read_text()
@@ -683,7 +691,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertIn("\n    if: needs.plan.outputs.count != '0'\n", runtime)
         self.assertEqual(scalar(runtime, "needs"), "plan")
         self.assertEqual(scalar(runtime, "matrix"), "${{ fromJSON(needs.plan.outputs.matrix) }}")
-        self.assertEqual(scalar(runtime, "timeout-minutes"), "${{ matrix.job_timeout }}")
+        self.assertEqual(scalar(runtime, "timeout-minutes"), RUNTIME_TIMEOUT)
         self.assertEqual(scalar(runtime, "fail-fast"), "false")
         self.assertEqual(scalar(plan.split("    steps:", 1)[0], "name"), "Plan")
         # The batch name, with the network mode for a batch's non-default mode.
@@ -726,7 +734,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         summary = next(step for step in runtime_steps if "ref=scenario-history" in run_command(step))
         reporter = next(step for step in runtime_steps if "report_test_failures.py" in run_command(step))
         self.assertEqual(runtime_steps.index(summary) + 1, runtime_steps.index(reporter))
-        self.assertEqual((scalar(summary, "if"), scalar(summary, "continue-on-error")), ("failure()", "true"))
+        self.assertEqual((scalar(summary, "if"), scalar(summary, "continue-on-error")), (FAILED_NATIVE, "true"))
         command = shlex.split(run_command(reporter))
         self.assertEqual(command[command.index("--row") + 1], "artifacts/scenario/history-row.json")
         self.assertEqual(command[command.index("--history-summary") + 1], "artifacts/history-summary.json")
@@ -749,8 +757,19 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
                          "${{ always() && steps.docker_baseline.outcome == 'success' }}")
         self.assertEqual(scalar(baseline, "artifact_name"), scalar(cleanup, "artifact_name"))
         self.assertIn("${{ matrix.id }}", scalar(cleanup, "artifact_name"))
-        for step in (compiled, baseline, native):
+        for step in (compiled, baseline):
             self.assertNotRegex(step, r"(?m)^\s+(?:if|continue-on-error):")
+        # Only a release candidate's first native run may fail without
+        # failing the job, and then only for the retry that follows it.
+        self.assertNotRegex(native, r"(?m)^\s+if:")
+        self.assertEqual(scalar(native, "continue-on-error"), RELEASE_RETRY)
+        retry = engine_step(runtime_steps, "retry")
+        self.assertEqual(runtime_steps.index(native) + 1, runtime_steps.index(retry))
+        self.assertEqual(scalar(retry, "if"), "always() && steps.native.outcome == 'failure' && " + RELEASE_RETRY[4:-3])
+        self.assertNotRegex(retry, r"(?m)^\s+continue-on-error:")
+        command = engine_command(runtime_steps, "retry")
+        self.assertEqual(command[command.index("--first") + 1], engine_command(runtime_steps, "run")[-1])
+        self.assertLess(runtime_steps.index(retry), runtime_steps.index(cleanup))
         self.assertNotRegex(runtime, r"(?m)^    continue-on-error:")
         self.assertNotIn("actions/download-artifact", runtime)
 
@@ -986,7 +1005,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertEqual(proof[0]["image_roles"], "essential")
         self.assertFalse(any(profile["batch"] == "failure_archive" for profile in self.plan["include"]))
         runtime = self.jobs["tagged-runtime.yml"]["runtime"]
-        self.assertEqual(scalar(runtime, "timeout-minutes"), "${{ matrix.job_timeout }}")
+        self.assertEqual(scalar(runtime, "timeout-minutes"), RUNTIME_TIMEOUT)
         optional = engine_command(steps(runtime), "optional")
         self.assertEqual(optional[optional.index("--batch") + 1], "$SCENARIO_BATCH")
         self.assertFalse(any(argument.startswith(("-run", "-short", "-failfast")) for argument in optional))
@@ -1015,7 +1034,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         native = engine_step(runtime_steps, "run")
         reporter = next(step for step in runtime_steps if "report_test_failures.py" in run_command(step))
         self.assertLess(runtime_steps.index(native), runtime_steps.index(reporter))
-        self.assertEqual(scalar(reporter, "if"), "failure()")
+        self.assertEqual(scalar(reporter, "if"), FAILED_NATIVE)
         self.assertEqual(scalar(reporter, "continue-on-error"), "true")
         command = shlex.split(run_command(reporter))
         directory = engine_command(runtime_steps, "run")[-1]
@@ -1482,9 +1501,9 @@ class BugCompatibilityWorkflowTests(unittest.TestCase):
     a tagged runtime run as an argument; callers keep the empty default."""
 
     # The planner commands that recompute a plan, so take the selection.
-    SELECTING = ("plan", "buildcache", "compile", "run", "optional")
+    SELECTING = ("plan", "buildcache", "compile", "run", "optional", "retry")
     # The commands of a runtime job that also name their matrix entry's tags.
-    ENTRY = ("compile", "run", "optional")
+    ENTRY = ("compile", "run", "optional", "retry")
     ARGUMENT = '--bug-compatibility "$SCENARIO_BUG_COMPATIBILITY"'
     VARIABLE = "${{ inputs.bug_compatibility }}"
 
