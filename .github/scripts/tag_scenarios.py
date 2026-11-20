@@ -1613,9 +1613,10 @@ def retry_selection(report, compiled, log=""):
     the reason a retry is refused (None when it is not).
 
     A retry needs a first run whose failure is attributed to named tests:
-    no build or process failure, no skipped fixture, no panic (which ends
-    the binary and leaves the following tests unrun), and every compiled
-    parent that did not fail has run and passed. A checker profile retries
+    no build or process failure, no skipped fixture, a process that ended
+    as Go ends failed tests (exit status 1 and a final FAIL) without a
+    panic, fatal runtime error or signal, and every compiled parent that did
+    not fail has run and passed. A checker profile retries
     all of its parents, because its checker validates one complete run."""
     if report.get("classification") not in RETRYABLE:
         return [], "first run is " + str(report.get("classification")) + ", not a failure of named tests"
@@ -1626,8 +1627,10 @@ def retry_selection(report, compiled, log=""):
         return [], "first run names no failed compiled parent test"
     if completed.get("skipped_tests"):
         return [], "first run skipped tests"
-    if any(line.startswith("panic:") for line in log.splitlines()):
-        return [], "first run panicked, so later tests did not run"
+    if report.get("exit_code") != 1 or not ordinary_failure_end(log, report.get("execution", TEST_BINARY)):
+        return [], "first run did not end as an ordinary test failure (exit status 1 and a final FAIL)"
+    if any(ABNORMAL_END.match(line) for line in log.splitlines()):
+        return [], "first run crashed or panicked, so its process failed beyond its failed tests"
     passes = Counter(name for name in completed.get("observed_passes") or [] if "/" not in name)
     if any(passes[name] != 1 for name in compiled if name not in parents):
         return [], "a parent test that did not fail lacks exactly one PASS"
@@ -1636,20 +1639,52 @@ def retry_selection(report, compiled, log=""):
     return parents, None
 
 
+# Lines of a Go test process that ended abnormally: a panic (a test timeout
+# included), a fatal runtime error such as concurrent map writes, or a signal.
+ABNORMAL_END = re.compile(r"^(?:panic: |fatal error: |SIG[A-Z]+: )")
+
+
+def ordinary_failure_end(log, execution):
+    """Whether a native log ends as Go ends a run whose tests failed: a test
+    binary prints FAIL last; go test prints FAIL, the package's FAIL line and
+    a final FAIL."""
+    lines = [line for line in log.splitlines() if line.strip()]
+    if not lines or lines[-1] != "FAIL":
+        return False
+    if execution == TEST_BINARY:
+        return True
+    return len(lines) >= 3 and re.fullmatch(r"FAIL\s+\S+\s+[0-9.]+s", lines[-2]) is not None and lines[-3] == "FAIL"
+
+
+def leftover_containers(output):
+    """The IDs in docker ps output of ID and Ryuk label lines whose container
+    is not Ryuk. An ordinary testcontainers container has no Ryuk label."""
+    leftover = []
+    for line in output.splitlines():
+        fields = line.split()
+        if not fields:
+            continue
+        if fields[1:] != ["true"]:
+            leftover.append(fields[0])
+    return leftover
+
+
 def settle_engine(timeout=RETRY_SETTLE_SECONDS, docker="docker"):
     """Wait until the engine runs no testcontainers container except Ryuk,
     so that a retry starts from the state the first run started from."""
     deadline = time.monotonic() + timeout
     while True:
         listed = subprocess.run([docker, "ps", "--filter", "label=org.testcontainers=true",
-                                 "--format", '{{.Label "org.testcontainers.ryuk"}}'],
+                                 "--format", '{{.ID}} {{.Label "org.testcontainers.ryuk"}}'],
                                 capture_output=True, text=True, timeout=30)
         if listed.returncode != 0:
             return "docker ps failed: " + listed.stderr.strip()[:200]
-        if all(line.strip() == "true" for line in listed.stdout.splitlines() if line.strip()):
+        leftover = leftover_containers(listed.stdout)
+        if not leftover:
             return None
         if time.monotonic() >= deadline:
-            return "testcontainers containers of the first run remain after " + str(timeout) + " s"
+            return ("testcontainers containers of the first run remain after " + str(timeout) + " s: "
+                    + " ".join(leftover[:10]))
         time.sleep(5)
 
 

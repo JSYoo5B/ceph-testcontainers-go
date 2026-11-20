@@ -826,10 +826,11 @@ result is that second run's:
 
 - `tag_scenarios.py retry` reads the first run's `native/report.json` and
   `native.log`. It retries only a failure of named tests
-  (`native-test-failure` or `native-registry-transport`) and refuses one
-  after a build or process failure, a skipped test, a panic (which ends the
-  binary, so later tests never ran) or a parent that neither failed nor
-  passed. A checker profile retries its whole run, because its checker
+  (`native-test-failure` or `native-registry-transport`) whose process
+  ended as Go ends failed tests: exit status 1 and a final `FAIL`. It
+  refuses one after a build or process failure, a skipped test, a panic, a
+  fatal runtime error or a signal (any of which can end the binary or crash
+  it beyond its failed tests), or a parent that neither failed nor passed. A checker profile retries its whole run, because its checker
   validates one complete run.
 - Before it starts it waits up to 120 s for the first run's testcontainers
   containers, Ryuk aside, to be gone.
