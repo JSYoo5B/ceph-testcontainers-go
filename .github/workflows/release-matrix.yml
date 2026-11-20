@@ -88,12 +88,14 @@ jobs:
         id: verify
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/release/promotion_reuse.py verify --coverage artifacts/release-coverage.json --output artifacts/promotion-reuse-receipt.json
+        run: python3 scripts/release/promotion_reuse.py verify --coverage artifacts/release-coverage.json --output artifacts/promotion-reuse
+      # The decision and, on a reuse, this publication's own copy of the job
+      # records that qualified it.
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: promotion-reuse-receipt-${{ github.run_attempt }}
-          path: artifacts/promotion-reuse-receipt.json
+          path: artifacts/promotion-reuse/
           retention-days: 90
           if-no-files-found: warn
   runtime:
@@ -150,29 +152,41 @@ jobs:
           fi
           test "$RUNTIME" = success
           test "$ENVIRONMENT" = success
-      # The candidate receipt of a validated promotion run: what the workflow
-      # checked out, what it covered and which first failures a retry passed.
-      # The push of the protected merge reads it.
+  # The candidate receipt of a validated promotion run: what the workflow
+  # checked out, what it covered, which first failures a retry passed, and
+  # the history row of every runtime job with its retry report. The jobs' own
+  # artifacts expire weeks before the receipt, so their records are kept with
+  # it. The push of the protected merge reads both. A failure here leaves the
+  # gate's result as it is and only makes that push run its full matrix.
+  receipt:
+    name: Candidate receipt
+    needs: [releases, validated]
+    # Only a promotion to main is reused, so only it keeps the records.
+    if: github.event_name == 'pull_request' && github.base_ref == 'main' && needs.validated.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
       - uses: actions/checkout@v7
-        if: github.event_name == 'pull_request'
         with:
           persist-credentials: false
           ref: ${{ github.sha }}
       - uses: actions/download-artifact@v8
-        if: github.event_name == 'pull_request'
         with:
           name: release-coverage-${{ github.run_attempt }}
-          path: artifacts
-      - name: Record the candidate receipt
-        if: github.event_name == 'pull_request'
+          path: artifacts/coverage
+      - name: Download this run's job records
+        uses: actions/download-artifact@v8
+        with:
+          pattern: tag-scenario-*
+          path: artifacts/rows
+      - name: Record the candidate receipt and its evidence
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/release/promotion_reuse.py record --coverage artifacts/release-coverage.json --output artifacts/release-candidate-receipt.json
-      # Nothing to upload after a failed gate or outside a pull request.
+        run: python3 scripts/release/promotion_reuse.py record --coverage artifacts/coverage/release-coverage.json --rows artifacts/rows --output artifacts/release-candidate
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: release-candidate-receipt-${{ github.run_attempt }}
-          path: artifacts/release-candidate-receipt.json
+          path: artifacts/release-candidate/
           retention-days: 90
-          if-no-files-found: ignore
+          if-no-files-found: warn

@@ -479,7 +479,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             self.assertNotIn("paths", workflow)
             self.assertEqual(scalar(workflow, "cancel-in-progress"), "true")
             jobs = self.jobs[self.RELEASE_MATRIX]
-            self.assertEqual(set(jobs), {"releases", "reuse", "runtime", "environment", "validated"})
+            self.assertEqual(set(jobs), {"releases", "reuse", "runtime", "environment", "validated", "receipt"})
             for caller in ("runtime", "environment"):
                 self.assertNotIn("      ref:", jobs[caller])
                 self.assertEqual(scalar(jobs[caller], "networks"), "all")
@@ -527,25 +527,38 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             self.assertEqual(scalar(header, "needs"), "releases")
             self.assertEqual(scalar(header, "if"), "github.event_name == 'push' && github.ref == 'refs/heads/main'")
             self.assertEqual(scalar(header, "reused"), "${{ steps.verify.outputs.reused }}")
-            self.assertIn("python3 scripts/release/promotion_reuse.py verify --coverage artifacts/release-coverage.json", reuse)
+            self.assertIn("python3 scripts/release/promotion_reuse.py verify --coverage artifacts/release-coverage.json "
+                          "--output artifacts/promotion-reuse\n", reuse)
             self.assertIn("name: promotion-reuse-receipt-${{ github.run_attempt }}", reuse)
+            self.assertEqual(scalar(steps(reuse)[-1], "path"), "artifacts/promotion-reuse/")
             condition = ("${{ !cancelled() && needs.releases.result == 'success' && "
                          "needs.reuse.outputs.reused != 'true' }}")
             for caller in ("runtime", "environment"):
                 self.assertEqual(scalar(jobs[caller].split("    with:", 1)[0].split("    strategy:", 1)[0], "if"), condition)
                 self.assertEqual(scalar(jobs[caller].split("    with:", 1)[0].split("    strategy:", 1)[0], "needs"),
                                  "[releases, reuse]")
-            # The candidate receipt is written only after the gate's check,
-            # and only by a pull request run.
-            record = [step for step in steps(gate) if "promotion_reuse.py record" in step]
-            self.assertEqual(len(record), 1)
-            self.assertGreater(steps(gate).index(record[0]), 0)
-            for step in steps(gate)[1:-1]:
-                self.assertEqual(scalar(step, "if"), "github.event_name == 'pull_request'")
-            # A failed gate leaves no receipt: the upload then finds no file.
-            self.assertIn("if-no-files-found: ignore", steps(gate)[-1])
-            self.assertNotIn("always()", record[0])
-            self.assertIn("name: release-candidate-receipt-${{ github.run_attempt }}", gate)
+            # The gate only decides. The candidate receipt is a job of its
+            # own after a passed gate of a promotion to main, so that
+            # collecting the records can neither delay nor fail the gate.
+            self.assertEqual(len(steps(gate)), 1)
+            receipt = jobs["receipt"]
+            header = receipt.split("    steps:", 1)[0]
+            self.assertEqual(scalar(header, "needs"), "[releases, validated]")
+            self.assertEqual(scalar(header, "if"), "github.event_name == 'pull_request' && github.base_ref == 'main' "
+                                                   "&& needs.validated.result == 'success'")
+            self.assertEqual(scalar(header, "name"), "Candidate receipt")
+            # It keeps the history row of every runtime job with the
+            # receipt, for as long as the receipt.
+            rows = next(step for step in steps(receipt) if "pattern:" in step)
+            self.assertEqual(scalar(rows, "pattern"), "tag-scenario-*")
+            self.assertEqual(scalar(rows, "path"), "artifacts/rows")
+            self.assertIn("python3 scripts/release/promotion_reuse.py record --coverage artifacts/coverage/release-coverage.json "
+                          "--rows artifacts/rows --output artifacts/release-candidate\n", receipt)
+            upload = steps(receipt)[-1]
+            self.assertEqual(scalar(upload, "name"), "release-candidate-receipt-${{ github.run_attempt }}")
+            self.assertEqual(scalar(upload, "path"), "artifacts/release-candidate/")
+            for kept in (upload, steps(reuse)[-1]):
+                self.assertEqual(scalar(kept, "retention-days"), "90")
             self.assertEqual(scalar(workflow.split("\nconcurrency:", 1)[0], "actions"), "read")
             self.assertIn("name: release-coverage-${{ github.run_attempt }}", jobs["releases"])
             self.assertIn("set -o pipefail", jobs["releases"])

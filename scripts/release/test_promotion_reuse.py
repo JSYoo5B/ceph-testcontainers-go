@@ -2,7 +2,11 @@
 from contextlib import redirect_stdout
 from copy import deepcopy
 from io import StringIO
+import json
+from pathlib import Path
 import subprocess
+import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -27,10 +31,50 @@ class Facts:
                           self.job(3, "Tentacle short / Plan"),
                           self.job(4, "Tentacle short / rbd_fixtures_locks", retry="success"),
                           self.job(5, "Environment / docker"), self.job(6, reuse.gate("main"))]}
+        # The runtime jobs: 4 passed its retry after a native failure.
+        self.entries = [self.entry(4, retried=True), self.entry(5, ceph=False)]
+        self.evidence = {40: reuse.encode_evidence(self.entries)}
         self.receipts = {40: reuse.candidate_receipt(
             REPO, 7, "main", HEAD, 40, 2, {"sha": TEST, "tree": TREE, "parents": [BASE, HEAD]},
-            {"cells": 3, "callers": 2, "digest": DIGEST}, {"20.2.4": {"official": "image"}}, self.jobs[40])}
-        self.artifacts = {40: [{"id": 400, "name": reuse.artifact_name(reuse.CANDIDATE, 2), "expired": False}]}
+            {"cells": 3, "callers": 2, "digest": DIGEST}, {"20.2.4": {"official": "image"}}, self.jobs[40],
+            reuse.evidence_summary(self.evidence[40]))}
+        self.artifacts = {40: [{"id": 400, "name": reuse.artifact_name(reuse.CANDIDATE, 2), "expired": False},
+                               # The jobs' own artifacts are gone long before the receipt.
+                               {"id": 401, "name": "tag-scenario-short-rbd_fixtures_locks-1-20.2.4", "expired": True},
+                               {"id": 402, "name": "scenario-images-short-rbd_fixtures_locks-1-20.2.4", "expired": True}]}
+
+    @staticmethod
+    def entry(job, retried=False, ceph=True, **changes):
+        """One job's evidence: its history row and, if it was retried, the
+        retry's report. changes replace top-level fields of the row."""
+        phases = ["modules", "compile", "storage", "docker", "images", "test_images", "storage_ready", "native",
+                  "cleanup"]
+        row = {"schema": reuse.ROW_SCHEMA,
+               "execution_key": {"repository": REPO, "run_id": "40", "run_attempt": "2", "job_id": str(job),
+                                 "profile_id": "short-rbd_fixtures_locks-1", "network": "host"},
+               "source": {"checkout_commit": TEST, "checkout_tree": TREE},
+               "profile": {"requires_ceph": ceph},
+               "build": {"build_key": {"go_version": "go1.26.11"}},
+               "evidence": {"files": {"scenario/native/native.log": "1" * 64}, "problems": {}},
+               "comparability": {"status": "complete", "reasons": []},
+               "phases": [{"phase": phase, "status": "failed" if retried and phase == "native" else "passed"}
+                          for phase in phases],
+               "outcome": {"status": "failed" if retried else "passed", "failed_phases": ["native"] if retried else [],
+                           "cancelled_phases": [], "missing_phases": [], "skipped_phases": []},
+               "runtime": ({"status": "recorded", "roles": {"essential": {
+                   "reference": "registry/images:official-20.2.4-essential", "image_id": "sha256:" + "2" * 64,
+                   "repo_digests": ["registry/images@sha256:" + "3" * 64]}}} if ceph else {"status": "not_applicable"})}
+        row.update(changes)
+        row["row_sha256"] = reuse.row_digest(row)
+        retry = {"schema": reuse.RETRY_SCHEMA, "passed": True, "attempt_classification": "passed", "refused": None,
+                 "retried_tests": ["TestRBDLocks"]} if retried else None
+        return {"row": row, "retry": retry}
+
+    def keep(self, entries):
+        """Replace the preserved evidence and let the receipt record it."""
+        self.entries = entries
+        self.evidence[40] = reuse.encode_evidence(entries)
+        self.receipts[40]["evidence"] = reuse.evidence_summary(self.evidence[40])
 
     @staticmethod
     def commit(sha, tree, parents):
@@ -69,10 +113,16 @@ class Facts:
         raise AssertionError("unexpected request " + path)
 
     def download(self, artifact):
-        return self.receipts[artifact["id"] // 10]
+        if artifact["id"] % 10:
+            raise AssertionError("an expired job artifact was downloaded")
+        run = artifact["id"] // 10
+        files = {reuse.RECEIPT_FILE[reuse.CANDIDATE]: json.dumps(self.receipts[run]).encode()}
+        if self.evidence.get(run) is not None:
+            files[reuse.EVIDENCE_FILE] = self.evidence[run]
+        return files
 
     def decide(self, coverage=DIGEST, branch="main"):
-        return reuse.decide(self.api, self.download, REPO, branch, MERGE, coverage)
+        return reuse.decide(self.api, self.download, REPO, branch, MERGE, coverage)[:2]
 
 
 class QualifyTests(unittest.TestCase):
@@ -95,6 +145,160 @@ class QualifyTests(unittest.TestCase):
         # The first failure that its retry passed stays on record.
         self.assertEqual(receipt["retried"], [{"id": 4, "name": "Tentacle short / rbd_fixtures_locks",
                                                "retry": "success"}])
+        facts = Facts()
+        self.assertEqual(receipt["evidence"], {"file": reuse.EVIDENCE_FILE, "entries": 2,
+                                               "sha256": reuse.evidence_summary(facts.evidence[40])["sha256"]})
+        self.assertEqual(receipt["observed"], {"go_versions": ["go1.26.11"], "images": {
+            "registry/images:official-20.2.4-essential": {"image_ids": ["sha256:" + "2" * 64],
+                                                          "repo_digests": ["registry/images@sha256:" + "3" * 64]}}})
+        # The publication gets the evidence that qualified it.
+        self.assertEqual(reuse.decide(facts.api, facts.download, REPO, "main", MERGE, DIGEST)[2], facts.evidence[40])
+
+    def test_expired_job_artifacts_do_not_matter_while_their_records_are_preserved(self):
+        """The receipt artifact carries the job records, so the run's
+        shorter-lived artifacts are neither needed nor read."""
+        facts = Facts()
+        self.assertTrue(all(artifact["expired"] for artifact in facts.artifacts[40][1:]))
+        self.assertEqual(facts.decide()[1], [])
+
+    def test_a_live_receipt_without_usable_job_records_runs_the_full_matrix(self):
+        """The receipt alone never qualifies a run: its evidence must
+        account for every runtime job."""
+        facts = Facts()
+        facts.evidence[40] = None
+        self.assert_refused(facts, "preserved no evidence")
+        facts = Facts()
+        facts.keep([])
+        self.assert_refused(facts, "no preserved evidence")
+        facts = Facts()
+        facts.keep(facts.entries[:1])
+        self.assert_refused(facts, "Environment / docker: no preserved evidence")
+        facts = Facts()
+        facts.keep([*facts.entries, facts.entry(9)])
+        self.assert_refused(facts, "belong to no runtime job")
+        facts = Facts()
+        facts.keep([*facts.entries, facts.entries[1]])
+        self.assert_refused(facts, "more than one evidence entry")
+        # The file is not the one that the receipt records.
+        facts = Facts()
+        facts.evidence[40] = reuse.encode_evidence(facts.entries[:1])
+        self.assert_refused(facts, "not the file that the candidate receipt records")
+        facts = Facts()
+        del facts.receipts[40]["evidence"]
+        self.assert_refused(facts, "not the file that the candidate receipt records")
+        facts = Facts()
+        facts.evidence[40] = b"not json\n"
+        facts.receipts[40]["evidence"] = reuse.evidence_summary(facts.evidence[40])
+        self.assert_refused(facts, "not readable")
+        # A run without any batch has nothing to reuse.
+        facts = Facts()
+        facts.jobs[40] = [job for job in facts.jobs[40] if " / " not in job["name"] or job["name"].endswith("Plan")]
+        facts.keep([])
+        self.assert_refused(facts, "no runtime job")
+
+    def test_job_records_that_do_not_show_a_qualifying_execution_are_refused(self):
+        def changed(job, pattern, retried=False, ceph=True, retry=..., **changes):
+            facts = Facts()
+            entry = facts.entry(job, retried=retried, ceph=ceph, **changes)
+            if retry is not ...:
+                entry["retry"] = retry
+            facts.keep([entry if existing["row"]["execution_key"]["job_id"] == str(job) else existing
+                        for existing in facts.entries])
+            with self.subTest(pattern=pattern, changes=sorted(changes)):
+                self.assert_refused(facts, pattern)
+
+        key = Facts.entry(5)["row"]["execution_key"]
+        changed(5, "of another run", ceph=False, execution_key=dict(key, run_id="39"))
+        changed(5, "of another run", ceph=False, execution_key=dict(key, repository="o/r"))
+        changed(5, "did not check out the tested commit", ceph=False,
+                source={"checkout_commit": HEAD, "checkout_tree": TREE})
+        changed(5, "did not check out the tested commit", ceph=False,
+                source={"checkout_commit": TEST, "checkout_tree": "1" * 40})
+        changed(5, "records are incomplete", ceph=False, evidence={"files": {}, "problems": {"native.log": "missing"}})
+        changed(5, "records are incomplete", ceph=False, comparability={"status": "incomplete", "reasons": ["x"]})
+        passed = Facts.entry(5)["row"]["phases"]
+        for status in ("failed", "missing", "skipped", "not_required"):
+            changed(5, "cleanup check did not pass", ceph=False,
+                    phases=[dict(phase, status=status) if phase["phase"] == "cleanup" else phase for phase in passed])
+        changed(5, "cleanup check did not pass", ceph=False, phases=passed[:-1])
+        # A Ceph batch must say what it ran.
+        changed(4, "did not record the images", retried=True, runtime={"status": "missing"})
+        changed(4, "did not record the images", retried=True, runtime={"status": "recorded", "roles": {}})
+        changed(4, "did not record the images", retried=True,
+                runtime={"status": "recorded", "roles": {"essential": {"reference": "r", "image_id": ""}}})
+        # Outcomes.
+        failed = {"status": "failed", "failed_phases": ["native"], "cancelled_phases": [], "missing_phases": [],
+                  "skipped_phases": []}
+        changed(5, "neither passed nor passed its one retry", ceph=False, outcome=failed)
+        changed(5, "neither passed nor passed its one retry", ceph=False,
+                outcome=dict(failed, status="cancelled", failed_phases=[], cancelled_phases=["native"]))
+        changed(5, "neither passed nor passed its one retry", ceph=False, outcome=dict(failed, status="skipped"))
+        # A failure outside the native phase is never retried.
+        changed(4, "neither passed nor passed its one retry", retried=True,
+                outcome=dict(failed, failed_phases=["images"]))
+        changed(4, "neither passed nor passed its one retry", retried=True,
+                outcome=dict(failed, failed_phases=["native", "cleanup"]))
+        # The retry's own report decides, and it must be there.
+        report = Facts.entry(4, retried=True)["retry"]
+        changed(4, "neither passed nor passed its one retry", retried=True, retry=None)
+        for field, value in (("passed", False), ("attempt_classification", "native-test-failure"),
+                             ("refused", "panic"), ("schema", "other")):
+            changed(4, "neither passed nor passed its one retry", retried=True, retry=dict(report, **{field: value}))
+        # A retry report beside a row that passed, or without the job's retry
+        # step in the run, is not a consistent record.
+        changed(5, "neither passed nor passed its one retry", ceph=False, retry=report)
+        changed(5, "neither passed nor passed its one retry", retried=True, ceph=False)
+
+    def test_an_altered_job_record_is_refused(self):
+        facts = Facts()
+        entry = deepcopy(facts.entries[1])
+        entry["row"]["outcome"]["status"] = "passed"
+        entry["row"]["phases"][-1]["status"] = "failed"
+        facts.keep([facts.entries[0], entry])
+        self.assert_refused(facts, "not an unaltered history row")
+        for change in ({"schema": "other/v1"}, {"execution_key": None}):
+            with self.subTest(change=change):
+                facts = Facts()
+                facts.keep([facts.entries[0], {"row": dict(facts.entries[1]["row"], **change), "retry": None}])
+                self.assert_refused(facts, "not an unaltered history row")
+        facts = Facts()
+        facts.keep([facts.entries[0], "not an entry"])
+        self.assert_refused(facts, "not an unaltered history row")
+
+    def test_many_evidence_problems_are_summarized(self):
+        facts = Facts()
+        facts.jobs[40] += [facts.job(10 + number, "Squid short / batch" + str(number)) for number in range(8)]
+        problems = facts.decide()[1]
+        self.assertEqual(len(problems), 6)
+        self.assertEqual(problems[-1], "and 3 more evidence problems")
+
+    def test_the_row_digest_is_the_history_tools(self):
+        """An evidence row is checked with the hash that the history tool
+        gave it."""
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / ".github" / "scripts"))
+        try:
+            import scenario_history
+        finally:
+            sys.path.pop(0)
+        row = Facts.entry(4, retried=True)["row"]
+        self.assertEqual(reuse.row_digest(row), scenario_history.row_hash(row))
+        self.assertEqual(scenario_history.SCHEMA, reuse.ROW_SCHEMA)
+
+    def test_collect_evidence_pairs_each_row_with_its_retry_report(self):
+        facts = Facts()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name, entry in (("tag-scenario-b", facts.entries[1]), ("tag-scenario-a", facts.entries[0])):
+                (root / name / "native-retry").mkdir(parents=True)
+                (root / name / "history-row.json").write_text(json.dumps(entry["row"]))
+                if entry["retry"]:
+                    (root / name / "native-retry" / "report.json").write_text(json.dumps(entry["retry"]))
+                (root / name / "native-retry" / "attempt").mkdir()
+            (root / "tag-scenario-c").mkdir()
+            collected = reuse.collect_evidence(root)
+        self.assertEqual(collected, facts.entries)
+        self.assertEqual(reuse.encode_evidence(collected), facts.evidence[40])
+        self.assertEqual(reuse.runtime_jobs(facts.jobs[40]), [facts.jobs[40][3], facts.jobs[40][4]])
 
     def test_a_changed_tree_or_merge_input_runs_the_full_matrix(self):
         facts = Facts()
@@ -153,7 +357,7 @@ class QualifyTests(unittest.TestCase):
     def test_a_recorded_head_without_checkout_proof_is_refused(self):
         # The run reports the merged head, but nothing proves what it tested.
         facts = Facts()
-        facts.artifacts[40] = []
+        facts.artifacts[40] = facts.artifacts[40][1:]
         self.assert_refused(facts, "no usable candidate receipt")
         # A receipt that names the PR head itself instead of a test merge.
         facts = Facts()
@@ -240,7 +444,8 @@ class QualifyTests(unittest.TestCase):
                 raise subprocess.CalledProcessError(1, "gh", stderr="gh: Server Error (HTTP 502)")
             return facts.api(path, pages=pages)
 
-        receipt, reasons = reuse.decide(broken, facts.download, REPO, "main", MERGE, DIGEST)
+        receipt, reasons, evidence = reuse.decide(broken, facts.download, REPO, "main", MERGE, DIGEST)
+        self.assertIsNone(evidence)
         self.assertEqual(receipt["disposition"], "full-matrix")
         self.assertEqual(len(reasons), 1)
         self.assertIn("could not be read", reasons[0])
@@ -255,9 +460,12 @@ class QualifyTests(unittest.TestCase):
 class EvidenceTests(unittest.TestCase):
     """git_flow evidence audits how the push run of main was qualified."""
 
-    def audit(self, facts, jobs, recorded):
+    def audit(self, facts, jobs, recorded, kept=...):
+        """Audit push run 50, whose reuse artifact holds the receipt recorded
+        and the evidence kept (by default the evidence that qualified it)."""
         run = {"id": 50, "run_attempt": 1}
         artifacts = [] if recorded is None else [{"id": 500, "name": reuse.artifact_name(reuse.REUSE, 1)}]
+        kept = facts.evidence[40] if kept is ... else kept
 
         def api(path, *, pages=False):
             if path.startswith("actions/runs/50/artifacts"):
@@ -265,11 +473,16 @@ class EvidenceTests(unittest.TestCase):
             return facts.api(path, pages=pages)
 
         def download(artifact):
-            return recorded if artifact["id"] == 500 else facts.download(artifact)
+            if artifact["id"] != 500:
+                return facts.download(artifact)
+            files = {reuse.RECEIPT_FILE[reuse.REUSE]: json.dumps(recorded).encode()}
+            if kept is not None and recorded.get("disposition") == "reused":
+                files[reuse.EVIDENCE_FILE] = kept
+            return files
 
         output = StringIO()
         with patch.object(flow, "api", side_effect=api), \
-                patch.object(reuse, "download_json", side_effect=download), redirect_stdout(output):
+                patch.object(reuse, "download_files", side_effect=download), redirect_stdout(output):
             flow.promotion_evidence("main", MERGE, run, jobs)
         return output.getvalue()
 
@@ -282,7 +495,7 @@ class EvidenceTests(unittest.TestCase):
         printed = self.audit(facts, [self.job(reuse.REUSE_JOB), self.job(reuse.gate("main"))], recorded)
         self.assertIn("reuses PR #7 run https://example.org/runs/40/attempts/2", printed)
         self.assertIn("tested " + TEST, printed)
-        self.assertIn("1 first failures passed their retry", printed)
+        self.assertIn("2 preserved job records, 1 first failures passed their retry", printed)
 
     def test_a_recorded_reuse_that_no_longer_verifies_is_refused(self):
         facts = Facts()
@@ -296,12 +509,31 @@ class EvidenceTests(unittest.TestCase):
         forged["source"]["run_id"] = 39
         with self.assertRaisesRegex(ValueError, "source differs"):
             self.audit(facts, jobs, forged)
+        forged = deepcopy(recorded)
+        forged["observed"]["go_versions"] = ["go1.0"]
+        with self.assertRaisesRegex(ValueError, "observed differs"):
+            self.audit(facts, jobs, forged)
         with self.assertRaisesRegex(ValueError, "executed matrix jobs"):
             self.audit(facts, [*jobs, self.job("Tentacle short / pools")], recorded)
 
+    def test_a_reuse_whose_job_records_are_gone_or_changed_is_refused(self):
+        facts = Facts()
+        recorded, _ = facts.decide()
+        jobs = [self.job(reuse.REUSE_JOB), self.job(reuse.gate("main"))]
+        # The promotion run's receipt is still there, its evidence is not.
+        gone = Facts()
+        gone.evidence[40] = None
+        with self.assertRaisesRegex(ValueError, "does not verify.*preserved no evidence"):
+            self.audit(gone, jobs, recorded)
+        # The publication run kept no copy, or another file.
+        with self.assertRaisesRegex(ValueError, "did not keep the evidence"):
+            self.audit(facts, jobs, recorded, kept=None)
+        with self.assertRaisesRegex(ValueError, "did not keep the evidence"):
+            self.audit(facts, jobs, recorded, kept=reuse.encode_evidence(facts.entries[:1]))
+
     def test_a_full_matrix_is_reported_with_the_reason_reuse_was_refused(self):
         facts = Facts()
-        facts.artifacts[40] = []
+        facts.evidence[40] = None
         refused, reasons = facts.decide()
         jobs = [self.job(reuse.REUSE_JOB), self.job("Tentacle short / pools"), self.job(reuse.gate("main"))]
         printed = self.audit(facts, jobs, refused)
