@@ -41,7 +41,10 @@ def report(environment):
             raise ValueError("workflow step outcome is invalid")
         status = "not required" if key in CEPH_ONLY and requires_ceph == "false" and outcome == "skipped" else outcome or "not run"
         phases.append({"phase": key, "label": label, "outcome": outcome, "display": status})
-    return {"check": check, "profile": profile, "phases": phases,
+    retry = environment.get("SCENARIO_NATIVE_RETRY_OUTCOME", "")
+    if retry not in OUTCOMES:
+        raise ValueError("workflow step outcome is invalid")
+    return {"check": check, "profile": profile, "phases": phases, "native_retry": retry or "not run",
             "failed_phases": [phase["phase"] for phase in phases if phase["outcome"] == "failure"],
             "cancelled_phases": [phase["phase"] for phase in phases if phase["outcome"] == "cancelled"]}
 
@@ -50,6 +53,8 @@ def summary(result):
     rows = ["### " + result["check"] + " / " + result["profile"], "",
             "| Phase | Actual step outcome |", "| --- | --- |"]
     rows.extend("| " + phase["label"] + " | " + phase["display"] + " |" for phase in result["phases"])
+    if result.get("native_retry", "not run") != "not run":
+        rows.append("| Release retry of the failed tests | " + result["native_retry"] + " |")
     rows += ["", "Step outcomes identify where execution failed; they do not establish its root cause.", ""]
     return "\n".join(rows)
 
@@ -66,6 +71,10 @@ def main():
         for phase in result["phases"]:
             if phase["outcome"] in ("failure", "cancelled"):
                 level = "error" if phase["outcome"] == "failure" else "warning"
+                # A first native failure that its retry passed does not fail
+                # the job; it stays visible as a warning.
+                if phase["phase"] == "native" and result["native_retry"] == "success":
+                    level = "warning"
                 title = result["check"] + " / " + phase["label"]
                 print("::" + level + " title=" + title + "::" + phase["label"] + " " + phase["outcome"] + ". Profile: " + result["profile"] + ". See phase summary and saved receipts.")
         return 0

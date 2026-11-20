@@ -17,6 +17,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
+	"github.com/moby/moby/api/types/container"
 )
 
 // GatewayAdminCaps are the RGW Admin Ops capabilities of the identity that
@@ -35,8 +36,9 @@ var (
 	// identity, or missing capabilities.
 	ErrGatewayRefused = errors.New("the gateway refused the dashboard's RGW identity")
 	// ErrGatewayUnreachable reports that the Dashboard could not reach the
-	// gateway: a refused or timed-out connection, or a request that did not
-	// finish within the probe's time.
+	// gateway: a refused or timed-out connection, a request that did not
+	// finish within the probe's time, or a failed answer while the linked
+	// gateway's container is not running, paused or restarting.
 	ErrGatewayUnreachable = errors.New("the dashboard cannot reach the gateway")
 )
 
@@ -224,7 +226,10 @@ func (l *GatewayLink) User() *rgw.User {
 // does not pass the readiness check of Endpoint, that is the error; when it
 // does and the gateway refuses the link's identity the error wraps
 // ErrGatewayRefused, and when the Dashboard cannot reach the gateway it wraps
-// ErrGatewayUnreachable. It makes one attempt.
+// ErrGatewayUnreachable. An HTTP failure whose message names neither cause
+// wraps ErrGatewayUnreachable when the linked gateway's container is not
+// running, paused or restarting, and is left unattributed otherwise. It makes
+// one attempt.
 //
 //purpose:observation
 func (l *GatewayLink) Check(ctx context.Context) error {
@@ -263,11 +268,11 @@ func (l *GatewayLink) check(ctx context.Context) error {
 	// The Dashboard's answers are judged first: with the gateway stopped,
 	// the gateway's own address is gone too.
 	daemon, _ := report.result(rgwDaemonPath)
-	if err := backendError(daemon); err != nil {
+	if err := l.backendFailure(ctx, daemon); err != nil {
 		return err
 	}
 	users, _ := report.result(rgwUserPath)
-	if err := backendError(users); err != nil {
+	if err := l.backendFailure(ctx, users); err != nil {
 		return err
 	}
 	var listed []struct {
@@ -304,6 +309,50 @@ func (l *GatewayLink) check(ctx context.Context) error {
 		return fmt.Errorf("dashboard lists %d RGW users without the link's own user", len(ids))
 	}
 	return nil
+}
+
+// backendFailure classifies a Dashboard answer about its RGW backend. An
+// HTTP failure that the Dashboard's message does not attribute is judged by
+// the linked gateway's container: the Dashboard cannot reach a gateway whose
+// container is not running, paused or restarting, whatever message it
+// answers with.
+func (l *GatewayLink) backendFailure(ctx context.Context, result probeResult) error {
+	err := backendError(result)
+	if !unattributed(result, err) {
+		return err
+	}
+	state, stateErr := l.gateway.State(ctx)
+	if stateErr != nil {
+		return errors.Join(err, fmt.Errorf("inspect the linked gateway: %w", stateErr))
+	}
+	return gatewayNotServing(err, state)
+}
+
+// unattributed reports whether err is an HTTP failure of the Dashboard's
+// answer result that backendError attributed to neither cause.
+func unattributed(result probeResult, err error) bool {
+	return err != nil && result.Error == "" && result.Status != 0 &&
+		!errors.Is(err, ErrGatewayRefused) && !errors.Is(err, ErrGatewayUnreachable)
+}
+
+// gatewayNotServing wraps err with ErrGatewayUnreachable when state shows a
+// gateway container that cannot answer: absent, not running, paused or
+// restarting. Otherwise it returns err unchanged.
+func gatewayNotServing(err error, state *container.State) error {
+	var condition string
+	switch {
+	case state == nil:
+		condition = "has no state"
+	case !state.Running:
+		condition = "is not running"
+	case state.Paused:
+		condition = "is paused"
+	case state.Restarting:
+		condition = "is restarting"
+	default:
+		return err
+	}
+	return fmt.Errorf("%w: %w; the linked gateway's container %s", ErrGatewayUnreachable, err, condition)
 }
 
 // backendError classifies a Dashboard answer about its RGW backend. The

@@ -3,7 +3,7 @@
 | Branch | Change path | Release responsibility |
 | --- | --- | --- |
 | `develop` | Repository default and base for ordinary feature, fix and CI pull requests. Keep topic branches short lived. | Next feature line, ordinary CI and trusted default-branch workflows. |
-| `release/X.Y` | Seed from a reviewed `develop` commit when the feature set freezes. Target only stabilization changes to this line. | Qualify the candidate with the full release matrix while development continues. |
+| `release/X.Y` | Seed from a reviewed `develop` commit when the feature set freezes. Target only stabilization changes to this line. | Qualify the candidate with the full release matrix of its promotion PR to `main` while development continues. |
 | `main` | Promote a reviewed release branch by pull request. | Production history and publication point for the latest stable line. |
 | `support/X.Y` | Seed from the latest published stable tag on the preceding supported line. Make patch fixes by PR. | Publish fixes for consumers who remain on that line. Keep its tags on that line. |
 

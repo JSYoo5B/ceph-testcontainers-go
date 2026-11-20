@@ -2,9 +2,12 @@ name: Release matrix
 
 # Validate every release-bound category plus the environment on the event's
 # immutable candidate commit (PR integration commit or maintained branch tip).
+# A push to release/X.Y runs none: that line follows develop, and its
+# candidate is validated once, by its promotion PR to main
+# (docs/contributing/ci.md, "Release candidate validation").
 on:
   push:
-    branches: [main, 'release/**', 'support/**']
+    branches: [main, 'support/**']
   pull_request:
     branches: [main, 'release/**', 'support/**']
     types: [opened, synchronize, reopened, edited]

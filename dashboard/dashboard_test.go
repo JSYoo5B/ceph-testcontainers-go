@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/moby/moby/api/types/container"
 )
 
 func testMaterial(t *testing.T) (TLSConfig, []byte) {
@@ -193,6 +194,42 @@ func TestBackendError(t *testing.T) {
 	}
 	if err := backendError(probeResult{Path: rgwUserPath, Status: 500, Body: `{"detail": "something else"}`}); err == nil || errors.Is(err, ErrGatewayRefused) || errors.Is(err, ErrGatewayUnreachable) {
 		t.Fatalf("unclassified failure: %v", err)
+	}
+}
+
+// An HTTP failure whose message names no cause is attributed to the gateway
+// only by the state of its container.
+func TestUnattributedBackendFailureFollowsTheGatewayContainer(t *testing.T) {
+	generic := probeResult{Path: rgwUserPath, Status: 500, Body: `{"detail": "The server encountered an unexpected condition which prevented it from fulfilling the request."}`}
+	err := backendError(generic)
+	if !unattributed(generic, err) {
+		t.Fatalf("generic 500 attributed: %v", err)
+	}
+	for _, attributed := range []probeResult{
+		{Path: rgwUserPath, Status: 200, Body: `["tc-owner"]`},
+		{Path: rgwDaemonPath, Error: "timeout"},
+		{Path: rgwUserPath, Error: "ConnectionRefusedError: [Errno 111] Connection refused"},
+		{Path: rgwUserPath, Status: 404, Body: `{"detail": "RGW REST API failed request with status code 403\n(b'{\"Code\":\"UserSuspended\"}')"}`},
+		{Path: rgwDaemonPath, Status: 404, Body: `{"detail": "HTTPConnectionPool(host='172.18.0.7', port=7480): Max retries exceeded with url"}`},
+	} {
+		if unattributed(attributed, backendError(attributed)) {
+			t.Errorf("%+v is treated as unattributed", attributed)
+		}
+	}
+	for name, state := range map[string]*container.State{
+		"absent":     nil,
+		"stopped":    {Running: false, Status: "exited"},
+		"paused":     {Running: true, Paused: true},
+		"restarting": {Running: true, Restarting: true},
+	} {
+		got := gatewayNotServing(err, state)
+		if !errors.Is(got, ErrGatewayUnreachable) || !strings.Contains(got.Error(), "HTTP 500") {
+			t.Errorf("%s gateway: %v", name, got)
+		}
+	}
+	running := gatewayNotServing(err, &container.State{Running: true, Status: "running"})
+	if running != err || errors.Is(running, ErrGatewayUnreachable) || errors.Is(running, ErrGatewayRefused) {
+		t.Fatalf("running gateway: %v", running)
 	}
 }
 

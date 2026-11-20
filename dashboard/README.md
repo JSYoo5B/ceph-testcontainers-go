@@ -156,9 +156,12 @@ username, password := d.Credentials()
 - **Backend failures.** `Check` fails when the Dashboard's answer is empty or
   does not name the gateway and the link's user. With the Dashboard itself
   ready, an identity the gateway refuses (suspended, wrong key) is
-  `ErrGatewayRefused` and an unreachable gateway is `ErrGatewayUnreachable`;
-  a stopped gateway makes Dashboard RGW requests hang until the probe's time
-  runs out, while login and `Endpoint` keep working.
+  `ErrGatewayRefused` and an unreachable gateway is `ErrGatewayUnreachable`.
+  A stopped gateway makes Dashboard RGW requests hang until the probe's time
+  runs out, or fail with a message that names no cause, such as a generic
+  HTTP 500; `Check` attributes such a failure to the gateway only when the
+  linked gateway's container is not running, paused or restarting. Login and
+  `Endpoint` keep working.
 - Out of scope: Dashboard SSO, Grafana, Prometheus and Alertmanager pages,
   orchestrator-backed pages, multisite RGW and multi-cluster management.
 
