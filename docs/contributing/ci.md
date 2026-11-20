@@ -203,7 +203,7 @@ a scan or retain the vulnerability database. Every `setup-go` step sets
 patch release with known standard-library vulnerabilities is not used. The
 weekly scheduled run catches new advisories; the other Code checks jobs skip
 it. Dependabot targets `develop` for version updates. Its security alerts on
-the default branch also need the [supported-line backport procedure](releasing.md#supported-lines-and-backports).
+the default branch also need the [maintained-line patch procedure](releasing.md#maintained-line-and-patches).
 `.github/dependabot.yml` proposes Go module updates daily and GitHub
 Actions updates weekly.
 

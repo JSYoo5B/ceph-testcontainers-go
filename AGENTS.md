@@ -136,7 +136,9 @@ release after its grace period (three calendar months and two later stable
 feature releases that still ship it), never in a patch: then at once if it
 blocks needed work, otherwise when a release raises the `go` directive of
 `go.mod`.
-Follow the [stable version and backport policy](docs/contributing/releasing.md)
+Only the latest published stable line receives routine fixes; a patch on an
+earlier line needs the maintainer's approval for that case. Follow the
+[stable version and maintained-line policy](docs/contributing/releasing.md)
 and the [branch flow](docs/contributing/git-flow.md) for the target of each PR. Use maintained source paths, test names and release
 tags when explaining behavior.
 

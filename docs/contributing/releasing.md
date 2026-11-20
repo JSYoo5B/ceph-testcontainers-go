@@ -89,36 +89,53 @@ An API is deprecated in v1.1.0, the declaration release.
 
 No v2.0.0 is needed for this removal. Published tags remain immutable.
 
-## Supported lines and backports
+## Maintained line and patches
 
-Maintain the two most recently introduced stable product.feature lines.
-Support starts at the line's first stable release. At v1.0.0, 1.0.x is
-the sole stable product line. Order lines by when
-they were introduced. A later patch on an older line does not move it
-ahead of the newer line. Both receive applicable ordinary bug fixes and
-security fixes. New features go to ongoing development.
+Routine maintenance covers one line: the latest published stable release
+line. It receives the applicable bug and security fixes. New features go to
+ongoing development.
 
-| Newly released | Lines receiving fixes |
-| --- | --- |
-| v1.2.0 | 1.2.x and 1.1.x |
-| v2.0.0 | 2.0.x and the final 1.N.x |
-| v2.1.0 | 2.1.x and 2.0.x |
+A line's routine maintenance ends when the next stable feature release or
+product version is published. A prerelease, an open promotion PR or a
+stabilization branch of the next line does not end it.
 
-For each fix, identify the affected supported lines from their shipped code
-and tests. Record the affected versions or the evidence that the defect is
-absent on a line. Apply the correction and regression coverage to each
-affected line, adapting the change to its API and dependencies. Verify
-each backport on its own candidate, including the original failing condition,
-the corrected result and applicable release checks. Publish a separate patch
-tag for each affected line. Carry the correction into newer affected lines,
-any release under stabilization and ongoing development. The
-[branch flow](git-flow.md) describes where these PRs go.
+| Moment | Line receiving routine fixes | Earlier lines |
+| --- | --- | --- |
+| v1.0.0 is the latest stable release; `release/1.1` is being stabilized | 1.0.x | None yet. |
+| v1.1.0-rc.1 is published | 1.0.x | A prerelease changes nothing. |
+| v1.1.0 is published | 1.1.x | 1.0.x stops receiving routine patches. Its tags stay usable. |
+| v2.0.0 is published | 2.0.x | The final 1.N.x stops receiving routine patches. |
+| An approved exception publishes v1.0.5 after v1.1.0 | 1.1.x, unchanged | 1.0.x got one patch. It is not the latest line and its routine maintenance is not reopened. |
 
-A line retires when two newer stable lines have been introduced. Retirement
-ends new patch releases on that line. Its tags remain available, and later
-releases in the same product follow the compatibility policy above: they keep
-its public APIs except for a deprecated API whose removal has become
-eligible.
+This module is a test fixture library. Keeping an older line active can
+need a separate implementation and a native qualification of its own once
+the code has diverged. A consumer either stays on an existing tag, which
+remains available and immutable, or adopts the maintained line under the
+compatibility policy above. This section decides where fixes are published.
+It changes neither the grace period of a deprecated API nor any published
+API or tag.
+
+For each fix, identify from the shipped code and tests whether the
+maintained line is affected, and record the affected versions or the
+evidence that the defect is absent. Apply the correction and its regression
+coverage to the line, verify it on the line's candidate, including the
+original failing condition and the corrected result, and publish a patch
+tag. Carry the correction into any release under stabilization and ongoing
+development. The [branch flow](git-flow.md) describes where these PRs go.
+
+### A patch on an earlier line
+
+A patch on a line that is no longer maintained is a maintainer's decision for
+that one case, not a standing commitment. When one is approved, record the
+affected version, the reason, the validation and the publication target in
+the issue that asks for it and in the patch's release notes. Register the
+line's `support/X.Y` branch from its latest stable tag as the
+[branch flow](git-flow.md#stabilization-hotfixes-and-propagation) describes,
+adapt the correction to that line's API and dependencies, verify it on that
+line's own candidate and publish it from there. The patch does not make that
+line the latest (the GitHub Release is not marked as latest), and the next
+fix again goes only to the maintained line unless it is approved the same
+way.
 
 ## Candidate checklist
 
@@ -194,8 +211,9 @@ release automatically.
 Before a separately authorized publication:
 
 - Select the final candidate SHA and prepare the release notes, including
-  compatibility and unresolved native limits. Name the stable lines currently
-  receiving fixes and any line retiring with this release.
+  compatibility and unresolved native limits. Name the line that receives
+  routine fixes from this release on and, for a new feature release or
+  product version, the line whose routine maintenance ends with it.
 - When publishing, check that the README does not tell release users to
   install an older tag.
 - Identify the release by its tag and keep the final SHA's validation evidence
