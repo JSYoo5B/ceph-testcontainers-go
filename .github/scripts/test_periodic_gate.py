@@ -14,6 +14,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest import mock
+from urllib.parse import unquote
 
 import periodic_gate as gate
 
@@ -183,37 +184,81 @@ class GateTests(unittest.TestCase):
 class YieldTests(unittest.TestCase):
     """Periodic starts nothing while a release run is in progress."""
 
-    PATH = "repos/o/r/actions/workflows/release-matrix.yml/runs?per_page=100&created=%3E%3D2026-10-09T12:00:00Z"
+    PREFIX = "repos/o/r/actions/workflows/release-matrix.yml/runs?"
 
-    def decide(self, pages):
+    def api(self, runs, calls):
+        """The Actions run list, applying the query's own filters as GitHub
+        does: status, and a created cutoff if the gate ever asks for one."""
+        def read(path):
+            self.assertTrue(path.startswith(self.PREFIX), path)
+            query = dict(item.split("=", 1) for item in path.removeprefix(self.PREFIX).split("&"))
+            calls.append(query)
+            selected = [run for run in runs if run["status"] == query.get("status", run["status"])]
+            if "created" in query:
+                since = gate.parse_time(unquote(query["created"]).removeprefix(">="))
+                selected = [run for run in selected if gate.parse_time(run["created_at"]) >= since]
+            # Two pages, so that a gate reading only the first one fails.
+            return [{"workflow_runs": selected[:1]}, {"workflow_runs": selected[1:]}]
+        return read
+
+    def decide(self, runs):
+        calls = []
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "output"
             environment = {"GITHUB_REPOSITORY": "o/r", "GITHUB_OUTPUT": str(output)}
             with mock.patch.dict(os.environ, environment, clear=True), \
-                    mock.patch.object(gate, "github", return_value=pages) as calls, \
-                    mock.patch.object(gate.datetime, "datetime", wraps=datetime.datetime) as clock, \
+                    mock.patch.object(gate, "github", side_effect=self.api(runs, calls)), \
                     mock.patch("sys.stdout", new=io.StringIO()) as printed:
-                clock.now.return_value = NOW
                 self.assertEqual(gate.main(["--yield-to", "release-matrix.yml"]), 0)
-            self.assertEqual([call.args[0] for call in calls.call_args_list], [self.PATH])
+            self.assertEqual(sorted(call["status"] for call in calls), sorted(gate.UNFINISHED))
+            for call in calls:
+                self.assertNotIn("created", call)
             return output.read_text(), printed.getvalue()
 
     def test_every_unfinished_status_of_a_release_run_holds_periodic_back(self):
         for status in gate.UNFINISHED:
             with self.subTest(status=status):
-                written, printed = self.decide([{"workflow_runs": [run(1, OLD, 30)]},
-                                                {"workflow_runs": [run(7, HEAD, 2, status=status)]}])
+                written, printed = self.decide([run(1, OLD, 30), run(7, HEAD, 2, status=status)])
                 self.assertEqual(written, "clear=false\n")
                 self.assertIn("::notice::", printed)
                 self.assertIn("run 7 is " + status, printed)
 
+    def test_a_rerun_of_an_old_release_run_holds_periodic_back(self):
+        # A run keeps its creation date when it is re-run: ten and
+        # twenty-nine days old, with an attempt that is queued or running
+        # now.
+        for days, status in ((10, "in_progress"), (29, "queued")):
+            with self.subTest(days=days):
+                rerun = dict(run(7, HEAD, 24 * days, status=status), run_attempt=2)
+                written, printed = self.decide([run(8, HEAD, 1), rerun])
+                self.assertEqual(written, "clear=false\n")
+                self.assertIn("run 7 is " + status, printed)
+
+    def test_the_oldest_unfinished_run_is_named_once(self):
+        written, printed = self.decide([run(9, HEAD, 1, status="queued"), run(7, HEAD, 300, status="in_progress"),
+                                        run(8, HEAD, 2, status="in_progress")])
+        self.assertEqual(written, "clear=false\n")
+        self.assertEqual(printed.count("::notice::"), 1)
+        self.assertIn("run 7 is in_progress", printed)
+
     def test_finished_release_runs_hold_no_runner(self):
         finished = [run(number, HEAD, number, conclusion=conclusion)
                     for number, conclusion in enumerate(("success", "failure", "cancelled", "timed_out"), 1)]
-        written, printed = self.decide([{"workflow_runs": finished}])
+        written, printed = self.decide(finished)
         self.assertEqual(written, "clear=true\n")
         self.assertNotIn("::notice::", printed)
-        self.assertEqual(self.decide([{"workflow_runs": []}])[0], "clear=true\n")
+        self.assertEqual(self.decide([])[0], "clear=true\n")
+
+    def test_a_run_that_finished_since_the_query_holds_no_runner(self):
+        def api(path):
+            return [{"workflow_runs": [run(7, HEAD, 2)]}]
+
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "output"
+            with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "o/r", "GITHUB_OUTPUT": str(output)}, clear=True), \
+                    mock.patch.object(gate, "github", side_effect=api), mock.patch("sys.stdout", new=io.StringIO()):
+                self.assertEqual(gate.main(["--yield-to", "release-matrix.yml"]), 0)
+            self.assertEqual(output.read_text(), "clear=true\n")
 
     def test_an_unreadable_release_history_decides_nothing(self):
         def api(path):

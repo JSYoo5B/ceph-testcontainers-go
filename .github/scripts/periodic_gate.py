@@ -144,25 +144,29 @@ class Reader:
 github = Reader()
 
 
-# A release run older than this is not looked for; a job runs at most six
-# hours, so no run stays unfinished that long.
-RELEASE_LOOKBACK = datetime.timedelta(days=7)
-
-
-def unfinished_releases(runs):
+def unfinished_releases(workflow, repository):
     """The runs of the release workflow that have not finished: Periodic
     yields its runners to them. A finished run, whatever its conclusion,
-    holds no runner."""
-    return [run for run in runs if run.get("status") in UNFINISHED]
+    holds no runner.
+
+    The runs are asked for by status and never by creation date: a run can
+    be re-run for weeks after it was created, and its new attempt is as
+    unfinished as a new run."""
+    found = {}
+    for status in UNFINISHED:
+        pages = github("repos/{}/actions/workflows/{}/runs?status={}&per_page=100".format(repository, workflow, status))
+        for run in (run for page in pages for run in page["workflow_runs"]):
+            # The filter is GitHub's; a run it returns in another state has
+            # finished since and holds nothing.
+            if run.get("status") in UNFINISHED:
+                found[run["id"]] = run
+    return [found[number] for number in sorted(found)]
 
 
-def yield_to(workflow, repository, now, output):
+def yield_to(workflow, repository, output):
     """Write clear=false when a run of workflow is in progress, else
     clear=true. An unreadable run list raises and decides nothing."""
-    since = (now - RELEASE_LOOKBACK).strftime("%Y-%m-%dT%H:%M:%SZ")
-    pages = github("repos/{}/actions/workflows/{}/runs?per_page=100&created=%3E%3D{}".format(
-        repository, workflow, since))
-    waiting = unfinished_releases([run for page in pages for run in page["workflow_runs"]])
+    waiting = unfinished_releases(workflow, repository)
     if waiting:
         print("::notice::Periodic starts no native work: {} run {} is {}".format(
             workflow, waiting[0]["id"], waiting[0]["status"]))
@@ -183,8 +187,7 @@ def main(argv=None):
                         help="Release workflow file name; only report whether a run of it is in progress")
     args = parser.parse_args(argv)
     if args.yield_to:
-        return yield_to(args.yield_to, os.environ["GITHUB_REPOSITORY"],
-                        datetime.datetime.now(datetime.timezone.utc), os.environ.get("GITHUB_OUTPUT"))
+        return yield_to(args.yield_to, os.environ["GITHUB_REPOSITORY"], os.environ.get("GITHUB_OUTPUT"))
     if not args.workflow:
         parser.error("--workflow is required without --yield-to")
     repository, run_id = os.environ["GITHUB_REPOSITORY"], int(os.environ["GITHUB_RUN_ID"])
