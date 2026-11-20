@@ -180,6 +180,58 @@ class GateTests(unittest.TestCase):
                              [call.args[0] for call in calls.call_args_list])
 
 
+class YieldTests(unittest.TestCase):
+    """Periodic starts nothing while a release run is in progress."""
+
+    PATH = "repos/o/r/actions/workflows/release-matrix.yml/runs?per_page=100&created=%3E%3D2026-10-09T12:00:00Z"
+
+    def decide(self, pages):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "output"
+            environment = {"GITHUB_REPOSITORY": "o/r", "GITHUB_OUTPUT": str(output)}
+            with mock.patch.dict(os.environ, environment, clear=True), \
+                    mock.patch.object(gate, "github", return_value=pages) as calls, \
+                    mock.patch.object(gate.datetime, "datetime", wraps=datetime.datetime) as clock, \
+                    mock.patch("sys.stdout", new=io.StringIO()) as printed:
+                clock.now.return_value = NOW
+                self.assertEqual(gate.main(["--yield-to", "release-matrix.yml"]), 0)
+            self.assertEqual([call.args[0] for call in calls.call_args_list], [self.PATH])
+            return output.read_text(), printed.getvalue()
+
+    def test_every_unfinished_status_of_a_release_run_holds_periodic_back(self):
+        for status in gate.UNFINISHED:
+            with self.subTest(status=status):
+                written, printed = self.decide([{"workflow_runs": [run(1, OLD, 30)]},
+                                                {"workflow_runs": [run(7, HEAD, 2, status=status)]}])
+                self.assertEqual(written, "clear=false\n")
+                self.assertIn("::notice::", printed)
+                self.assertIn("run 7 is " + status, printed)
+
+    def test_finished_release_runs_hold_no_runner(self):
+        finished = [run(number, HEAD, number, conclusion=conclusion)
+                    for number, conclusion in enumerate(("success", "failure", "cancelled", "timed_out"), 1)]
+        written, printed = self.decide([{"workflow_runs": finished}])
+        self.assertEqual(written, "clear=true\n")
+        self.assertNotIn("::notice::", printed)
+        self.assertEqual(self.decide([{"workflow_runs": []}])[0], "clear=true\n")
+
+    def test_an_unreadable_release_history_decides_nothing(self):
+        def api(path):
+            raise RuntimeError("gh api " + path + " failed: gh: Server Error (HTTP 502)")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "output"
+            with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "o/r", "GITHUB_OUTPUT": str(output)}, clear=True), \
+                    mock.patch.object(gate, "github", side_effect=api), \
+                    self.assertRaisesRegex(RuntimeError, "HTTP 502"):
+                gate.main(["--yield-to", "release-matrix.yml"])
+            self.assertFalse(output.exists())
+
+    def test_the_matrix_decision_still_requires_its_workflow(self):
+        with mock.patch("sys.stderr", new=io.StringIO()), self.assertRaises(SystemExit):
+            gate.main([])
+
+
 class ReaderTests(unittest.TestCase):
     """The gate's GitHub reads: bounded retries of transient errors only."""
 
