@@ -2276,5 +2276,96 @@ class ChangedComparisonGitTests(unittest.TestCase):
             self.assertFalse(refused.exists(), "unproven identity must not publish an empty valid matrix")
 
 
+class ReleaseRetryTests(unittest.TestCase):
+    """A release candidate's failed parent tests run once more only when the
+    first run names them and every other compiled test passed."""
+
+    COMPILED = ["TestA", "TestB", "TestC"]
+
+    def first(self, failed=("TestB", "TestB/bridge"), passes=("TestA", "TestC"), classification="native-test-failure",
+              checker="none", skipped=()):
+        return {"classification": classification, "compiled_tests": self.COMPILED,
+                "profile": {"checker": checker},
+                "completion": {"failed_tests": [*failed, "package failure"], "skipped_tests": list(skipped),
+                               "observed_passes": [*passes, "TestA/sub"]}}
+
+    def test_selection_is_the_failed_parents(self):
+        self.assertEqual(engine.retry_selection(self.first(), self.COMPILED), (["TestB"], None))
+
+    def test_checker_profile_retries_its_whole_run(self):
+        self.assertEqual(engine.retry_selection(self.first(checker="osd_restart"), self.COMPILED),
+                         (self.COMPILED, None))
+
+    def test_refusals(self):
+        cases = {
+            "build": (self.first(classification="process-or-build-failure"), ""),
+            "incomplete proof": (self.first(classification="incomplete-native-proof"), ""),
+            "no named failure": (self.first(failed=()), ""),
+            "unknown parent": (self.first(failed=("TestZ",)), ""),
+            "skipped": (self.first(skipped=("TestA",)), ""),
+            "unrun parent": (self.first(passes=("TestA",)), ""),
+            "panic": (self.first(), "=== RUN   TestB\npanic: test timed out after 20m0s\n"),
+        }
+        for name, (report, log) in cases.items():
+            with self.subTest(name):
+                tests, reason = engine.retry_selection(report, self.COMPILED, log)
+                self.assertEqual(tests, [])
+                self.assertIsNotNone(reason)
+
+    def plan(self, timeout="20m", job=35, retry=70):
+        return {"include": [{"category": "short", "batch": "basic", "package": "./internal/integration",
+                             "timeout": timeout, "job_timeout": job, "retry_job_timeout": retry}]}
+
+    def retry(self, report, plan=None, settle=lambda: None, attempt=None):
+        calls = []
+
+        def run(*args, **kwargs):
+            calls.append((args, kwargs))
+            return attempt or {"classification": "passed", "passed": True}
+
+        with tempfile.TemporaryDirectory() as directory:
+            first = Path(directory) / "native"
+            first.mkdir()
+            (first / "report.json").write_text(json.dumps(report))
+            (first / "native.log").write_text("")
+            result = engine.retry_profile([], plan or self.plan(), "short", "basic", None, first,
+                                          Path(directory) / "native-retry", settle=settle, run=run)
+            written = json.loads((Path(directory) / "native-retry" / "report.json").read_text())
+        self.assertEqual(result, written)
+        return result, calls
+
+    def test_retry_runs_the_failed_parents_within_the_second_budget(self):
+        result, calls = self.retry(self.first())
+        self.assertTrue(result["passed"])
+        self.assertEqual(result["retried_tests"], ["TestB"])
+        self.assertIsNone(result["refused"])
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][1]["selected_tests_text"], "TestB")
+        self.assertEqual(calls[0][1]["timeout_seconds"], 20 * 60)
+        self.assertEqual(calls[0][0][5].name, "attempt")
+        # A budget shorter than the process timeout bounds the retry.
+        result, calls = self.retry(self.first(), plan=self.plan(timeout="20m", job=25, retry=40))
+        self.assertEqual(calls[0][1]["timeout_seconds"], 15 * 60 - engine.RETRY_MARGIN_SECONDS)
+
+    def test_failed_retry_and_refusals_fail(self):
+        result, _ = self.retry(self.first(), attempt={"classification": "native-test-failure", "passed": False})
+        self.assertFalse(result["passed"])
+        for report, plan, settle in ((self.first(classification="process-or-build-failure"), None, lambda: None),
+                                     (self.first(), self.plan(job=35, retry=35), lambda: None),
+                                     (self.first(), None, lambda: "containers remain")):
+            with self.subTest(refused=report["classification"]):
+                result, calls = self.retry(report, plan=plan, settle=settle)
+                self.assertFalse(result["passed"])
+                self.assertIsNotNone(result["refused"])
+                self.assertEqual(result["retried_tests"], [])
+                self.assertEqual(calls, [])
+
+    def test_source_budget_doubles_up_to_the_hosted_limit(self):
+        profile = engine.parse_metadata(fixture())
+        self.assertEqual((profile["job_timeout"], profile["retry_job_timeout"]), (35, 70))
+        long = engine.parse_metadata({**fixture(), "metadata": ["timeout=4h job-timeout=250"]})
+        self.assertEqual(long["retry_job_timeout"], engine.MAX_JOB_TIMEOUT)
+
+
 if __name__ == "__main__":
     unittest.main()
