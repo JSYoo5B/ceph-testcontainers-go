@@ -58,7 +58,8 @@ func (scope *rbdReceiverScope) guard(m *Container) error {
 // policies, peers, images or containers. Empty names select the actual default
 // namespace; named namespaces must exist. Both selected native scopes must match.
 // The original successful owner setup and captured base policies remain required.
-// Binding takes at most 30 seconds, bounded by ctx, including owner admission.
+// The wait for the owner's gate is bounded by ctx alone; once the gate is held,
+// binding takes at most 30 seconds or until ctx ends.
 // Repeated calls produce separate immutable views, not resource owners or retries.
 //
 // Binding the default namespace requires an active reciprocal default policy; a
@@ -78,12 +79,12 @@ func (m *Container) BindNamespace(ctx context.Context, sourceNamespace, destinat
 			return nil, rbdReceiverGuard("RBD namespace binding names are invalid")
 		}
 	}
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
 	if err := multicluster.LockObservation(ctx, &m.mu); err != nil {
 		return nil, rbdReceiverQuery(ctx, "admit RBD namespace binding", err)
 	}
 	defer m.mu.Unlock()
+	ctx, cancel := rbdGateContext(ctx)
+	defer cancel()
 	if _, err := m.receiverWitness(m.pair.originalReceiverScope(), nil, nil); err != nil {
 		return nil, err
 	}
@@ -106,8 +107,9 @@ func (m *Container) BindNamespace(ctx context.Context, sourceNamespace, destinat
 }
 
 // ReceiverStatus observes this bound namespace pair using the original owner's
-// exact current owned cohort. Zero owned daemons is non-ready. It shares the
-// owner's 30-second admission/process deadline and never creates a receiver.
+// exact current owned cohort. Zero owned daemons is non-ready. It waits for the
+// owner's gate and is bounded as the owner's ReceiverStatus is, and never
+// creates a receiver.
 //
 //purpose:observation
 func (v *Namespace) ReceiverStatus(ctx context.Context, expectedDaemons ...string) (ReceiverStatus, error) {

@@ -351,9 +351,9 @@ func testRBDNamespaceImageObservation(t *testing.T, host bool) {
 	verify("initial")
 	cid := receiver.GetContainerID()
 	originalProcess := rbdScopedImageRawProcess(t, ctx, oracle, receiver, true)
-	// Each read can spend 30 seconds acquiring the same owner and querying
-	// Ceph. Open the receiver watch first, then both image watches. Leave
-	// room for all three baselines and the stop before the next poll.
+	// Each read queues for the same owner gate and can then spend 30 seconds
+	// querying Ceph. Open the receiver watch first, then both image watches.
+	// Leave room for all three baselines and the stop before the next poll.
 	cfg := ceph.WatchConfig{Interval: 2 * time.Minute, Buffer: 64}
 	began := time.Now()
 	rw, err := views[1].WatchReceivers(rbdNamespaceObservationContext(t, ctx, "receiver-watch/"+mappings[1][0]), cfg, receiver.DaemonName)

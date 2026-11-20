@@ -70,8 +70,10 @@ type rbdReceiverWitness struct {
 // With no names, all current owned daemons (including stopped/partial ones)
 // are expected. Explicit names support waiting for an HA survivor while another
 // owned daemon is stopped. It never adopts a process, bootstraps a peer or
-// creates an image. The observation takes at most 30 seconds, bounded by ctx,
-// including owner/member admission. A partial report may accompany an error.
+// creates an image. The wait for the fixture's gate, behind another observation
+// or a mutation, is bounded by ctx alone. Once the gate is held, the observation
+// takes at most 30 seconds or until ctx ends, including member admission. A
+// partial report may accompany an error.
 //
 // Ready requires that every expected daemon runs, has discovered the pool, peer
 // and exact namespace mapping and reports a unique instance; that exactly one
@@ -208,11 +210,12 @@ func (m *Container) receiverStatusForScope(ctx context.Context, scope *rbdReceiv
 	if m == nil {
 		return result, previous, rbdReceiverGuard("RBD receiver fixture is unavailable")
 	}
-	caller := ctx
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	observation := rbdobservation.Begin(caller, "receiver")
-	defer func() { observation.Finish(ctx, observationErr) }()
+	observation := rbdobservation.Begin(ctx, "receiver")
+	var cancel context.CancelFunc = func() {}
+	defer func() {
+		observation.Finish(ctx, observationErr)
+		cancel()
+	}()
 	if err := multicluster.LockObservation(ctx, &m.mu); err != nil {
 		return result, previous, rbdReceiverQuery(ctx, "admit RBD receiver observation", err)
 	}
@@ -221,6 +224,7 @@ func (m *Container) receiverStatusForScope(ctx context.Context, scope *rbdReceiv
 		m.mu.Unlock()
 	}()
 	observation.Acquired()
+	ctx, cancel = rbdGateContext(ctx)
 	observation.Stage("capture-receiver-witness")
 	if scope == nil {
 		scope = m.pair.originalReceiverScope()

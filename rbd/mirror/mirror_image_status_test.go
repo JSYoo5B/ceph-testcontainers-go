@@ -31,11 +31,17 @@ type rbdImageStatusFixture struct {
 	statusHook             func(*rbdImageStatusFixture)
 	execError              func([]string) error
 	execOutput             func([]string) (string, bool)
+	// hang makes every Exec block until its context ends.
+	hang bool
 }
 
 func (c *rbdImageStatusFixture) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, nil, err
+	}
+	if c.hang {
+		<-ctx.Done()
+		return 0, nil, ctx.Err()
 	}
 	if c.execError != nil {
 		if err := c.execError(args); err != nil {
