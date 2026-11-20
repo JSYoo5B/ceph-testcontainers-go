@@ -10,6 +10,8 @@ import subprocess
 import sys
 from urllib.parse import quote
 
+import promotion_reuse
+
 REPO = "JSYoo5B/ceph-testcontainers-go"
 ACTIONS = 15368
 BASE_TAG = "v1.0.0"
@@ -226,6 +228,43 @@ def candidate_evidence(branch, sha):
                     and observed[0]["status"] == "completed" and observed[0]["conclusion"] == "success",
                     f"{name}: missing or unsuccessful in run {run['id']} attempt {run['run_attempt']}")
         print(f"{branch}@{sha}: {run['html_url']}/attempts/{run['run_attempt']} ({filename})")
+        if filename == "release-matrix.yml" and branch in promotion_reuse.BRANCHES:
+            promotion_evidence(branch, sha, run, jobs)
+
+
+def promotion_evidence(branch, sha, run, jobs):
+    """Audit how the push run of the Release matrix qualified sha: by its own
+    full matrix, or by reusing the promotion PR's run. A reuse is verified
+    again from the repository, not taken from the push run's word."""
+    executed = [job for job in jobs if " / " in job["name"] and job["conclusion"] == "success"]
+    reuse = [job for job in jobs if job["name"] == promotion_reuse.REUSE_JOB and job["conclusion"] == "success"]
+    name = promotion_reuse.artifact_name(promotion_reuse.REUSE, run["run_attempt"])
+    artifacts = [a for a in api(f"actions/runs/{run['id']}/artifacts?per_page=100", pages="artifacts")
+                 if a["name"] == name and not a.get("expired")]
+    files = promotion_reuse.download_files(artifacts[0]) if len(artifacts) == 1 else {}
+    receipt = files.get(promotion_reuse.RECEIPT_FILE[promotion_reuse.REUSE])
+    recorded = json.loads(receipt) if receipt else None
+    if not (reuse and recorded and recorded.get("disposition") == "reused"):
+        require(executed, f"run {run['id']} neither executed the matrix nor recorded a promotion reuse")
+        print(f"{branch}@{sha}: validated by its own full matrix"
+              + (": " + "; ".join(recorded["reasons"]) if recorded and recorded.get("reasons") else ""))
+        return
+    require(not executed, f"run {run['id']} recorded a promotion reuse and executed matrix jobs")
+    live, reasons, evidence = promotion_reuse.decide(api, promotion_reuse.download_files, REPO, branch, sha,
+                                                     recorded["coverage"]["digest"])
+    require(not reasons, "the recorded promotion reuse does not verify: " + "; ".join(reasons))
+    for field in ("publication", "pull_request", "tested", "source", "coverage", "images", "retried", "evidence",
+                  "observed"):
+        require(live[field] == recorded.get(field), f"the reuse receipt's {field} differs from the repository")
+    # The publication's own copy of the evidence must be the file that
+    # qualified it, so that the audit does not depend on the promotion run.
+    require(files.get(promotion_reuse.EVIDENCE_FILE) == evidence,
+            "the publication run did not keep the evidence that qualified it")
+    source = recorded["source"]
+    print(f"{branch}@{sha}: reuses PR #{recorded['pull_request']} run {source['url']}/attempts/{source['run_attempt']}, "
+          f"tested {recorded['tested']['sha']} with tree {recorded['tested']['tree']}; "
+          f"{recorded['evidence']['entries']} preserved job records, "
+          f"{len(recorded['retried'])} first failures passed their retry")
 
 
 def cutover_ready(pr_number, branches):

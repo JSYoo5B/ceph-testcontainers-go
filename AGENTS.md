@@ -129,9 +129,16 @@ maintained field list; do not copy their fields here.
 ## Release compatibility
 
 Keep published release tags immutable. Preserve public import paths, signatures
-and documented behavior within a stable product. Retain the old entry point and
-its tests when introducing a replacement, and give it a Go `Deprecated:` notice.
-Follow the [stable version and backport policy](docs/contributing/releasing.md)
+and documented behavior within a stable product by default. Retain the old entry
+point and its tests when introducing a replacement, and give it a Go
+`Deprecated:` notice. A deprecated API may be removed only in a stable feature
+release after its grace period (three calendar months and two later stable
+feature releases that still ship it), never in a patch: then at once if it
+blocks needed work, otherwise when a release raises the `go` directive of
+`go.mod`.
+Only the latest published stable line receives routine fixes; a patch on an
+earlier line needs the maintainer's approval for that case. Follow the
+[stable version and maintained-line policy](docs/contributing/releasing.md)
 and the [branch flow](docs/contributing/git-flow.md) for the target of each PR. Use maintained source paths, test names and release
 tags when explaining behavior.
 

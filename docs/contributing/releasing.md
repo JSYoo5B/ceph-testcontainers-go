@@ -16,56 +16,126 @@ Project planning calls the three positions **product.major.minor**. In a Go
 tag such as `v1.3.2` they are the Go major (1), minor (3) and patch (2).
 A new stable feature release increments the middle number for new features
 or compatible public APIs. A patch increments the last number for bug or
-security fixes. Reserve a new product for a substantial redesign or accumulated
-compatibility costs that justify coordinating a breaking release with consumers.
+security fixes. Reserve a new product for a substantial redesign of the
+product itself. A planned API removal does not need one.
 
-Throughout a product line, preserve import paths, public signatures and
-documented behavior. Move implementation behind the existing entry point
-when possible. To replace an API, ship the replacement alongside the old
-entry point, add a Go `Deprecated:` paragraph naming the replacement to the
-old API's documentation, and keep tests covering the old entry point.
+By default, preserve import paths, public signatures and documented behavior
+throughout a product line. Move implementation behind the existing entry
+point when possible. The one exception is the removal of a deprecated API
+after its grace period, described below.
 
-The grace period starts with the first stable release containing both the
-replacement and the deprecation notice. Before removal can ship, three
-calendar months must elapse **and** two subsequent stable feature releases
-in that product must ship. Patches and prereleases do not count. Meeting
-both conditions makes removal eligible for a later product release. It
-never schedules removal or permits it within the existing product.
+This is the project's compatibility policy, and it differs from conventional
+[Go module semantic versioning](https://go.dev/ref/mod#versions), under which
+every incompatible removal of a public API needs a new major version and
+module path. Here an eligible removal ships in a stable feature release of
+the same product line, so that release is a breaking change for consumers
+that still use the removed API: they move to its replacement before
+upgrading. Requiring a new product for each planned removal would turn
+routine API maintenance into repeated major releases and module-path
+migrations; the announced grace period gives consumers the time to move
+instead.
 
-For example, an API deprecated in v1.1.0 remains usable in v1.2.x, v1.3.x
-and every later v1 release. Once v1.2.0 and v1.3.0 have shipped and three
-months have elapsed since v1.1.0, v2 may omit it. A routine package move
-alone does not justify v2. Published tags remain immutable.
+### Deprecation and grace period
 
-## Supported lines and backports
+To replace an API, ship the replacement alongside the old entry point, add a
+Go `Deprecated:` paragraph naming the replacement to the old API's
+documentation, and keep the old API, its documented behavior and its tests.
 
-Maintain the two most recently introduced stable product.feature lines.
-Support starts at the line's first stable release. At v1.0.0, 1.0.x is
-the sole stable product line. Order lines by when
-they were introduced. A later patch on an older line does not move it
-ahead of the newer line. Both receive applicable ordinary bug fixes and
-security fixes. New features go to ongoing development.
+The grace period starts with the declaration release: the first stable
+release that contains both the replacement and the deprecation notice. The
+old API stays through the next two stable feature releases of that product
+line. Removal becomes eligible in a later stable feature release only when
+both conditions hold at that release's publication:
 
-| Newly released | Lines receiving fixes |
+- three calendar months have elapsed since the declaration release, and
+- two stable feature releases after the declaration release have already
+  shipped with the old API still present.
+
+Patches and prereleases do not count as feature releases, and a patch never
+removes an API. Eligibility is not a schedule: it only permits the removal
+decision below.
+
+### Removal after the grace period
+
+At an eligible stable feature release, the cost of keeping the compatibility
+layer decides:
+
+| The deprecated API | Removal |
 | --- | --- |
-| v1.2.0 | 1.2.x and 1.1.x |
-| v2.0.0 | 2.0.x and the final 1.N.x |
-| v2.1.0 | 2.1.x and 2.0.x |
+| Materially blocks development, a needed correctness fix or a design change | May be removed in the first eligible stable feature release. Record the concrete blocker and the replacement in the GitHub Release notes. |
+| Can stay as a thin compatibility layer | Stays until an eligible stable feature release raises the module's minimum supported Go version, the `go` directive in `go.mod`. A change of the `toolchain` directive or of the Go version that CI uses does not count. While the minimum is unchanged, the layer stays. |
 
-For each fix, identify the affected supported lines from their shipped code
-and tests. Record the affected versions or the evidence that the defect is
-absent on a line. Apply the correction and regression coverage to each
-affected line, adapting the change to its API and dependencies. Verify
-each backport on its own candidate, including the original failing condition,
-the corrected result and applicable release checks. Publish a separate patch
-tag for each affected line. Carry the correction into newer affected lines,
-any release under stabilization and ongoing development. The
-[branch flow](git-flow.md) describes where these PRs go.
+A raised Go minimum never shortens the grace period: a release that raises
+it before removal is eligible keeps the API. Record every removal in the
+GitHub Release notes of the release that ships it.
 
-A line retires when two newer stable lines have been introduced. Retirement
-ends new patch releases on that line. Its tags remain available, and later
-releases in the same product still owe consumers the public API compatibility
-described above.
+### Worked example
+
+An API is deprecated in v1.1.0, the declaration release.
+
+| Situation | Result |
+| --- | --- |
+| v1.1.0 (declaration) | The old API and its tests stay beside the replacement. |
+| v1.1.1, v1.2.0-rc.1 | Patches and prereleases neither count nor remove anything. |
+| v1.2.0 and v1.3.0 | The old API is still present in both. They are the two feature releases that must ship with it. |
+| Three months have elapsed, but only v1.2.0 has shipped | Not eligible. v1.3.0 keeps the API. |
+| v1.2.0 and v1.3.0 have shipped, but v1.4.0 would be published before three months have elapsed | Not eligible. v1.4.0 keeps the API; reconsider at v1.5.0. |
+| v1.2.0 and v1.3.0 have shipped and three months have elapsed when v1.4.0 is published | v1.4.0 is the first eligible release. |
+| v1.4.0 is eligible and the API blocks a needed change | v1.4.0 may remove it, with the blocker and the replacement in its release notes. |
+| v1.4.0 is eligible, the API is a thin layer and `go.mod` keeps its `go` directive | v1.4.0 keeps it, and so does every later release until one raises the directive. |
+| v1.4.0 is eligible, the API is a thin layer and v1.4.0 raises the `go` directive | v1.4.0 may remove it. |
+| v1.3.0 raised the `go` directive | Not eligible yet, so v1.3.0 keeps the API. The raise is spent: a thin layer then waits for the next raise at or after v1.4.0. |
+| v1.5.0 updates only the `toolchain` directive or CI's Go version | A thin layer stays. |
+
+No v2.0.0 is needed for this removal. Published tags remain immutable.
+
+## Maintained line and patches
+
+Routine maintenance covers one line: the latest published stable release
+line. It receives the applicable bug and security fixes. New features go to
+ongoing development.
+
+A line's routine maintenance ends when the next stable feature release or
+product version is published. A prerelease, an open promotion PR or a
+stabilization branch of the next line does not end it.
+
+| Moment | Line receiving routine fixes | Earlier lines |
+| --- | --- | --- |
+| v1.0.0 is the latest stable release; `release/1.1` is being stabilized | 1.0.x | None yet. |
+| v1.1.0-rc.1 is published | 1.0.x | A prerelease changes nothing. |
+| v1.1.0 is published | 1.1.x | 1.0.x stops receiving routine patches. Its tags stay usable. |
+| v2.0.0 is published | 2.0.x | The final 1.N.x stops receiving routine patches. |
+| An approved exception publishes v1.0.5 after v1.1.0 | 1.1.x, unchanged | 1.0.x got one patch. It is not the latest line and its routine maintenance is not reopened. |
+
+This module is a test fixture library. Keeping an older line active can
+need a separate implementation and a native qualification of its own once
+the code has diverged. A consumer either stays on an existing tag, which
+remains available and immutable, or adopts the maintained line under the
+compatibility policy above. This section decides where fixes are published.
+It changes neither the grace period of a deprecated API nor any published
+API or tag.
+
+For each fix, identify from the shipped code and tests whether the
+maintained line is affected, and record the affected versions or the
+evidence that the defect is absent. Apply the correction and its regression
+coverage to the line, verify it on the line's candidate, including the
+original failing condition and the corrected result, and publish a patch
+tag. Carry the correction into any release under stabilization and ongoing
+development. The [branch flow](git-flow.md) describes where these PRs go.
+
+### A patch on an earlier line
+
+A patch on a line that is no longer maintained is a maintainer's decision for
+that one case, not a standing commitment. When one is approved, record the
+affected version, the reason, the validation and the publication target in
+the issue that asks for it and in the patch's release notes. Register the
+line's `support/X.Y` branch from its latest stable tag as the
+[branch flow](git-flow.md#stabilization-hotfixes-and-propagation) describes,
+adapt the correction to that line's API and dependencies, verify it on that
+line's own candidate and publish it from there. The patch does not make that
+line the latest (the GitHub Release is not marked as latest), and the next
+fix again goes only to the maintained line unless it is approved the same
+way.
 
 ## Candidate checklist
 
@@ -85,7 +155,10 @@ described above.
    of the testing guide. Check local Markdown links
    and compile new examples. Compilation is not a native run.
 4. Verify Code checks and the complete release matrix for the exact
-   production or support branch push commit that will receive the tag.
+   production or support branch push commit that will receive the tag. On
+   `main` the matrix is either the push run's own or the promotion PR's,
+   through a verified [promotion reuse](ci.md#promotion-reuse); the
+   `git_flow.py evidence` command says which and names the source run.
    Record the branch, full SHA, workflow runs, attempts, job conclusions and
    image references. Check the six [Code checks](ci.md#code-checks) and
    [release candidate validation](ci.md#release-candidate-validation),
@@ -121,6 +194,13 @@ line keeps the validated commit and the fix lands on `develop` only. A
 library fix that blocks the candidate lands on `develop`, the release line
 follows `develop` again, and the new commit is validated anew.
 
+Once a failure is confirmed to block the candidate, cancel that candidate's
+Release matrix run: its remaining results decide nothing, the new commit is
+validated from the start, and the run holds nearly every runner of the
+account ([Runner budget](ci.md#runner-budget)) that the fix's pull request
+needs. Do not open other pull requests during the merge window; one that does
+not fix a blocking failure waits behind the Release matrix.
+
 Do not dispatch duplicate native runs merely because a release is being
 prepared, and do not cancel existing main CI as part of documentation work.
 
@@ -134,8 +214,9 @@ release automatically.
 Before a separately authorized publication:
 
 - Select the final candidate SHA and prepare the release notes, including
-  compatibility and unresolved native limits. Name the stable lines currently
-  receiving fixes and any line retiring with this release.
+  compatibility and unresolved native limits. Name the line that receives
+  routine fixes from this release on and, for a new feature release or
+  product version, the line whose routine maintenance ends with it.
 - When publishing, check that the README does not tell release users to
   install an older tag.
 - Identify the release by its tag and keep the final SHA's validation evidence

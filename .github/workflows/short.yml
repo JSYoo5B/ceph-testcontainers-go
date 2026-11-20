@@ -49,6 +49,9 @@ jobs:
     uses: ./.github/workflows/tagged-runtime.yml
     with:
       category: short
+      # tag_scenarios.PULL_REQUEST_MAX_PARALLEL: one pull request does not
+      # hold the account's runners.
+      max_parallel: 8
       check_name: Short
       select_declarations: >-
         ${{ github.event_name == 'pull_request' &&

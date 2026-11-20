@@ -203,7 +203,7 @@ a scan or retain the vulnerability database. Every `setup-go` step sets
 patch release with known standard-library vulnerabilities is not used. The
 weekly scheduled run catches new advisories; the other Code checks jobs skip
 it. Dependabot targets `develop` for version updates. Its security alerts on
-the default branch also need the [supported-line backport procedure](releasing.md#supported-lines-and-backports).
+the default branch also need the [maintained-line patch procedure](releasing.md#maintained-line-and-patches).
 `.github/dependabot.yml` proposes Go module updates daily and GitHub
 Actions updates weekly.
 
@@ -533,33 +533,83 @@ process timeout.
 
 ### Runner budget
 
-The account runs at most 40 hosted jobs at once. The constants in
-`tag_scenarios.py` divide them:
+The account runs at most 40 hosted jobs at once, across all of its
+repositories: over three days with 4524 executed jobs in its active
+repositories, 40 jobs ran at once for 48 minutes in total and never more.
+`tag_scenarios.py` allocates them by what a run is for:
+
+| Run | Allocation | Reason |
+| --- | --- | --- |
+| Release matrix | Every runner except `OTHER_REPOSITORY_RUNNERS` | It gates a release during a merge window, when no other work of this repository should be in flight. |
+| Periodic | At most `PERIODIC_RUNNERS`, and nothing while a Release matrix run is in progress | It searches for flaky tests: slow is fine, taking the account is not. |
+| Pull request | No reserved share; each runtime caller is bounded by `PULL_REQUEST_MAX_PARALLEL` | A pull request validates its own change, and several are open at once. |
 
 | Constant | Value | Meaning |
 | --- | --- | --- |
-| `RUNNER_LIMIT` | 40 | The measured limit. |
-| `PULL_REQUEST_RUNNERS` | 16 | Runners that Periodic leaves free for pull requests. |
-| `RELEASE_MAX_PARALLEL` | short 3, topology 1, multicluster 1, recovery 1 | `max-parallel` of each release caller in Periodic and Release matrix. |
-| `ENVIRONMENT_MAX_PARALLEL` | 1 | `max-parallel` of the periodic environment caller. |
+| `RUNNER_LIMIT` | 40 | The measured limit of the account. |
+| `OTHER_REPOSITORY_RUNNERS` | 8 | Runners that the Release matrix leaves to the account's other repositories. |
+| `RELEASE_CALLER_RUNNER_MINUTES` | short 325, topology 335, multicluster 195, recovery 230 | Measured runner time of one release caller of each category. |
+| `ENVIRONMENT_MAX_PARALLEL` | 1 | `max-parallel` of an environment caller. |
+| `PERIODIC_RUNNERS` | 8 | Runners that every mode of Periodic holds together at most. |
+| `PERIODIC_CALLERS` | 4 | Release callers of a full periodic matrix that run at once (`max-parallel` of the caller matrix). |
+| `PERIODIC_MAX_PARALLEL` | 1 | `max-parallel` of each release caller in Periodic. |
 | `CAMPAIGN_MAX_PARALLEL` | 3 | `max-parallel` of the representative campaign. |
+| `STORAGE_MAX_PARALLEL` | 5 | `max-parallel` of a storage qualification dispatch. |
+| `PULL_REQUEST_MAX_PARALLEL` | short 8, topology 3, multicluster 2, recovery 2, environment 1 | `max-parallel` of a pull request's runtime caller of each category. |
+| `PULL_REQUESTS_AT_ONCE` | 2 | Pull requests that can each run every category beside the other repositories' runners. |
 
-An explicit full matrix run holds at most 19 runners and a campaign at most 3; both can
-run at once because their concurrency groups differ.
-`tag_scenarios.py releases --scope all` fails when the two together could
-exceed `RUNNER_LIMIT - PULL_REQUEST_RUNNERS`, and `--scope others` fails when
-the release callers alone could. Pull request workflows are unbounded. A bound
-only delays jobs: every entry still runs with `fail-fast: false`. Batches are
-not packed into shared jobs.
+**Release matrix.** `release_max_parallel` takes the share of 32 runners less
+the environment caller, splits it evenly between the supported releases, and
+splits a release's part between its four callers in proportion to
+`RELEASE_CALLER_RUNNER_MINUTES`, whole runners by largest remainder. With
+three releases that is short 3, topology 3, multicluster 2 and recovery 2 for
+each release: 31 runners with the environment caller. A new supported release
+changes the allocation without an edit here. The runner minutes come from a
+Release matrix run in which every job executed (506 jobs, about 3250 runner
+minutes): one release's callers took about 325 (short, 51 jobs), 335
+(topology, 59), 195 (multicluster, 23) and 230 (recovery, 34) minutes. That
+run was bounded at short 3 and one job for each other caller, held at most 19
+runners and took 5.86 hours, the serial time of one topology caller. With the
+allocation above the callers need about 108, 112, 98 and 115 minutes of
+runtime jobs, so a run is expected to take about two hours. The longest job
+was 19 minutes, so more runners would shorten it little.
+
+The Release matrix leaves no runner for this repository's pull requests. A
+pull request during a merge window is either a mistake or the fix of a defect
+that already blocks the candidate; in the second case the candidate's run is
+cancelled (see [Candidate failures](releasing.md#candidate-failures)), which
+frees its runners.
+
+**Periodic.** The daily sample is one job. A full matrix runs
+`PERIODIC_CALLERS` callers at once with one runtime job each beside the
+environment caller, five runners; a storage qualification dispatch and the
+sample wait in the same concurrency group. The representative campaign has a
+group of its own and can run beside a full matrix, so the two add up to
+eight. Every run of Periodic first asks whether a Release matrix run is
+queued or in progress (`periodic_gate.py --yield-to release-matrix.yml`) and,
+if one is, starts no native work; the skipped run is not repeated. A Release
+matrix run that starts after Periodic did runs beside it.
+
+**Pull requests.** The entry points pass their category's bound, so a pull
+request that runs every category holds at most 16 runners, and two such pull
+requests fit beside the other repositories' eight.
+
+`tag_scenarios.py releases --allocation release` fails when the Release
+matrix callers could exceed `RUNNER_LIMIT - OTHER_REPOSITORY_RUNNERS`, and
+`--allocation periodic` fails when the modes of Periodic together could
+exceed `PERIODIC_RUNNERS`. A bound only delays jobs: every entry still runs
+with `fail-fast: false`. Batches are not packed into shared jobs.
 
 The order of matrix entries is not a start order. GitHub creates a matrix's
 jobs in an order of its own, and while every runner of the account is busy,
 queued jobs start roughly in that creation order, so reordering the planner's
-entries does not move a long batch forward. Periodic's release callers
-are bound by their summed runner time: replaying measured durations onto their
-four slots longest-first shortens the makespan by under 1% and delays the mean
-completion by several minutes. A pull request run ends with its longest batch,
-so the batch layout sets its length, not the dispatch order (issue 388). A
+entries does not move a long batch forward. A release caller is bound by its
+summed runner time: replaying measured durations onto a caller's slots
+longest-first shortens the makespan by under 1% and delays the mean
+completion by several minutes. A pull request run ends with its longest batch
+or, when its callers' bounds hold jobs back, with a caller's summed runner time
+over its bound; the batch layout sets its length, not the dispatch order
+(issue 388). A
 long batch whose tests are independent opts them into
 `harness.ParallelWhenEnabled` rather than adding a job.
 
@@ -593,7 +643,9 @@ read as a hit or a write, and a missing log is `unknown`.
 Periodic primarily searches for flaky tests and patch-dependent differences.
 The daily `04:41 UTC` firing runs one bounded native allocation. Tuesday and
 Friday use `discovery`; the other five days use `rotate`. The scheduled run uses
-the default branch independently of candidate validation.
+the default branch independently of candidate validation. No mode starts
+native work while a Release matrix run is queued or in progress
+([Runner budget](#runner-budget)); that firing is skipped.
 
 | Mode | Selection | Invocation |
 | --- | --- | --- |
@@ -735,8 +787,8 @@ supported release with its codename and official image tag (Tentacle
 20.2.4, Umbrella 21.2.0 and Squid 19.2.5). The manual-full periodic and candidate `Releases` jobs generate the callers:
 
 ```sh
-python3 .github/scripts/tag_scenarios.py releases --scope all --check-prefix 'Periodic'
-python3 .github/scripts/tag_scenarios.py releases --scope all --check-prefix 'Release matrix'
+python3 .github/scripts/tag_scenarios.py releases --scope all --allocation periodic --check-prefix 'Periodic'
+python3 .github/scripts/tag_scenarios.py releases --scope all --allocation release --check-prefix 'Release matrix'
 ```
 
 Each release and category becomes a `<Codename> <category>` call of
@@ -798,8 +850,9 @@ here. The next job that pulls the tag uses it.
 
 ### Release candidate validation
 
-The release matrix runs independently for each PR targeting `main`,
-`release/*` or `support/*` and for a push to `main` or `support/*`.
+The release matrix runs for each PR targeting `main`, `release/*` or
+`support/*` and for a push to `main` or `support/*`; a push to `main` that
+is the merge of a validated promotion PR [reuses that PR's run](#promotion-reuse).
 A push to `release/*` runs none: a release line follows `develop`, and
 its candidate is validated once, by its promotion PR to `main`, instead of a
 second time on the same tree.
@@ -813,7 +866,71 @@ check name. The six Code checks also apply to each candidate.
 For publication, verify the push event, protected branch, candidate SHA,
 workflow identity and successful required jobs. A PR test-merge run
 qualifies that proposed merge. Tag the protected commit only after its own
-validation succeeds. See the [cutover and branch rules](git-flow.md).
+validation succeeds, by its own matrix or by a verified
+[promotion reuse](#promotion-reuse). See the
+[cutover and branch rules](git-flow.md).
+
+### Promotion reuse
+
+A promotion PR to `main` runs the full matrix on GitHub's test merge. The
+protected merge that follows usually has the same tree and the same two
+parents, and a second matrix on its push would test the same content again
+with hundreds of native jobs. The push run therefore asks first whether the
+promotion run already qualifies the pushed commit:
+
+1. `Releases` plans the matrix as always and writes its coverage: the
+   required cells, the image references, and one digest of both.
+2. On a promotion PR to `main`, once `Release candidate validated (main)` has
+   passed, the `Candidate receipt` job writes the artifact
+   `release-candidate-receipt-<attempt>` with two files. The receipt names
+   the commit that the workflow checked out with its tree and parents, the
+   PR, its head and target, the run and attempt, the coverage, the image
+   references and the jobs whose first failure a
+   [release retry](#release-retry) passed. The evidence file holds the
+   history row of every runtime job (what it checked out, built and pulled,
+   the image IDs and digests it resolved, each phase's result, its cleanup
+   check and the hashes of its logs and reports) and the report of each
+   retry. The jobs' own artifacts expire after 7 to 14 days; the receipt and
+   this evidence are kept for 90.
+3. On a push to `main`, `Promotion reuse` runs
+   `scripts/release/promotion_reuse.py verify` and writes
+   `promotion-reuse-receipt-<attempt>` with its decision and, on a reuse, its
+   own copy of the evidence file.
+
+The push reuses the promotion run only when all of this holds:
+
+| Check | Source |
+| --- | --- |
+| The pushed commit is a merge of two parents, the merge commit of exactly one merged PR that targeted this branch from a branch of this repository, and its second parent is that PR's head. | Repository and PR API |
+| A pull request run of `release-matrix.yml` for that head, of that head branch and repository, passed in its latest attempt, with the target's `Release candidate validated` job and every other job successful. | Actions API |
+| That attempt's candidate receipt exists, is not expired, and names the same run, attempt, PR, target and head. | Artifact |
+| The receipt's tested commit, read from the repository, has the tree and parents that the receipt records, and they equal the pushed merge's tree and parents. | Repository API |
+| The receipt's coverage digest equals the digest that `Releases` computed for the pushed tree. | This run |
+| The evidence file is the one that the receipt records, and it has exactly one unaltered history row for every runtime job of the run. Each row is of this run and the tested commit, has complete records and a passed cleanup check, names the images it ran if it needed Ceph, and either passed or failed only its native phase and passed its one retry, by the retry's own report and the job's retry step. | Artifact and Actions API |
+
+A live receipt therefore never qualifies a run by itself. Without the
+evidence file, or with an entry that is missing, foreign, altered, failed or
+uncleaned, the full matrix runs. The run's shorter-lived artifacts are not
+read, so their expiry changes nothing.
+
+The run's reported head alone proves nothing about what was tested; the
+receipt's tested commit, checked against the repository, does. The receipt
+is trusted because the workflow that wrote it came from the merged PR's head
+merged into the protected branch. A failed retry, a cancelled or incomplete
+run and a skipped job never qualify.
+
+When the push reuses the run, the runtime and environment callers are
+skipped and `Release candidate validated (main)` passes on the reuse receipt.
+In every other case, including an unreadable fact, an expired receipt or a
+failure of the `Promotion reuse` job itself, the full matrix runs and the
+gate needs it to pass; the reuse receipt then lists the reasons. On a reuse
+the receipt also summarizes what the jobs ran: every image reference with
+the image IDs and digests it resolved to, and the Go toolchains. The full
+native logs are not kept beyond their own artifacts' retention; the evidence
+holds their hashes.
+
+A push to `support/*` always runs its full matrix. The six Code checks run
+on the pushed commit in either case.
 
 ### Release retry
 
