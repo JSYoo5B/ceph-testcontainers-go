@@ -455,7 +455,9 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             workflow = self.workflows[self.RELEASE_MATRIX]
             self.assertRegex(workflow, r"(?m)^name: Release matrix$")
             branches = "    branches: [main, 'release/**', 'support/**']\n"
-            self.assertIn("\non:\n  push:\n" + branches + "  pull_request:\n" + branches +
+            # A release line's push runs no second matrix of its candidate.
+            pushed = "    branches: [main, 'support/**']\n"
+            self.assertIn("\non:\n  push:\n" + pushed + "  pull_request:\n" + branches +
                           "    types: [opened, synchronize, reopened, edited]\n  workflow_dispatch:\n", workflow)
             self.assertNotIn("paths", workflow)
             self.assertEqual(scalar(workflow, "cancel-in-progress"), "true")
