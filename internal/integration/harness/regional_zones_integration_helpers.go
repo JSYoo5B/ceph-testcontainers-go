@@ -108,9 +108,9 @@ func ZoneRouter(t *testing.T, layout ceph.ZoneLayout, zone string) ceph.ZoneEndp
 	return ceph.ZoneEndpoint{}
 }
 
-// zoneProbeScript measures TCP connection setup to a host and port: one SYN
+// ZoneProbeScript measures TCP connection setup to a host and port: one SYN
 // and its SYN-ACK, so each sample is one round trip of the same small packets.
-const zoneProbeScript = `import json, socket, sys, time
+const ZoneProbeScript = `import json, socket, sys, time
 host, port, count, timeout, gap = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), float(sys.argv[4]), float(sys.argv[5])
 samples, errors = [], []
 for _ in range(count):
@@ -273,7 +273,7 @@ func (s ZoneRTT) String() string {
 
 // ConnectRTT measures count TCP connection setups to target.
 func (p *ZoneProbe) ConnectRTT(ctx context.Context, target netip.AddrPort, count int, timeout time.Duration) (ZoneRTT, error) {
-	out, err := p.Exec(ctx, "python3", "-c", zoneProbeScript, target.Addr().String(), strconv.Itoa(int(target.Port())),
+	out, err := p.Exec(ctx, "python3", "-c", ZoneProbeScript, target.Addr().String(), strconv.Itoa(int(target.Port())),
 		strconv.Itoa(count), strconv.FormatFloat(timeout.Seconds(), 'f', 3, 64), "0.05")
 	if err != nil {
 		return ZoneRTT{}, err

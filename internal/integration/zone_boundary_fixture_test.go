@@ -6,6 +6,7 @@ package integration_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -156,21 +157,29 @@ func TestRoutesThroughAndInterfaces(t *testing.T) {
 }
 
 func TestZoneProbeAndRTT(t *testing.T) {
-	r, err := parseZoneProbe(4, `{"samples_ms": [0.21, 0.19, 0.25, 0.2], "errors": []}`)
+	base, err := harness.SummarizeZoneProbe(4, `{"samples_ms": [0.21, 0.19, 0.25, 0.2], "errors": []}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := summarizeZoneRTT(r)
 	if base.OK != 4 || math.Abs(base.Median-0.205) > 1e-9 || base.P10 != 0.19 || base.P90 != 0.25 {
 		t.Fatalf("summary %+v", base)
 	}
 	for _, bad := range []string{`{"samples_ms": [0.2], "errors": []}`, `{"samples_ms": [-1, 1, 1, 1], "errors": []}`, `not json`} {
-		if _, err := parseZoneProbe(4, bad); err == nil {
+		if _, err := harness.SummarizeZoneProbe(4, bad); err == nil {
 			t.Errorf("parsed %q", bad)
 		}
 	}
 	summary := func(samples ...float64) zoneRTT {
-		return summarizeZoneRTT(zoneProbeResult{Requested: len(samples), Samples: samples})
+		t.Helper()
+		raw, err := json.Marshal(map[string]any{"samples_ms": samples, "errors": []string{}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, err := harness.SummarizeZoneProbe(len(samples), string(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
 	}
 	shaped := summary(40.9, 40.8, 41.0, 40.95)
 	if err := checkZoneShaped(base, shaped, 40*time.Millisecond); err != nil {
@@ -202,7 +211,7 @@ func TestZoneProbeAndRTT(t *testing.T) {
 		"no route":           {[]string{"TimeoutError: timed out", "OSError: [Errno 101] Network is unreachable"}, false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			got := summarizeZoneRTT(zoneProbeResult{Requested: 2, Errors: check.errors})
+			got := zoneRTT{Requested: 2, Errors: check.errors}
 			if err := harness.CheckZoneCut(got); (err == nil) != check.timeout {
 				t.Fatalf("partition verdict: %v, want timeout=%t", err, check.timeout)
 			}

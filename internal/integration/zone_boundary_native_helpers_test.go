@@ -16,6 +16,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/moby/moby/api/types/container"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -26,27 +27,6 @@ import (
 // zoneBoundaryLabel marks every container and network that one boundary
 // creates with its run ID, so its teardown can prove that none is left.
 const zoneBoundaryLabel = "org.testcontainers.ceph.zone-boundary"
-
-// zoneProbeScript measures TCP connection setup to a host and port: one SYN
-// and its SYN-ACK, so each sample is one round trip of the same small packets.
-// It prints the samples in milliseconds and the errors as JSON.
-const zoneProbeScript = `import json, socket, sys, time
-host, port, count, timeout, gap = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), float(sys.argv[4]), float(sys.argv[5])
-samples, errors = [], []
-for _ in range(count):
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(timeout)
-    start = time.perf_counter()
-    try:
-        s.connect((host, port))
-        samples.append((time.perf_counter() - start) * 1000.0)
-    except OSError as e:
-        errors.append(type(e).__name__ + ": " + str(e))
-    finally:
-        s.close()
-    time.sleep(gap)
-print(json.dumps({"samples_ms": samples, "errors": errors}))
-`
 
 // zoneBoundary is the caller-owned routed boundary between the logical zones
 // of one cluster: a management bridge for its routers, one router per zone
@@ -250,17 +230,17 @@ func (b *zoneBoundary) routeLookup(ctx context.Context, endpoint string, dest ne
 }
 
 // probe measures count TCP connection setups from endpoint to target.
-func (b *zoneBoundary) probe(ctx context.Context, endpoint string, target netip.AddrPort, count int, timeout time.Duration) (zoneProbeResult, error) {
+func (b *zoneBoundary) probe(ctx context.Context, endpoint string, target netip.AddrPort, count int, timeout time.Duration) (zoneRTT, error) {
 	agent := b.agents[endpoint]
 	if agent == nil {
-		return zoneProbeResult{}, fmt.Errorf("%s has no agent", endpoint)
+		return zoneRTT{}, fmt.Errorf("%s has no agent", endpoint)
 	}
-	out, err := zoneExecOK(ctx, agent.ctr, "python3", "-c", zoneProbeScript, target.Addr().String(), strconv.Itoa(int(target.Port())),
+	out, err := zoneExecOK(ctx, agent.ctr, "python3", "-c", harness.ZoneProbeScript, target.Addr().String(), strconv.Itoa(int(target.Port())),
 		strconv.Itoa(count), strconv.FormatFloat(timeout.Seconds(), 'f', 3, 64), "0.05")
 	if err != nil {
-		return zoneProbeResult{}, err
+		return zoneRTT{}, err
 	}
-	return parseZoneProbe(count, out)
+	return harness.SummarizeZoneProbe(count, out)
 }
 
 // zoneCounters are a router interface's kernel counters.
