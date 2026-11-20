@@ -121,6 +121,13 @@ line keeps the validated commit and the fix lands on `develop` only. A
 library fix that blocks the candidate lands on `develop`, the release line
 follows `develop` again, and the new commit is validated anew.
 
+Once a failure is confirmed to block the candidate, cancel that candidate's
+Release matrix run: its remaining results decide nothing, the new commit is
+validated from the start, and the run holds nearly every runner of the
+account ([Runner budget](ci.md#runner-budget)) that the fix's pull request
+needs. Do not open other pull requests during the merge window; one that does
+not fix a blocking failure waits behind the Release matrix.
+
 Do not dispatch duplicate native runs merely because a release is being
 prepared, and do not cancel existing main CI as part of documentation work.
 

@@ -533,33 +533,81 @@ process timeout.
 
 ### Runner budget
 
-The account runs at most 40 hosted jobs at once. The constants in
-`tag_scenarios.py` divide them:
+The account runs at most 40 hosted jobs at once, across all of its
+repositories. `tag_scenarios.py` allocates them by what a run is for:
+
+| Run | Allocation | Reason |
+| --- | --- | --- |
+| Release matrix | Every runner except `OTHER_REPOSITORY_RUNNERS` | It gates a release during a merge window, when no other work of this repository should be in flight. |
+| Periodic | At most `PERIODIC_RUNNERS`, and nothing while a Release matrix run is in progress | It searches for flaky tests: slow is fine, taking the account is not. |
+| Pull request | No reserved share; each runtime caller is bounded by `PULL_REQUEST_MAX_PARALLEL` | A pull request validates its own change, and several are open at once. |
 
 | Constant | Value | Meaning |
 | --- | --- | --- |
-| `RUNNER_LIMIT` | 40 | The measured limit. |
-| `PULL_REQUEST_RUNNERS` | 16 | Runners that Periodic leaves free for pull requests. |
-| `RELEASE_MAX_PARALLEL` | short 3, topology 1, multicluster 1, recovery 1 | `max-parallel` of each release caller in Periodic and Release matrix. |
-| `ENVIRONMENT_MAX_PARALLEL` | 1 | `max-parallel` of the periodic environment caller. |
+| `RUNNER_LIMIT` | 40 | The measured limit of the account. |
+| `OTHER_REPOSITORY_RUNNERS` | 8 | Runners that the Release matrix leaves to the account's other repositories. |
+| `RELEASE_CALLER_RUNNER_MINUTES` | short 325, topology 335, multicluster 195, recovery 230 | Measured runner time of one release caller of each category. |
+| `ENVIRONMENT_MAX_PARALLEL` | 1 | `max-parallel` of an environment caller. |
+| `PERIODIC_RUNNERS` | 8 | Runners that every mode of Periodic holds together at most. |
+| `PERIODIC_CALLERS` | 4 | Release callers of a full periodic matrix that run at once (`max-parallel` of the caller matrix). |
+| `PERIODIC_MAX_PARALLEL` | 1 | `max-parallel` of each release caller in Periodic. |
 | `CAMPAIGN_MAX_PARALLEL` | 3 | `max-parallel` of the representative campaign. |
+| `STORAGE_MAX_PARALLEL` | 5 | `max-parallel` of a storage qualification dispatch. |
+| `PULL_REQUEST_MAX_PARALLEL` | short 8, topology 3, multicluster 2, recovery 2, environment 1 | `max-parallel` of a pull request's runtime caller of each category. |
+| `PULL_REQUESTS_AT_ONCE` | 2 | Pull requests that can each run every category beside the other repositories' runners. |
 
-An explicit full matrix run holds at most 19 runners and a campaign at most 3; both can
-run at once because their concurrency groups differ.
-`tag_scenarios.py releases --scope all` fails when the two together could
-exceed `RUNNER_LIMIT - PULL_REQUEST_RUNNERS`, and `--scope others` fails when
-the release callers alone could. Pull request workflows are unbounded. A bound
-only delays jobs: every entry still runs with `fail-fast: false`. Batches are
-not packed into shared jobs.
+**Release matrix.** `release_max_parallel` takes the share of 32 runners less
+the environment caller, splits it evenly between the supported releases, and
+splits a release's part between its four callers in proportion to
+`RELEASE_CALLER_RUNNER_MINUTES`, whole runners by largest remainder. With
+three releases that is short 3, topology 3, multicluster 2 and recovery 2 for
+each release: 31 runners with the environment caller. A new supported release
+changes the allocation without an edit here. The runner minutes come from a
+Release matrix run in which every job executed (506 jobs, about 3250 runner
+minutes): one release's callers took about 325 (short, 51 jobs), 335
+(topology, 59), 195 (multicluster, 23) and 230 (recovery, 34) minutes. That
+run was bounded at short 3 and one job for each other caller, held at most 19
+runners and took 5.86 hours, the serial time of one topology caller. With the
+allocation above the callers need about 108, 112, 98 and 115 minutes of
+runtime jobs, so a run is expected to take about two hours. The longest job
+was 19 minutes, so more runners would shorten it little.
+
+The Release matrix leaves no runner for this repository's pull requests. A
+pull request during a merge window is either a mistake or the fix of a defect
+that already blocks the candidate; in the second case the candidate's run is
+cancelled (see [Candidate failures](releasing.md#candidate-failures)), which
+frees its runners.
+
+**Periodic.** The daily sample is one job. A full matrix runs
+`PERIODIC_CALLERS` callers at once with one runtime job each beside the
+environment caller, five runners; a storage qualification dispatch and the
+sample wait in the same concurrency group. The representative campaign has a
+group of its own and can run beside a full matrix, so the two add up to
+eight. Every run of Periodic first asks whether a Release matrix run is
+queued or in progress (`periodic_gate.py --yield-to release-matrix.yml`) and,
+if one is, starts no native work; the skipped run is not repeated. A Release
+matrix run that starts after Periodic did runs beside it.
+
+**Pull requests.** The entry points pass their category's bound, so a pull
+request that runs every category holds at most 16 runners, and two such pull
+requests fit beside the other repositories' eight.
+
+`tag_scenarios.py releases --allocation release` fails when the Release
+matrix callers could exceed `RUNNER_LIMIT - OTHER_REPOSITORY_RUNNERS`, and
+`--allocation periodic` fails when the modes of Periodic together could
+exceed `PERIODIC_RUNNERS`. A bound only delays jobs: every entry still runs
+with `fail-fast: false`. Batches are not packed into shared jobs.
 
 The order of matrix entries is not a start order. GitHub creates a matrix's
 jobs in an order of its own, and while every runner of the account is busy,
 queued jobs start roughly in that creation order, so reordering the planner's
-entries does not move a long batch forward. Periodic's release callers
-are bound by their summed runner time: replaying measured durations onto their
-four slots longest-first shortens the makespan by under 1% and delays the mean
-completion by several minutes. A pull request run ends with its longest batch,
-so the batch layout sets its length, not the dispatch order (issue 388). A
+entries does not move a long batch forward. A release caller is bound by its
+summed runner time: replaying measured durations onto a caller's slots
+longest-first shortens the makespan by under 1% and delays the mean
+completion by several minutes. A pull request run ends with its longest batch
+or, when its callers' bounds hold jobs back, with a caller's summed runner time
+over its bound; the batch layout sets its length, not the dispatch order
+(issue 388). A
 long batch whose tests are independent opts them into
 `harness.ParallelWhenEnabled` rather than adding a job.
 
@@ -593,7 +641,9 @@ read as a hit or a write, and a missing log is `unknown`.
 Periodic primarily searches for flaky tests and patch-dependent differences.
 The daily `04:41 UTC` firing runs one bounded native allocation. Tuesday and
 Friday use `discovery`; the other five days use `rotate`. The scheduled run uses
-the default branch independently of candidate validation.
+the default branch independently of candidate validation. No mode starts
+native work while a Release matrix run is queued or in progress
+([Runner budget](#runner-budget)); that firing is skipped.
 
 | Mode | Selection | Invocation |
 | --- | --- | --- |
@@ -735,8 +785,8 @@ supported release with its codename and official image tag (Tentacle
 20.2.4, Umbrella 21.2.0 and Squid 19.2.5). The manual-full periodic and candidate `Releases` jobs generate the callers:
 
 ```sh
-python3 .github/scripts/tag_scenarios.py releases --scope all --check-prefix 'Periodic'
-python3 .github/scripts/tag_scenarios.py releases --scope all --check-prefix 'Release matrix'
+python3 .github/scripts/tag_scenarios.py releases --scope all --allocation periodic --check-prefix 'Periodic'
+python3 .github/scripts/tag_scenarios.py releases --scope all --allocation release --check-prefix 'Release matrix'
 ```
 
 Each release and category becomes a `<Codename> <category>` call of
