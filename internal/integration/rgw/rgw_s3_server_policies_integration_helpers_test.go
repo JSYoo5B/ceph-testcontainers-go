@@ -39,7 +39,7 @@ func rgwS3LifecycleAndObjectLock(t *testing.T, ctx context.Context, gateway *rgw
 			t.Fatal("lifecycle initial bytes differ")
 		}
 	}
-	stats, err := gateway.Admin(ctx, "bucket", "stats", "--bucket", strings.TrimPrefix(lifecycleBucket, "/"))
+	stats, err := rgwAdminStep(ctx, gateway, "bucket", "stats", "--bucket", strings.TrimPrefix(lifecycleBucket, "/"))
 	var native rgwMaintenanceBucket
 	if err != nil || json.Unmarshal(stats, &native) != nil || native.ID == "" || native.Owner != user.ID() {
 		t.Fatalf("native lifecycle bucket identity: %v", err)
@@ -49,7 +49,7 @@ func rgwS3LifecycleAndObjectLock(t *testing.T, ctx context.Context, gateway *rgw
 		t.Fatal(ctx.Err())
 	case <-time.After(3 * time.Second):
 	}
-	if _, err := gateway.Admin(ctx, "lc", "process", "--bucket", strings.TrimPrefix(lifecycleBucket, "/")); err != nil {
+	if _, err := rgwAdminStep(ctx, gateway, "lc", "process", "--bucket", strings.TrimPrefix(lifecycleBucket, "/")); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(30 * time.Second)

@@ -119,7 +119,7 @@ func testRGWRateLimitOverride(t *testing.T, opts ...testcontainers.ContainerCust
 	}
 	readUserPolicy := func() userPolicy {
 		t.Helper()
-		data, err := gateway.Admin(ctx, append([]string{"ratelimit", "get"}, userScope...)...)
+		data, err := rgwAdminStep(ctx, gateway, append([]string{"ratelimit", "get"}, userScope...)...)
 		if err != nil {
 			var failure *ceph.NativeFailure
 			if !errors.As(err, &failure) || failure.ExitCode != 254 || failure.Errno != "ENOENT" {

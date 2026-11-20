@@ -77,7 +77,7 @@ func rgwRoles(t *testing.T) {
 
 	// A role the test creates natively is the caller's: the fixture refuses
 	// its name and never changes it.
-	if _, err := gateway.Admin(ctx, "role", "create", "--role-name", "tc-caller-role", "--path", "/", "--assume-role-policy-doc", trust); err != nil {
+	if _, err := rgwAdminStep(ctx, gateway, "role", "create", "--role-name", "tc-caller-role", "--path", "/", "--assume-role-policy-doc", trust); err != nil {
 		t.Fatal(err)
 	}
 	callerRole := rgwRoleDocument(t, ctx, gateway, "tc-caller-role")
@@ -161,7 +161,7 @@ func rgwRoles(t *testing.T) {
 
 	// A policy the test puts natively is the caller's: Remove refuses the
 	// role and changes nothing until the test removes it again.
-	if _, err := gateway.Admin(ctx, "role-policy", "put", "--role-name", "tc-reader", "--policy-name", "caller-policy", "--policy-doc", read); err != nil {
+	if _, err := rgwAdminStep(ctx, gateway, "role-policy", "put", "--role-name", "tc-reader", "--policy-name", "caller-policy", "--policy-doc", read); err != nil {
 		t.Fatal(err)
 	}
 	if err := role.Remove(ctx); !errors.Is(err, ceph.ErrInvalidRequest) {
@@ -170,7 +170,7 @@ func rgwRoles(t *testing.T) {
 	if edited := rgwRoleDocument(t, ctx, gateway, "tc-reader"); edited.ID != native.ID || len(edited.Policies) != 2 {
 		t.Fatal("the refused Remove changed the role")
 	}
-	if _, err := gateway.Admin(ctx, "role-policy", "delete", "--role-name", "tc-reader", "--policy-name", "caller-policy"); err != nil {
+	if _, err := rgwAdminStep(ctx, gateway, "role-policy", "delete", "--role-name", "tc-reader", "--policy-name", "caller-policy"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -246,7 +246,7 @@ type rgwRole struct {
 // rgwRoleDocument reads role name independently of the typed API.
 func rgwRoleDocument(t *testing.T, ctx context.Context, gateway *rgw.Gateway, name string) rgwRole {
 	t.Helper()
-	data, err := gateway.Admin(ctx, "role", "get", "--role-name", name)
+	data, err := rgwAdminStep(ctx, gateway, "role", "get", "--role-name", name)
 	if err != nil {
 		t.Fatalf("native role get: %v", err)
 	}
@@ -261,7 +261,7 @@ func rgwRoleDocument(t *testing.T, ctx context.Context, gateway *rgw.Gateway, na
 // exits with ENOENT.
 func rgwRequireRoleAbsent(t *testing.T, ctx context.Context, gateway *rgw.Gateway, name string) {
 	t.Helper()
-	_, err := gateway.Admin(ctx, "role", "get", "--role-name", name)
+	_, err := rgwAdminStep(ctx, gateway, "role", "get", "--role-name", name)
 	var failure *ceph.NativeFailure
 	if !errors.As(err, &failure) || failure.ExitCode != 2 {
 		t.Fatalf("role %s is not absent: %v", name, err)
