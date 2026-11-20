@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"path"
 
 	"slices"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/testcontainers/testcontainers-go"
+	tcexec "github.com/testcontainers/testcontainers-go/exec"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
@@ -101,17 +103,40 @@ func TestImmutableObjectCache(t *testing.T) {
 	for i := range 16 {
 		objects[fmt.Sprintf("%s.%016x", parent.Prefix, i)] = true
 	}
+	// The OSD adds a finished operation to its history some time after its
+	// reply, so a history read right after the client's export can miss the
+	// export's reads. Each observation first stats a new, absent marker
+	// object and waits until the history holds that stat: the OSD adds
+	// operations in the order they finished, so the history then holds
+	// every read that finished before the marker.
+	barriers := 0
 	history := func() map[string]string {
 		t.Helper()
-		out, err := osds[0].AdminSocket(ctx, "dump_historic_ops")
+		barriers++
+		marker := fmt.Sprintf("tc-history-barrier-%d", barriers)
+		code, out, err := client.Exec(ctx, []string{"rados", "--id", id, "-p", pool, "stat", marker}, tcexec.Multiplexed())
 		if err != nil {
 			t.Fatal(err)
 		}
-		reads, err := harness.RBDDataReadsInHistory(out, objects)
-		if err != nil {
-			t.Fatal(err)
+		text, _ := io.ReadAll(out)
+		if code == 0 || !strings.Contains(string(text), "No such file or directory") {
+			t.Fatalf("stat of the absent history marker %s exited %d: %s", marker, code, text)
 		}
-		return reads
+		observed, err := harness.Observe(ctx, 30*time.Second, 10*time.Second, 100*time.Millisecond, func(probeCtx context.Context) (map[string]string, bool, error) {
+			out, err := osds[0].AdminSocket(probeCtx, "dump_historic_ops")
+			if err != nil {
+				return nil, false, err
+			}
+			if seen, err := harness.OSDHistoryNamesObject(out, marker); err != nil || !seen {
+				return nil, false, err
+			}
+			reads, err := harness.RBDDataReadsInHistory(out, objects)
+			return reads, err == nil, err
+		})
+		if err != nil {
+			t.Fatalf("OSD history after marker %s: %v", marker, err)
+		}
+		return observed.Value
 	}
 	beforeParent := history()
 	want := checksum("parent@base", nil)

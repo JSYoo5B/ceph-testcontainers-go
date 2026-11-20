@@ -17,14 +17,11 @@ import (
 var rbdDataObjectToken = regexp.MustCompile(`[[:alnum:]_.-]+`)
 var rbdDataReadOp = regexp.MustCompile(`(\[|,)[ ]*(read|sparse-read)[ ]`)
 
-// RBDDataReadsInHistory selects reads of exact RBD object names. Each key
-// identifies a native request by its description and start time.
-func RBDDataReadsInHistory(out []byte, objects map[string]bool) (map[string]string, error) {
+// historicOSDOps decodes the operations of one dump_historic_ops report.
+// Every operation must carry a description.
+func historicOSDOps(out []byte) ([]historicOSDOp, error) {
 	var history struct {
-		Ops *[]struct {
-			Description string `json:"description"`
-			Started     string `json:"initiated_at"`
-		} `json:"ops"`
+		Ops *[]historicOSDOp `json:"ops"`
 	}
 	if err := json.Unmarshal(out, &history); err != nil {
 		return nil, err
@@ -32,25 +29,71 @@ func RBDDataReadsInHistory(out []byte, objects map[string]bool) (map[string]stri
 	if history.Ops == nil {
 		return nil, errors.New("OSD history is missing ops")
 	}
-	reads := map[string]string{}
 	for _, op := range *history.Ops {
 		if strings.TrimSpace(op.Description) == "" {
 			return nil, errors.New("OSD history operation is missing its description")
 		}
-		if !strings.HasPrefix(op.Description, "osd_op(") || !rbdDataReadOp.MatchString(op.Description) {
+	}
+	return *history.Ops, nil
+}
+
+type historicOSDOp struct {
+	Description string `json:"description"`
+	Started     string `json:"initiated_at"`
+}
+
+// namedObject returns the first whole token of an osd_op description that
+// objects holds.
+func (op historicOSDOp) namedObject(objects map[string]bool) (string, bool) {
+	if !strings.HasPrefix(op.Description, "osd_op(") {
+		return "", false
+	}
+	for _, token := range rbdDataObjectToken.FindAllString(op.Description, -1) {
+		if objects[token] {
+			return token, true
+		}
+	}
+	return "", false
+}
+
+// RBDDataReadsInHistory selects reads of exact RBD object names. Each key
+// identifies a native request by its description and start time.
+func RBDDataReadsInHistory(out []byte, objects map[string]bool) (map[string]string, error) {
+	ops, err := historicOSDOps(out)
+	if err != nil {
+		return nil, err
+	}
+	reads := map[string]string{}
+	for _, op := range ops {
+		if !rbdDataReadOp.MatchString(op.Description) {
 			continue
 		}
-		for _, token := range rbdDataObjectToken.FindAllString(op.Description, -1) {
-			if objects[token] {
-				if op.Started == "" {
-					return nil, errors.New("RBD data read is missing its start time")
-				}
-				reads[op.Started+" "+op.Description] = token
-				break
+		if token, ok := op.namedObject(objects); ok {
+			if op.Started == "" {
+				return nil, errors.New("RBD data read is missing its start time")
 			}
+			reads[op.Started+" "+op.Description] = token
 		}
 	}
 	return reads, nil
+}
+
+// OSDHistoryNamesObject reports whether one dump_historic_ops report holds
+// an osd_op of any kind on the exact object. An OSD adds a finished
+// operation to its history after the reply, in the order the operations
+// finished, so a history that holds a later marker operation holds every
+// operation that finished before it.
+func OSDHistoryNamesObject(out []byte, object string) (bool, error) {
+	ops, err := historicOSDOps(out)
+	if err != nil {
+		return false, err
+	}
+	for _, op := range ops {
+		if _, ok := op.namedObject(map[string]bool{object: true}); ok {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // OSDReadCounters is the read part of one OSD's `perf dump osd`. The

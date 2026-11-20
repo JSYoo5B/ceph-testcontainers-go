@@ -50,3 +50,26 @@ func TestRBDHistoryRequiresDescriptionsBeforeExcludingOperations(t *testing.T) {
 		t.Fatalf("positive: %v %v", reads, err)
 	}
 }
+
+func TestOSDHistoryNamesObjectRequiresTheExactObject(t *testing.T) {
+	const marker = "tc-history-barrier-1"
+	for _, input := range []string{`{}`, `null`, `{"ops":null}`, `{"ops":[{}]}`, `{"ops":[{"description":" "}]}`} {
+		if _, err := OSDHistoryNamesObject([]byte(input), marker); err == nil {
+			t.Fatalf("accepted %s", input)
+		}
+	}
+	for _, input := range []string{
+		`{"ops":[]}`,
+		`{"ops":[{"description":"osd_op(client.1 2.0 2:abc:::tc-history-barrier-10:head [stat])"}]}`,
+		`{"ops":[{"description":"osd_op(client.1 2.0 2:abc:::tc-history-barrier-1x:head [stat])"}]}`,
+		`{"ops":[{"description":"pg_update_log tc-history-barrier-1"}]}`,
+	} {
+		if seen, err := OSDHistoryNamesObject([]byte(input), marker); err != nil || seen {
+			t.Fatalf("another object in %s: %t, %v", input, seen, err)
+		}
+	}
+	input := `{"ops":[{"description":"osd_op(client.1 rbd_data.1.0000 [read 0~1])","initiated_at":"t0"},{"description":"osd_op(client.1.0:7 2.0 2:abc:::tc-history-barrier-1:head [stat] snapc 0=[] ondisk+read+known_if_redirected e20)"}]}`
+	if seen, err := OSDHistoryNamesObject([]byte(input), marker); err != nil || !seen {
+		t.Fatalf("marker: %t, %v", seen, err)
+	}
+}
