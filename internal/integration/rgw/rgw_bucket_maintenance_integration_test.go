@@ -64,13 +64,11 @@ func TestRGWBucketMaintenance(t *testing.T) {
 				t.Fatal(err)
 			}
 			client := harness.S3HTTPClient{Endpoint: endpoint, AccessKey: access, SecretKey: secret, Region: gateway.Region, HTTP: &http.Client{Timeout: 15 * time.Second}}
+			// Each native command has its own bound: one that hangs fails
+			// there, and not at the end of this subtest's whole context.
 			admin := func(args ...string) []byte {
 				t.Helper()
-				data, err := gateway.Admin(ctx, args...)
-				if err != nil {
-					t.Fatalf("bucket fixture native %v: %v", args, err)
-				}
-				return data
+				return rgwRequireAdminStep(t, ctx, cluster, gateway, args...)
 			}
 			const limited, outside = "tc-maintenance-limited", "tc-maintenance-outside"
 			for _, bucket := range []string{limited, outside} {
@@ -100,7 +98,7 @@ func TestRGWBucketMaintenance(t *testing.T) {
 			}
 			payload := bytes.Repeat([]byte("bucket maintenance durable bytes\n"), 2048)
 			client.Request(t, ctx, http.MethodPut, "/"+limited+"/kept", payload, http.StatusOK)
-			rgwSyncStats(t, ctx, cluster, gateway, "user", "stats", "--uid", user.ID(), "--sync-stats")
+			admin("user", "stats", "--uid", user.ID(), "--sync-stats")
 			deadline := time.Now().Add(2 * time.Minute)
 			for {
 				code, body, _ := rgwMaintenanceRequest(t, ctx, client, http.MethodPut, "/"+limited+"/rejected", []byte("over quota"))
