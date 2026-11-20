@@ -27,6 +27,9 @@ const (
 	// it pass its own standard input to the command; see Script.
 	InputVariable = "TC_SUPERVISED_INPUT"
 	roleTermGrace = "TC_SUPERVISED_TERM_GRACE"
+	// deadlineSignalVariable gives the supervisor the signal of
+	// WithDeadlineSignal.
+	deadlineSignalVariable = "TC_SUPERVISED_DEADLINE_SIGNAL"
 	// CancelTimeout bounds one Cancel.
 	CancelTimeout = 10 * time.Second
 	// ExecCushion is the default reporting allowance for short control reads.
@@ -72,6 +75,12 @@ const (
 // The marker record ends with a newline, so that a canceler never takes a
 // partly written record for one of another instance.
 //
+// With a deadline signal (WithDeadlineSignal) and a termination grace, the
+// supervisor stops a command that reaches the deadline with that signal in
+// place of SIGTERM, keeps reading both streams for the grace or until the
+// command ends, kills the group and reads what the group left in the pipes.
+// The command then runs without core files. A cancellation is unchanged.
+//
 // With InputVariable set to a byte limit, the supervisor gives the command a
 // pipe as its standard input. It reads its own standard input as soon as data
 // arrives, so that a writer never waits for a command that does not read,
@@ -85,7 +94,7 @@ const Script = `import base64,errno,json,os,select,signal,subprocess,sys,time
 if not all(hasattr(os, name) for name in ("waitid","P_PID","WEXITED","WNOHANG","WNOWAIT","killpg","setsid")):
  sys.exit(123)
 marker=os.environ["TC_SUPERVISED"]; cancel_marker=marker+".cancel"
-term_grace=float(os.environ.get("TC_SUPERVISED_TERM_GRACE","0"))
+term_grace=float(os.environ.get("TC_SUPERVISED_TERM_GRACE","0")); deadline_signal=int(os.environ.get("TC_SUPERVISED_DEADLINE_SIGNAL","0"))
 input_limit=int(os.environ.get("TC_SUPERVISED_INPUT","-1")); source_open=input_limit>=0; pending=bytearray(); received=0; delivered=0; input_eof=False; child_in=None
 os.makedirs(os.path.dirname(marker),mode=0o700,exist_ok=True)
 try: fd=os.open(marker,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
@@ -154,8 +163,36 @@ def kill_owned_group(graceful=False):
  try: os.killpg(p.pid,signal.SIGKILL)
  except ProcessLookupError: pass
  group_signaled=True
+def take(stream):
+ data=os.read(stream.fileno(),32768)
+ if not data:
+  del streams[stream]
+  return
+ channel=streams[stream]; room=len(data) if limits[channel]<0 else max(0,limits[channel]-len(output[channel]))
+ output[channel].extend(data[:room]); clipped[channel]=clipped[channel] or len(data)>room
+def stop_at_deadline():
+ if deadline_signal<=0 or term_grace<=0:
+  kill_owned_group(graceful=True)
+  return
+ try: os.killpg(p.pid,deadline_signal)
+ except ProcessLookupError: pass
+ stop=time.monotonic()+term_grace
+ while time.monotonic()<stop and not child_exited():
+  if not streams: time.sleep(0.01)
+  for stream in (select.select(list(streams),[],[],0.01)[0] if streams else ()): take(stream)
+ kill_owned_group()
+ # The group is gone. A descendant that left it may keep a pipe open.
+ while streams:
+  ready=select.select(list(streams),[],[],0.2)[0]
+  if not ready: break
+  for stream in ready: take(stream)
+def without_core():
+ try:
+  import resource
+  resource.setrlimit(resource.RLIMIT_CORE,(0,0))
+ except Exception: pass
 try:
- try: p=subprocess.Popen(sys.argv[4:],stdin=subprocess.PIPE if source_open else None,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
+ try: p=subprocess.Popen(sys.argv[4:],stdin=subprocess.PIPE if source_open else None,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True,preexec_fn=without_core if deadline_signal>0 else None)
  except OSError as e: sys.exit(120 if e.errno in (errno.ENOENT,errno.EACCES,errno.ENOEXEC,errno.ENOTDIR,errno.EISDIR,errno.ELOOP,errno.ENAMETOOLONG) else 122)
  launched=True
  if source_open:
@@ -166,25 +203,19 @@ try:
    remaining=deadline-time.monotonic()
    if remaining<=0:
     timed_out=True
-    kill_owned_group(graceful=True)
+    stop_at_deadline()
     break
    if os.path.exists(cancel_marker):
     kill_owned_group(graceful=True)
     break
-   for stream in (pump(streams,min(remaining,0.1)) if input_limit>=0 else select.select(list(streams),[],[],min(remaining,0.1))[0]):
-    data=os.read(stream.fileno(),32768)
-    if not data:
-     del streams[stream]
-     continue
-    channel=streams[stream]; room=len(data) if limits[channel]<0 else max(0,limits[channel]-len(output[channel]))
-    output[channel].extend(data[:room]); clipped[channel]=clipped[channel] or len(data)>room
+   for stream in (pump(streams,min(remaining,0.1)) if input_limit>=0 else select.select(list(streams),[],[],min(remaining,0.1))[0]): take(stream)
   # Observe exit without releasing the child's PID/PGID identity. Reaping or
   # Popen.poll() before group cleanup could signal a subsequently reused group.
   while not group_signaled:
    remaining=deadline-time.monotonic()
    if remaining<=0:
     timed_out=True
-    kill_owned_group(graceful=True)
+    stop_at_deadline()
     break
    if os.path.exists(cancel_marker):
     kill_owned_group(graceful=True)
@@ -400,6 +431,18 @@ func RunRoleCommand(ctx context.Context, ctr testcontainers.Container, label str
 	return report, err
 }
 
+type deadlineSignalKey struct{}
+
+// WithDeadlineSignal makes a RunRoleCommand under the returned context stop a
+// command that reaches the supervisor's own limit with signal in place of
+// SIGTERM, and return what the command wrote while it handled the signal in
+// the report's streams. A program whose handler of that signal reports where
+// it was, as Ceph's does for SIGABRT, thereby says where it was stuck. The
+// command runs without core files. A stop for another reason is unchanged.
+func WithDeadlineSignal(ctx context.Context, signal int) context.Context {
+	return context.WithValue(ctx, deadlineSignalKey{}, signal)
+}
+
 // MissingPython reports a missing interpreter or required Linux process API.
 func MissingPython(err error) bool {
 	var exit *ExitError
@@ -426,6 +469,9 @@ func run(ctx, attempt context.Context, ctr testcontainers.Container, label, seco
 	env := []string{MarkerVariable + "=" + marker}
 	if confirm {
 		env = append(env, roleTermGrace+"=2")
+		if signal, ok := ctx.Value(deadlineSignalKey{}).(int); ok && signal > 0 {
+			env = append(env, deadlineSignalVariable+"="+strconv.Itoa(signal))
+		}
 	}
 	code, reader, err := ctr.Exec(attempt, command, tcexec.Multiplexed(), tcexec.WithEnv(env))
 	if err != nil {
