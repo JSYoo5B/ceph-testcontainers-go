@@ -71,9 +71,27 @@ env:
   GOPROXY: 'https://proxy.golang.org|direct'
 
 jobs:
+  # Periodic starts no native work while a Release matrix run is in
+  # progress: the release gate takes the runners, and this run is skipped.
+  yield:
+    name: Yield to a release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      clear: ${{ steps.yield.outputs.clear }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Check for a Release matrix run in progress
+        id: yield
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/periodic_gate.py --yield-to release-matrix.yml
   sample-plan:
     name: Sample plan
-    if: github.event_name == 'schedule' || inputs.mode == 'rotate' || inputs.mode == 'discovery' || inputs.mode == 'targeted'
+    needs: yield
+    if: needs.yield.outputs.clear == 'true' && (github.event_name == 'schedule' || inputs.mode == 'rotate' || inputs.mode == 'discovery' || inputs.mode == 'targeted')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     outputs:
@@ -160,7 +178,8 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
   gate:
-    if: github.event_name == 'workflow_dispatch' && (inputs.mode == 'full' || inputs.mode == 'representative')
+    needs: yield
+    if: needs.yield.outputs.clear == 'true' && github.event_name == 'workflow_dispatch' && (inputs.mode == 'full' || inputs.mode == 'representative')
     name: Gate
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -210,12 +229,16 @@ jobs:
       # supported release exactly once.
       - name: Expand supported releases and prove required coverage
         id: releases
-        run: python3 .github/scripts/tag_scenarios.py releases --scope all --check-prefix 'Periodic' --github-output "$GITHUB_OUTPUT"
+        run: python3 .github/scripts/tag_scenarios.py releases --scope all --allocation periodic --check-prefix 'Periodic' --github-output "$GITHUB_OUTPUT"
   runtime:
     name: ${{ matrix.title }}
     needs: releases
     strategy:
       fail-fast: false
+      # tag_scenarios.PERIODIC_CALLERS: the callers that run at once, each
+      # with tag_scenarios.PERIODIC_MAX_PARALLEL runtime jobs, keep Periodic
+      # within tag_scenarios.PERIODIC_RUNNERS.
+      max-parallel: 4
       matrix: ${{ fromJSON(needs.releases.outputs.matrix) }}
     uses: ./.github/workflows/tagged-runtime.yml
     with:
@@ -223,8 +246,6 @@ jobs:
       category: ${{ matrix.category }}
       check_name: ${{ matrix.check_name }}
       release: ${{ matrix.release }}
-      # tag_scenarios.RELEASE_MAX_PARALLEL: every release caller together
-      # leaves tag_scenarios.PULL_REQUEST_RUNNERS for pull requests.
       max_parallel: ${{ matrix.max_parallel }}
   # The representative campaign. Pin fixes the commit once; every attempt of
   # Representative then checks out exactly that commit and pulls the role
@@ -262,7 +283,7 @@ jobs:
     with:
       networks: default
       # tag_scenarios.CAMPAIGN_MAX_PARALLEL: what a full matrix run, which
-      # can run at the same time, leaves of the periodic runner budget.
+      # can run at the same time, leaves of tag_scenarios.PERIODIC_RUNNERS.
       max_parallel: 3
       category: representative
       check_name: Periodic representative
@@ -276,7 +297,8 @@ jobs:
   # repeatedly with auto/always/pressure for equivalent-source comparisons.
   storage:
     name: Storage qualification
-    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'storage'
+    needs: yield
+    if: needs.yield.outputs.clear == 'true' && github.event_name == 'workflow_dispatch' && inputs.mode == 'storage'
     uses: ./.github/workflows/tagged-runtime.yml
     with:
       category: selected
@@ -295,7 +317,7 @@ jobs:
   # is a commit. The runtime jobs read summary.json for their failure notes.
   history:
     name: History
-    needs: [gate, environment, releases, runtime, pin, representative, storage, sample-plan, sample]
+    needs: [yield, gate, environment, releases, runtime, pin, representative, storage, sample-plan, sample]
     if: always() && (needs.gate.outputs.run == 'true' || needs.gate.outputs.campaign == 'true' || needs.sample-plan.result == 'success')
     runs-on: ubuntu-24.04
     timeout-minutes: 15

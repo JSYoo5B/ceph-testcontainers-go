@@ -33,4 +33,7 @@ jobs:
     uses: ./.github/workflows/tagged-runtime.yml
     with:
       category: environment
+      # tag_scenarios.PULL_REQUEST_MAX_PARALLEL: one pull request does not
+      # hold the account's runners.
+      max_parallel: 1
       check_name: Docker checks

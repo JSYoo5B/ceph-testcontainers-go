@@ -225,8 +225,8 @@ jobs:
     timeout-minutes: ${{ inputs.require_profiles && matrix.retry_job_timeout || matrix.job_timeout }}
     strategy:
       fail-fast: false
-      # The caller's runner budget (tag_scenarios.RELEASE_MAX_PARALLEL);
-      # bounding it delays jobs and never removes one.
+      # The caller's runner budget (docs/contributing/ci.md, "Runner
+      # budget"); bounding it delays jobs and never removes one.
       max-parallel: ${{ inputs.max_parallel }}
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:

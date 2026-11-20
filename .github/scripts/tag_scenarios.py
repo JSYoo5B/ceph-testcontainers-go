@@ -770,31 +770,81 @@ def repeat_matrix(entries, repetitions):
 RELEASE_SCOPES = ("all", "others")
 # Runner budgets, measured with ci_measurements.py (docs/contributing/ci.md,
 # "Runner budget"). A job that waited for a runner started when 39 of this
-# account's jobs ran, so 40 hosted jobs run at once. A pull request
-# execution keeps PULL_REQUEST_RUNNERS of them free, so Periodic holds
-# at most the rest: its release callers, its environment caller and its
-# representative campaign together. Each release caller's runtime matrix
-# runs at most its category's number of jobs at once. The split follows each
-# category's workload: short receives the larger share while all supported
-# releases and the campaign together stay within the periodic budget.
+# account's jobs ran, so 40 hosted jobs run at once, across every repository
+# of the account.
 #
-# The full matrix and the representative campaign run in separate
-# concurrency groups (PERIODIC_GROUP_SUFFIX), so that neither replaces the
-# other's waiting run; a run of each can therefore be in progress at once.
-# The campaign's max-parallel is what the full matrix leaves of the periodic
-# share, and periodic_runner_budget adds the groups up.
+# The Release matrix gates a release during a merge window, so it takes
+# every runner except OTHER_REPOSITORY_RUNNERS, which stay free for the
+# account's other repositories; it leaves none for this repository's pull
+# requests. Its share is divided between the release callers in proportion
+# to RELEASE_CALLER_RUNNER_MINUTES, the runner time one caller of each
+# category took, so that the callers of a run end at about the same time.
+#
+# Periodic searches for flaky tests and must never take the account: its
+# full matrix runs PERIODIC_CALLERS release callers at once with
+# PERIODIC_MAX_PARALLEL runtime jobs each, and every mode together stays
+# within PERIODIC_RUNNERS. The full matrix and the representative campaign
+# run in separate concurrency groups (PERIODIC_GROUP_SUFFIX), so that neither
+# replaces the other's waiting run; a run of each can be in progress at once
+# and periodic_runner_budget adds the groups up.
+#
+# A pull request has no reserved share. Its runtime caller of each category
+# runs at most PULL_REQUEST_MAX_PARALLEL jobs at once, so that one pull
+# request does not hold the account: PULL_REQUESTS_AT_ONCE pull requests that
+# each run every category fit beside the other repositories' runners.
 RUNNER_LIMIT = 40
-PULL_REQUEST_RUNNERS = 16
-RELEASE_MAX_PARALLEL = {"short": 3, "topology": 1, "multicluster": 1, "recovery": 1}
+OTHER_REPOSITORY_RUNNERS = 8
+RELEASE_CALLER_RUNNER_MINUTES = {"short": 325, "topology": 335, "multicluster": 195, "recovery": 230}
 ENVIRONMENT_MAX_PARALLEL = 1
+PERIODIC_RUNNERS = 8
+PERIODIC_CALLERS = 4
+PERIODIC_MAX_PARALLEL = 1
 CAMPAIGN_MAX_PARALLEL = 3
-# A storage qualification dispatch shares the full matrix's group: the full
-# matrix and a campaign already hold every runner that pull requests leave.
+# A storage qualification dispatch and the daily sample share the full
+# matrix's group, so they wait for it instead of adding to it.
 STORAGE_MAX_PARALLEL = 5
-PERIODIC_GROUP_SUFFIX = {"full": "", "representative": "-campaign", "storage": ""}
+SAMPLE_MAX_PARALLEL = 1
+PERIODIC_GROUP_SUFFIX = {"full": "", "representative": "-campaign", "storage": "", "sample": ""}
+PULL_REQUEST_MAX_PARALLEL = {"short": 8, "topology": 3, "multicluster": 2, "recovery": 2, "environment": 1}
+PULL_REQUESTS_AT_ONCE = 2
+ALLOCATIONS = ("release", "periodic")
 
 
-def release_matrix(scope, check_prefix, current=None):
+def release_max_parallel(releases=None, share=None, minutes=None):
+    """max-parallel of a Release matrix caller of each category.
+
+    The share (every runner but OTHER_REPOSITORY_RUNNERS) less the
+    environment caller is split evenly between the releases, and a release's
+    part between its callers in proportion to minutes, the runner time of
+    one caller per category. Whole runners go by largest remainder, ties in
+    category order, and every caller keeps at least one."""
+    releases = len(images.SUPPORTED_RELEASES) if releases is None else releases
+    share = RUNNER_LIMIT - OTHER_REPOSITORY_RUNNERS if share is None else share
+    minutes = RELEASE_CALLER_RUNNER_MINUTES if minutes is None else minutes
+    categories = [category for category in RUNTIME_CATEGORIES if category != "environment"]
+    if sorted(minutes) != sorted(categories) or any(value <= 0 for value in minutes.values()):
+        raise ValueError("runner minutes must be positive for exactly the release-bound categories")
+    if releases < 1:
+        raise ValueError("no release to allocate runners to")
+    part = (share - ENVIRONMENT_MAX_PARALLEL) // releases
+    if part < len(categories):
+        raise ValueError("a share of " + str(share) + " runners leaves a release's " + str(len(categories))
+                         + " callers fewer than one runner each")
+    total = sum(minutes.values())
+    exact = {category: part * minutes[category] / total for category in categories}
+    caps = {category: max(1, int(exact[category])) for category in categories}
+    # Raising a caller to its minimum of one can use more than the floors
+    # did; the callers with the most runners then give the excess back.
+    while sum(caps.values()) > part:
+        caps[max(categories, key=lambda category: (caps[category], -categories.index(category)))] -= 1
+    by_remainder = sorted(categories, key=lambda category: (-(exact[category] - int(exact[category])),
+                                                            categories.index(category)))
+    for category in by_remainder[:part - sum(caps.values())]:
+        caps[category] += 1
+    return caps
+
+
+def release_matrix(scope, check_prefix, current=None, allocation="release"):
     """The release callers of a release-matrix workflow, one per supported
     release and release-bound category.
 
@@ -802,12 +852,17 @@ def release_matrix(scope, check_prefix, current=None):
     release is one row there. Scope all covers both the release candidate and periodic matrices.
     Scope others omits the current release.
     The environment category needs no Ceph release and stays a separate job.
+    Allocation release bounds each caller by release_max_parallel, and
+    allocation periodic by PERIODIC_MAX_PARALLEL.
     """
     if scope not in RELEASE_SCOPES:
         raise ValueError("unknown release scope")
+    if allocation not in ALLOCATIONS:
+        raise ValueError("unknown runner allocation")
     current = images.RELEASE if current is None else current
     if current not in images.RELEASES:
         raise ValueError("current release " + current + " is not a supported release")
+    caps = release_max_parallel() if allocation == "release" else None
     entries = []
     for release, codename, _ in images.SUPPORTED_RELEASES:
         if scope == "others" and release == current:
@@ -817,46 +872,63 @@ def release_matrix(scope, check_prefix, current=None):
                 entries.append({"release": release, "codename": codename, "category": category,
                                 "title": codename.capitalize() + " " + category,
                                 "check_name": check_prefix + " " + codename + " " + category,
-                                "max_parallel": RELEASE_MAX_PARALLEL[category]})
+                                "max_parallel": caps[category] if caps else PERIODIC_MAX_PARALLEL})
     return entries
 
 
 def runner_budget(entries):
-    """The runners that the release callers entries and the environment
-    caller hold at most at once, against those that pull requests leave."""
+    """The runners that the Release matrix callers entries and the
+    environment caller hold at most at once, against the account's limit
+    less what stays free for its other repositories."""
     used = sum(entry["max_parallel"] for entry in entries) + ENVIRONMENT_MAX_PARALLEL
-    available = RUNNER_LIMIT - PULL_REQUEST_RUNNERS
+    available = RUNNER_LIMIT - OTHER_REPOSITORY_RUNNERS
     return {"runners": used, "available": available, "passed": used <= available}
 
 
-def periodic_runner_budget(entries, campaign=None, groups=None, storage=None):
+def periodic_runner_budget(entries, campaign=None, groups=None, storage=None, callers=None):
     """The runners that Periodic holds at most at once, over all its
-    concurrency groups, against those that pull requests leave.
+    concurrency groups, against PERIODIC_RUNNERS.
 
-    Each mode (the full matrix of release callers entries with the
-    environment caller, the representative campaign with max-parallel
-    campaign, and a storage qualification dispatch with max-parallel
-    storage) runs in the group that its suffix in groups names. A group
-    runs one run at a time and lets the next wait, so modes that share a
-    group hold the larger of their budgets, and separate groups add up."""
+    Each mode (the full matrix, which runs callers of the release callers
+    entries at once beside the environment caller; the representative
+    campaign with max-parallel campaign; a storage qualification dispatch
+    with max-parallel storage; the daily sample) runs in the group that its
+    suffix in groups names. A group runs one run at a time and lets the next
+    wait, so modes that share a group hold the larger of their budgets, and
+    separate groups add up."""
     campaign = CAMPAIGN_MAX_PARALLEL if campaign is None else campaign
     storage = STORAGE_MAX_PARALLEL if storage is None else storage
+    callers = PERIODIC_CALLERS if callers is None else callers
     groups = PERIODIC_GROUP_SUFFIX if groups is None else groups
-    modes = {"full": runner_budget(entries)["runners"], "representative": campaign, "storage": storage}
+    largest = sorted((entry["max_parallel"] for entry in entries), reverse=True)[:callers]
+    modes = {"full": sum(largest) + ENVIRONMENT_MAX_PARALLEL, "representative": campaign, "storage": storage,
+             "sample": SAMPLE_MAX_PARALLEL}
     held = {}
     for mode, runners in modes.items():
         held[groups[mode]] = max(held.get(groups[mode], 0), runners)
     used = sum(held.values())
-    available = RUNNER_LIMIT - PULL_REQUEST_RUNNERS
-    return {"runners": used, "available": available, "modes": modes,
-            "groups": {"periodic" + suffix: runners for suffix, runners in held.items()}, "passed": used <= available}
+    return {"runners": used, "available": PERIODIC_RUNNERS, "modes": modes,
+            "groups": {"periodic" + suffix: runners for suffix, runners in held.items()},
+            "passed": used <= PERIODIC_RUNNERS}
 
 
-def releases_report(plan, scope, check_prefix):
+def pull_request_budget(limits=None):
+    """The runners that one pull request holds at most at once, a runtime
+    caller of every category together, against an equal part of what the
+    other repositories leave for PULL_REQUESTS_AT_ONCE pull requests."""
+    limits = PULL_REQUEST_MAX_PARALLEL if limits is None else limits
+    used = sum(limits.values())
+    available = (RUNNER_LIMIT - OTHER_REPOSITORY_RUNNERS) // PULL_REQUESTS_AT_ONCE
+    return {"runners": used, "available": available,
+            "passed": sorted(limits) == sorted(RUNTIME_CATEGORIES) and min(limits.values()) >= 1 and used <= available}
+
+
+def releases_report(plan, scope, check_prefix, allocation="release"):
     """The release matrix of scope with proof that it keeps every required
-    cell: with the environment job of Periodic, scope all must run each
-    required profile on every supported release exactly once."""
-    entries = release_matrix(scope, check_prefix)
+    cell and stays within its allocation's runners: with the environment
+    job, scope all must run each required profile on every supported release
+    exactly once."""
+    entries = release_matrix(scope, check_prefix, allocation=allocation)
     releases = [release for release, _, _ in images.SUPPORTED_RELEASES
                 if scope == "all" or release != images.RELEASE]
     callers = [(entry["release"], entry["category"]) for entry in entries]
@@ -865,8 +937,8 @@ def releases_report(plan, scope, check_prefix):
     if scope != "all":
         expected = expected - runtime_cells(plan, [(None, "environment")])
     difference = coverage_difference(expected, runtime_cells(plan, callers + environment))
-    budget = periodic_runner_budget(entries) if scope == "all" else runner_budget(entries)
-    return {"schema": SCHEMA, "scope": scope, "include": entries, "releases": releases,
+    budget = periodic_runner_budget(entries) if allocation == "periodic" else runner_budget(entries)
+    return {"schema": SCHEMA, "scope": scope, "allocation": allocation, "include": entries, "releases": releases,
             "cells": sum(expected.values()), "runner_budget": budget,
             "passed": not difference["missing"] and not difference["extra"] and budget["passed"], **difference}
 
@@ -1959,6 +2031,7 @@ def main(argv=None):
     command = commands.add_parser("releases")
     command.add_argument("--scope", choices=RELEASE_SCOPES, required=True)
     command.add_argument("--check-prefix", required=True)
+    command.add_argument("--allocation", choices=ALLOCATIONS, required=True)
     command.add_argument("--github-output", type=Path)
     command = commands.add_parser("vocabulary")
     command.add_argument("--output", type=Path)
@@ -2026,7 +2099,7 @@ def main(argv=None):
         catalog = load_catalog()
         plan = discover(catalog, bugs)
         if args.command == "releases":
-            report = releases_report(plan, args.scope, args.check_prefix)
+            report = releases_report(plan, args.scope, args.check_prefix, args.allocation)
             if args.github_output is not None:
                 with args.github_output.open("a", encoding="utf-8") as output:
                     output.write("matrix=" + json.dumps({"include": report["include"]}, separators=(",", ":")) + "\n")

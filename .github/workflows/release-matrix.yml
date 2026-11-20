@@ -47,7 +47,7 @@ jobs:
       # release exactly once.
       - name: Expand supported releases and prove required coverage
         id: releases
-        run: python3 .github/scripts/tag_scenarios.py releases --scope all --check-prefix 'Release matrix' --github-output "$GITHUB_OUTPUT"
+        run: python3 .github/scripts/tag_scenarios.py releases --scope all --allocation release --check-prefix 'Release matrix' --github-output "$GITHUB_OUTPUT"
   runtime:
     name: ${{ matrix.title }}
     needs: releases
@@ -61,7 +61,9 @@ jobs:
       category: ${{ matrix.category }}
       check_name: ${{ matrix.check_name }}
       release: ${{ matrix.release }}
-      # tag_scenarios.RELEASE_MAX_PARALLEL; see docs/contributing/ci.md.
+      # tag_scenarios.release_max_parallel: the callers together take every
+      # runner but tag_scenarios.OTHER_REPOSITORY_RUNNERS; see
+      # docs/contributing/ci.md.
       max_parallel: ${{ matrix.max_parallel }}
   environment:
     name: Environment
@@ -71,6 +73,7 @@ jobs:
       require_profiles: true
       networks: all
       check_name: Release matrix environment
+      # tag_scenarios.ENVIRONMENT_MAX_PARALLEL
       max_parallel: 1
   validated:
     name: ${{ github.event_name == 'workflow_dispatch' && 'Manual release matrix' || 'Release candidate validated' }} (${{ github.base_ref || github.ref_name }})

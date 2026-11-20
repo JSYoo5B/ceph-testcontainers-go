@@ -567,8 +567,8 @@ def schedule_summary(periodic_runs, pull_requests, runners, limits, reserve):
     periodic_runs are caller groups of full periodic matrix runs; they are
     simulated on every runner, unbounded and with the category limits.
     pull_requests are caller groups of pull request executions, simulated
-    on every runner and on only the reserve that the bounded periodic
-    matrix leaves them."""
+    on every runner and on only the reserve, the runners that one pull
+    request may hold."""
     periodic = []
     for groups in periodic_runs:
         unbounded = simulate(groups, runners)
@@ -1454,9 +1454,10 @@ def main(argv=None):
                          help="Native p90 seconds up to which a profile is a packing candidate")
     command.add_argument("--limit", action="append", default=[], metavar="CATEGORY=N",
                          help="Runtime max-parallel of a release caller's category to simulate; "
-                              "default tag_scenarios.RELEASE_MAX_PARALLEL")
+                              "default tag_scenarios.release_max_parallel()")
     command.add_argument("--reserve", type=int,
-                         help="Runners left for pull requests; default tag_scenarios.PULL_REQUEST_RUNNERS")
+                         help="Runners that one pull request may hold; default the sum of "
+                              "tag_scenarios.PULL_REQUEST_MAX_PARALLEL")
     command = commands.add_parser("periodic", help="Measure packed periodic receipts without full-profile acceptance claims")
     command.add_argument("--receipts", type=Path, required=True)
     command.add_argument("--output", type=Path)
@@ -1496,13 +1497,13 @@ def main(argv=None):
             print(json.dumps(fetch(args.cache, args.repo, args.since, until, markers, cache_logs=args.cache_logs,
                                    cache_log_jobs=args.cache_log_jobs), sort_keys=True))
             return 0
-        limits = dict(tag_scenarios.RELEASE_MAX_PARALLEL)
+        limits = tag_scenarios.release_max_parallel()
         for value in args.limit:
             category, separator, number = value.partition("=")
             if not separator or not number.isdigit() or int(number) < 1:
                 raise ValueError("a limit is category=<positive number>: " + value)
             limits[category] = int(number)
-        reserve = tag_scenarios.PULL_REQUEST_RUNNERS if args.reserve is None else args.reserve
+        reserve = tag_scenarios.pull_request_budget()["runners"] if args.reserve is None else args.reserve
         result = report(args.cache, markers, limits, reserve)
         # Packing candidates are the batches of a pull request execution:
         # the current release, each batch in its default network mode.
