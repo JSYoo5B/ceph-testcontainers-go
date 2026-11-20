@@ -149,7 +149,7 @@ func removeRGWKeyFaultShim(t *testing.T, ctx context.Context, gateway *rgw.Gatew
 // API, through radosgw-admin user info.
 func rgwNativeKeys(t *testing.T, ctx context.Context, gateway *rgw.Gateway, id string) map[string]string {
 	t.Helper()
-	data, err := gateway.Admin(ctx, "user", "info", "--uid", id)
+	data, err := rgwAdminStep(ctx, gateway, "user", "info", "--uid", id)
 	if err != nil {
 		t.Fatalf("native user info: %v", err)
 	}

@@ -235,7 +235,7 @@ func testRGWBucketNotifications(t *testing.T, host bool) {
 // endpoint: compare it, never log it.
 func nativeTopic(t *testing.T, ctx context.Context, gateway *rgw.Gateway, name string) []byte {
 	t.Helper()
-	data, err := gateway.Admin(ctx, "topic", "get", "--topic", name)
+	data, err := rgwAdminStep(ctx, gateway, "topic", "get", "--topic", name)
 	if err != nil {
 		t.Fatalf("native topic %s: %v", name, err)
 	}

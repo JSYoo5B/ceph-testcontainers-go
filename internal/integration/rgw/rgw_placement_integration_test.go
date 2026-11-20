@@ -112,38 +112,38 @@ func TestRGWPlacementRealmStorageClasses(t *testing.T) {
 	// Native period update can stage a change without publishing it. Restore
 	// the zonegroup object afterward so only the staging period differs; Apply
 	// must inspect that pending policy before its own period update overwrites it.
-	groupData, err := fixture.Source.Admin(ctx, "zonegroup", "get")
+	groupData, err := rgwAdminStep(ctx, fixture.Source, "zonegroup", "get")
 	var nativeGroup struct {
 		APIName string `json:"api_name"`
 	}
 	if err != nil || json.Unmarshal(groupData, &nativeGroup) != nil || nativeGroup.APIName == "" {
 		t.Fatal("cannot inspect native realm zonegroup API name")
 	}
-	if _, err := fixture.Source.Admin(ctx, "zonegroup", "modify", "--api-name", nativeGroup.APIName+"-pending"); err != nil {
+	if _, err := rgwAdminStep(ctx, fixture.Source, "zonegroup", "modify", "--api-name", nativeGroup.APIName+"-pending"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.Source.Admin(ctx, "period", "update"); err != nil {
+	if _, err := rgwAdminStep(ctx, fixture.Source, "period", "update"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.Source.Admin(ctx, "zonegroup", "modify", "--api-name", nativeGroup.APIName); err != nil {
+	if _, err := rgwAdminStep(ctx, fixture.Source, "zonegroup", "modify", "--api-name", nativeGroup.APIName); err != nil {
 		t.Fatal(err)
 	}
 	stagingArgs := []string{"period", "get", "--period", sourcePlacement.RealmID + ":staging", "--epoch", "1"}
-	stagedBefore, err := fixture.Source.Admin(ctx, stagingArgs...)
+	stagedBefore, err := rgwAdminStep(ctx, fixture.Source, stagingArgs...)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := sourcePlacement.Apply(ctx, fixture.Source); err == nil || !strings.Contains(err.Error(), "existing staging period") {
 		t.Fatalf("unrelated staged policy was not refused before overwrite: %v", err)
 	}
-	stagedAfter, err := fixture.Source.Admin(ctx, stagingArgs...)
+	stagedAfter, err := rgwAdminStep(ctx, fixture.Source, stagingArgs...)
 	var before, after any
 	if err != nil || json.Unmarshal(stagedBefore, &before) != nil || json.Unmarshal(stagedAfter, &after) != nil || !reflect.DeepEqual(before, after) {
 		t.Fatal("refused native staging period was changed")
 	}
 	// The test explicitly restages the restored zonegroup before permitting
 	// publication; only the matching placement target now differs from current.
-	if _, err := fixture.Source.Admin(ctx, "period", "update"); err != nil {
+	if _, err := rgwAdminStep(ctx, fixture.Source, "period", "update"); err != nil {
 		t.Fatal(err)
 	}
 	timeline := &rgwGatewayTimeline{}

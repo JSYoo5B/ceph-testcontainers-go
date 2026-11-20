@@ -288,13 +288,13 @@ func rgwPlacementRecoverRestart(t *testing.T, ctx context.Context, target *place
 	if !ok {
 		t.Fatal("placement has no zonegroup API name")
 	}
-	if _, err := peer.Admin(ctx, "zonegroup", "modify", "--api-name", apiName+"-outside"); err != nil {
+	if _, err := rgwAdminStep(ctx, peer, "zonegroup", "modify", "--api-name", apiName+"-outside"); err != nil {
 		t.Fatal(err)
 	}
 	refused := target.Apply(ctx, gateway)
 	// Restore the native zonegroup before checking the outcome so the same
 	// handle can finish the interrupted restart.
-	if _, err := peer.Admin(ctx, "zonegroup", "modify", "--api-name", apiName); err != nil {
+	if _, err := rgwAdminStep(ctx, peer, "zonegroup", "modify", "--api-name", apiName); err != nil {
 		t.Fatal(err)
 	}
 	state, err := gateway.State(ctx)
@@ -386,7 +386,7 @@ func testRGWPlacementStorageClasses(t *testing.T, options ...testcontainers.Cont
 	var bucketStats struct {
 		PlacementRule string `json:"placement_rule"`
 	}
-	data, err := gateway.Admin(ctx, "bucket", "stats", "--bucket", strings.TrimPrefix(tieredBucket, "/"))
+	data, err := rgwAdminStep(ctx, gateway, "bucket", "stats", "--bucket", strings.TrimPrefix(tieredBucket, "/"))
 	if err != nil || json.Unmarshal(data, &bucketStats) != nil || bucketStats.PlacementRule != target.Name {
 		t.Fatalf("bucket did not retain named placement target: %s %v", data, err)
 	}
@@ -423,7 +423,7 @@ func testRGWPlacementStorageClasses(t *testing.T, options ...testcontainers.Cont
 	// zonegroup default, while the preexisting default object remains readable.
 	const laterDefault = "/tc-rgw-later-default"
 	client.Request(t, ctx, http.MethodPut, laterDefault, nil, http.StatusOK)
-	data, err = gateway.Admin(ctx, "bucket", "stats", "--bucket", strings.TrimPrefix(laterDefault, "/"))
+	data, err = rgwAdminStep(ctx, gateway, "bucket", "stats", "--bucket", strings.TrimPrefix(laterDefault, "/"))
 	if err != nil || json.Unmarshal(data, &bucketStats) != nil || bucketStats.PlacementRule != "default-placement" {
 		t.Fatal("named placement silently changed the default for new buckets")
 	}

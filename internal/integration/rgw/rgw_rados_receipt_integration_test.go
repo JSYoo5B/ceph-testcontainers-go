@@ -118,7 +118,7 @@ func TestRGWRadosReceipt(t *testing.T) {
 	if receipt.DataPool == "" || receipt.IndexPool == "" {
 		t.Fatalf("no bucket data or index pool: %+v", pools)
 	}
-	out, err := gateway.Admin(ctx, "bucket", "stats", "--bucket", "tc-rados")
+	out, err := rgwAdminStep(ctx, gateway, "bucket", "stats", "--bucket", "tc-rados")
 	if err != nil {
 		t.Fatal("bucket stats:", err)
 	}
@@ -196,7 +196,7 @@ func TestRGWRadosReceipt(t *testing.T) {
 		t.Fatalf("after DELETE the key large is in %v (it was in %s), and small in %s holds %v",
 			receipt.LargeKeyAfter, receipt.LargeIndexOID, receipt.IndexOID, after[receipt.IndexOID])
 	}
-	out, err = gateway.Admin(ctx, "gc", "list", "--include-all")
+	out, err = rgwAdminStep(ctx, gateway, "gc", "list", "--include-all")
 	if err != nil {
 		t.Fatal("gc list:", err)
 	}
@@ -211,13 +211,13 @@ func TestRGWRadosReceipt(t *testing.T) {
 	if len(remaining) == 0 {
 		t.Fatalf("the tails %v were removed at once, not left to gc", tails)
 	}
-	if _, err := gateway.Admin(ctx, "gc", "process", "--include-all"); err != nil {
+	if _, err := rgwAdminStep(ctx, gateway, "gc", "process", "--include-all"); err != nil {
 		t.Fatal("gc process:", err)
 	}
 	if _, left := rgwObjectParts(lines(rados("-p", receipt.DataPool, "ls")), marker, "large"); len(left) != 0 {
 		t.Fatalf("tails %v outlived gc process", left)
 	}
-	if out, err := gateway.Admin(ctx, "gc", "list", "--include-all"); err != nil {
+	if out, err := rgwAdminStep(ctx, gateway, "gc", "list", "--include-all"); err != nil {
 		t.Fatal(err)
 	} else if oids, err := rgwGCOIDs(out); err != nil || len(oids) != 0 {
 		t.Fatalf("gc list after processing: %v %v", oids, err)
