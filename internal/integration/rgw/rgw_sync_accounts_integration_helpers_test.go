@@ -233,7 +233,7 @@ func waitRGWSyncBucketPolicy(t *testing.T, ctx context.Context, client harness.S
 func captureRGWSyncAccountBucket(t *testing.T, ctx context.Context, gateway *rgw.Gateway, path, owner, expectedID string) string {
 	t.Helper()
 	name := strings.TrimPrefix(path, "/")
-	data, err := rgwAdminStep(ctx, gateway, "bucket", "stats", "--bucket", name)
+	data, err := gateway.Admin(ctx, "bucket", "stats", "--bucket", name)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -15,12 +15,13 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/expect"
 )
 
-// rgwAdminStepBound bounds one radosgw-admin command of a scenario: a read of
-// one user, bucket or policy, a small mutation, or a maintenance pass or
-// stats synchronization over a few small buckets. Each takes seconds, so a
-// command still running after this bound hangs. It is its own phase inside
-// the test's context: a command that hangs fails at this bound, with the
-// main thread's frames that Gateway.Admin reports for a command its
+// rgwAdminStepBound bounds one radosgw-admin command of a scenario whose
+// whole run, cluster start included, stays under this bound in CI: there a
+// command still running after it hangs. A scenario that runs longer than the
+// bound as a whole says nothing about its commands, so its commands, such as
+// gc process and period update, keep the test's context. The bound is its
+// own phase inside the test's context: a command that hangs fails at it,
+// with the main thread's frames that Gateway.Admin reports for a command its
 // supervisor stopped, and leaves the test's remaining time for the failure's
 // evidence. Under the test's whole context the first such command would use
 // up the budget of every later step.

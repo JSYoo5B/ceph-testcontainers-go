@@ -88,7 +88,7 @@ func testRGWUserPlacementPolicy(t *testing.T, options ...testcontainers.Containe
 	location, targetName := target.LocationConstraint, target.Name
 	createBody := []byte(`<CreateBucketConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><LocationConstraint>` + location + `</LocationConstraint></CreateBucketConfiguration>`)
 	harness.RequireRGWUserPlacementDenied(t, client.Request(t, ctx, http.MethodPut, "/tc-user-no-tag", createBody, http.StatusForbidden))
-	if _, err := rgwAdminStep(ctx, gateway, "bucket", "stats", "--bucket", "tc-user-no-tag"); err == nil {
+	if _, err := gateway.Admin(ctx, "bucket", "stats", "--bucket", "tc-user-no-tag"); err == nil {
 		t.Fatal("denied creation left a native bucket")
 	}
 	// Public descriptor fields cannot redirect this owned native operation.
@@ -169,7 +169,7 @@ func requireRGWUserBucketPlacement(t *testing.T, ctx context.Context, gateway *r
 	t.Helper()
 	name := strings.TrimPrefix(bucket, "/")
 	args := []string{"bucket", "stats", "--bucket", name}
-	data, err := rgwAdminStep(ctx, gateway, args...)
+	data, err := gateway.Admin(ctx, args...)
 	var stats struct {
 		PlacementRule string `json:"placement_rule"`
 	}
@@ -191,7 +191,7 @@ func rgwUserPlacementFailureContext(ctx context.Context, gateway *rgw.Gateway, b
 		parts = append(parts, fmt.Sprintf("gateway container=%.12s status=%s started=%s restarts=%d pid=%d",
 			inspect.ID, inspect.State.Status, inspect.State.StartedAt, inspect.RestartCount, inspect.State.Pid))
 	}
-	entry, err := rgwAdminStep(ctx, gateway, "metadata", "get", "bucket:"+bucket)
+	entry, err := gateway.Admin(ctx, "metadata", "get", "bucket:"+bucket)
 	var entrypoint struct {
 		Data struct {
 			Bucket struct {
@@ -204,7 +204,7 @@ func rgwUserPlacementFailureContext(ctx context.Context, gateway *rgw.Gateway, b
 		return strings.Join(append(parts, fmt.Sprintf("bucket entrypoint unreadable error=%v", err)), "; ")
 	}
 	parts = append(parts, fmt.Sprintf("bucket entrypoint id=%s created=%s", entrypoint.Data.Bucket.BucketID, entrypoint.Data.CreationTime))
-	instance, err := rgwAdminStep(ctx, gateway, "metadata", "get", "bucket.instance:"+bucket+":"+entrypoint.Data.Bucket.BucketID)
+	instance, err := gateway.Admin(ctx, "metadata", "get", "bucket.instance:"+bucket+":"+entrypoint.Data.Bucket.BucketID)
 	var info struct {
 		Data struct {
 			BucketInfo struct {

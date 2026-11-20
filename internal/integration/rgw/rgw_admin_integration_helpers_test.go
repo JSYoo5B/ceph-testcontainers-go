@@ -178,7 +178,7 @@ func rgwFixtureUserAggregateQuota(t *testing.T, ctx context.Context, gateway *rg
 		var native struct {
 			ID, Bucket, Owner string
 		}
-		data, err := rgwAdminStep(ctx, gateway, "bucket", "stats", "--bucket", strings.TrimPrefix(bucket, "/"))
+		data, err := gateway.Admin(ctx, "bucket", "stats", "--bucket", strings.TrimPrefix(bucket, "/"))
 		if err != nil || json.Unmarshal(data, &native) != nil || native.ID == "" || native.Bucket != strings.TrimPrefix(bucket, "/") || native.Owner != owner.ID() {
 			t.Fatal("user-quota fixture native bucket identity changed")
 		}
