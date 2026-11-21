@@ -549,9 +549,10 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             receipt = jobs["receipt"]
             header = receipt.split("    steps:", 1)[0]
             self.assertEqual(scalar(header, "needs"), "[releases, validated]")
-            self.assertEqual(scalar(header, "if"), "github.event_name == 'pull_request' && (github.base_ref == 'main' || "
+            self.assertEqual(scalar(header, "if"), "${{ !cancelled() && github.event_name == 'pull_request' && "
+                                                   "(github.base_ref == 'main' || "
                                                    "github.base_ref == 'rehearsal/promotion') "
-                                                   "&& needs.validated.result == 'success'")
+                                                   "&& needs.validated.result == 'success' }}")
             self.assertEqual(scalar(header, "name"), "Candidate receipt")
             # It keeps the history row of every runtime job with the
             # receipt, for as long as the receipt.

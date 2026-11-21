@@ -3,6 +3,7 @@ from contextlib import redirect_stdout
 from copy import deepcopy
 from io import StringIO
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -166,11 +167,35 @@ class QualifyTests(unittest.TestCase):
         refs = " || ".join("github.ref == 'refs/heads/" + branch + "'" for branch in reuse.BRANCHES)
         bases = " || ".join("github.base_ref == '" + branch + "'" for branch in reuse.BRANCHES)
         self.assertIn("    if: github.event_name == 'push' && (" + refs + ")\n", workflow)
-        self.assertIn("    if: github.event_name == 'pull_request' && (" + bases + ") && ", workflow)
+        self.assertIn("    if: ${{ !cancelled() && github.event_name == 'pull_request' && (" + bases + ") && ", workflow)
         for trigger in ("  push:\n    branches: [", "  pull_request:\n    branches: ["):
             listed = workflow.split(trigger, 1)[1].split("]", 1)[0].split(", ")
             for branch in reuse.BRANCHES:
                 self.assertIn(branch, listed)
+
+    def test_no_job_is_skipped_with_the_reuse_job(self):
+        """Promotion reuse is skipped on every event but a reusing push. A
+        job that depends on it, however far, and has no status function in
+        its condition is skipped with it."""
+        workflow = (Path(__file__).resolve().parents[2] / reuse.WORKFLOW).read_text()
+        jobs = {}
+        for block in re.split(r"(?m)^  (?=[a-z_-]+:\n)", workflow.split("\njobs:\n", 1)[1]):
+            if not re.match(r"[a-z_-]+:\n", block):
+                continue
+            name, body = block.split(":\n", 1)
+            header = body.split("    steps:", 1)[0].split("    strategy:", 1)[0].split("    with:", 1)[0]
+            needs = re.search(r"(?m)^    needs:\s*(.*)$", header)
+            condition = re.search(r"(?m)^    if:\s*(.*)$", header)
+            jobs[name] = (re.findall(r"[a-z_-]+", needs[1]) if needs else [], condition[1] if condition else "")
+
+        def depends(name, seen=()):
+            return any(need == "reuse" or (need not in seen and depends(need, seen + (name,)))
+                       for need in jobs[name][0])
+
+        dependants = sorted(name for name in jobs if depends(name))
+        self.assertEqual(dependants, ["environment", "receipt", "runtime", "validated"])
+        for name in dependants:
+            self.assertRegex(jobs[name][1], r"always\(\)|!cancelled\(\)", name)
 
     def test_identical_tree_and_parents_reuse_the_promotion_run(self):
         receipt, reasons = Facts().decide()
