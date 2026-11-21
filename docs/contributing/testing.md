@@ -51,7 +51,9 @@ Integration tests also need:
   images, and the Ryuk image.
 - The suite is sized for a 4 GiB Docker VM. Tests run one at a time unless
   `CEPH_TEST_PARALLEL` is set (see
-  [Running tests in parallel](#running-tests-in-parallel)).
+  [Running tests in parallel](#running-tests-in-parallel)). To find the engine
+  your tests use, size a Docker Desktop VM and verify it, see
+  [Docker Desktop setup](../guides/desktop-setup.md).
 
 If testcontainers-go cannot find the Docker Desktop socket:
 
