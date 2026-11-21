@@ -1,8 +1,10 @@
 """Exercise the promotion reuse decision against in-memory GitHub facts."""
 from contextlib import redirect_stdout
 from copy import deepcopy
+import io
 from io import StringIO
 import json
+import os
 import re
 from pathlib import Path
 import subprocess
@@ -10,6 +12,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+import zipfile
 
 import git_flow as flow
 import promotion_reuse as reuse
@@ -363,6 +366,79 @@ class QualifyTests(unittest.TestCase):
         self.assertEqual(collected, facts.entries)
         self.assertEqual(reuse.encode_evidence(collected), facts.evidence[40])
         self.assertEqual(reuse.runtime_jobs(facts.jobs[40]), [facts.jobs[40][3], facts.jobs[40][4]])
+
+    @staticmethod
+    def archive(entry, prefix=""):
+        content = io.BytesIO()
+        with zipfile.ZipFile(content, "w") as archive:
+            archive.writestr(prefix + "scenario/native/native.log", "log")
+            if entry is not None:
+                archive.writestr(prefix + reuse.ROW_FILE, json.dumps(entry["row"]))
+                if entry["retry"]:
+                    archive.writestr(prefix + reuse.RETRY_FILE, json.dumps(entry["retry"]))
+        return content.getvalue()
+
+    def test_fetched_evidence_covers_every_job_artifact_of_the_run(self):
+        """A release run has more artifacts than one listing page, and more
+        than actions/download-artifact lists at all."""
+        facts = Facts()
+        entries = [facts.entry(job) for job in range(100, 1700)]
+        listed = [{"id": 1, "name": "release-coverage-1"}, {"id": 2, "name": "scenario-images-x"},
+                  {"id": 3, "name": reuse.ROW_ARTIFACT + "expired", "expired": True},
+                  {"id": 4, "name": reuse.ROW_ARTIFACT + "without-a-row"}]
+        listed += [{"id": 10 + index, "name": reuse.ROW_ARTIFACT + str(index)} for index in range(len(entries))]
+        requests = []
+
+        def api(path, *, pages=False):
+            requests.append((path, pages))
+            return listed
+
+        def fetch(artifact):
+            self.assertTrue(artifact["name"].startswith(reuse.ROW_ARTIFACT) and not artifact.get("expired"))
+            return self.archive(None if artifact["id"] == 4 else entries[artifact["id"] - 10])
+
+        fetched = reuse.fetch_evidence(api, fetch, 40)
+        self.assertEqual(requests, [("actions/runs/40/artifacts?per_page=100", "artifacts")])
+        self.assertEqual(len(fetched), 1600)
+        self.assertEqual(fetched, reuse.ordered(entries))
+
+    def test_an_archive_entry_reads_the_row_and_its_retry_report(self):
+        facts = Facts()
+        for prefix in ("", "artifacts/"):
+            with self.subTest(prefix=prefix):
+                self.assertEqual(reuse.archive_entry(self.archive(facts.entries[0], prefix)), facts.entries[0])
+                self.assertEqual(reuse.archive_entry(self.archive(facts.entries[1], prefix)), facts.entries[1])
+        self.assertIsNone(reuse.archive_entry(self.archive(None)))
+
+    def test_the_checked_out_commit_keeps_its_parents_in_a_shallow_clone(self):
+        """actions/checkout fetches one commit; its parents are in the commit
+        object, not in the history."""
+        def git(directory, *args):
+            return subprocess.run(["git", "-C", str(directory), "-c", "user.name=t", "-c", "user.email=t@example.org",
+                                   "-c", "commit.gpgsign=false", *args], check=True, capture_output=True,
+                                  text=True).stdout.strip()
+
+        with tempfile.TemporaryDirectory() as temporary:
+            origin, clone = Path(temporary) / "origin", Path(temporary) / "clone"
+            origin.mkdir()
+            git(origin, "init", "-q", "-b", "target")
+            git(origin, "commit", "-q", "--allow-empty", "-m", "base")
+            git(origin, "checkout", "-q", "-b", "candidate")
+            git(origin, "commit", "-q", "--allow-empty", "-m", "candidate")
+            git(origin, "checkout", "-q", "target")
+            git(origin, "merge", "-q", "--no-ff", "-m", "merge", "candidate")
+            parents = git(origin, "rev-list", "--parents", "-n", "1", "HEAD").split()[1:]
+            self.assertEqual(len(parents), 2)
+            subprocess.run(["git", "clone", "-q", "--depth", "1", origin.as_uri(), str(clone)], check=True,
+                           capture_output=True)
+            self.assertEqual(git(clone, "rev-list", "--parents", "-n", "1", "HEAD").split()[1:], [])
+            previous = os.getcwd()
+            os.chdir(clone)
+            try:
+                tested = reuse.checked_out()
+            finally:
+                os.chdir(previous)
+        self.assertEqual(tested["parents"], parents)
 
     def test_a_changed_tree_or_merge_input_runs_the_full_matrix(self):
         facts = Facts()

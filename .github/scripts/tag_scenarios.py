@@ -767,7 +767,11 @@ def repeat_matrix(entries, repetitions):
     return repeated
 
 
-RELEASE_SCOPES = ("all", "others")
+RELEASE_SCOPES = ("all", "others", "rehearsal")
+# What a promotion rehearsal runs instead of the release matrix: one category
+# on the current release, beside the environment caller. It exercises the
+# candidate record and the reuse decision, not the coverage of a release.
+REHEARSAL_CATEGORY = "multicluster"
 # Runner budgets, measured with ci_measurements.py (docs/contributing/ci.md,
 # "Runner budget"). A job that waited for a runner started when 39 of this
 # account's jobs ran, so 40 hosted jobs run at once, across every repository
@@ -850,7 +854,8 @@ def release_matrix(scope, check_prefix, current=None, allocation="release"):
 
     The supported releases are run_image_matrix.SUPPORTED_RELEASES, so a new
     release is one row there. Scope all covers both the release candidate and periodic matrices.
-    Scope others omits the current release.
+    Scope others omits the current release. Scope rehearsal is one caller,
+    REHEARSAL_CATEGORY on the current release, with every release runner.
     The environment category needs no Ceph release and stays a separate job.
     Allocation release bounds each caller by release_max_parallel, and
     allocation periodic by PERIODIC_MAX_PARALLEL.
@@ -863,12 +868,14 @@ def release_matrix(scope, check_prefix, current=None, allocation="release"):
     if current not in images.RELEASES:
         raise ValueError("current release " + current + " is not a supported release")
     caps = release_max_parallel() if allocation == "release" else None
+    if scope == "rehearsal" and caps:
+        caps = dict.fromkeys(caps, RUNNER_LIMIT - OTHER_REPOSITORY_RUNNERS - ENVIRONMENT_MAX_PARALLEL)
     entries = []
     for release, codename, _ in images.SUPPORTED_RELEASES:
-        if scope == "others" and release == current:
+        if scope == "others" and release == current or scope == "rehearsal" and release != current:
             continue
         for category in RUNTIME_CATEGORIES:
-            if category != "environment":
+            if category != "environment" and (scope != "rehearsal" or category == REHEARSAL_CATEGORY):
                 entries.append({"release": release, "codename": codename, "category": category,
                                 "title": codename.capitalize() + " " + category,
                                 "check_name": check_prefix + " " + codename + " " + category,
@@ -929,12 +936,16 @@ def releases_report(plan, scope, check_prefix, allocation="release"):
     job, scope all must run each required profile on every supported release
     exactly once."""
     entries = release_matrix(scope, check_prefix, allocation=allocation)
-    releases = [release for release, _, _ in images.SUPPORTED_RELEASES
-                if scope == "all" or release != images.RELEASE]
+    listed = {entry["release"] for entry in entries}
+    releases = [release for release, _, _ in images.SUPPORTED_RELEASES if release in listed]
     callers = [(entry["release"], entry["category"]) for entry in entries]
-    environment = [(None, "environment")] if scope == "all" else []
-    expected = required_cells(plan, releases)
-    if scope != "all":
+    environment = [(None, "environment")] if scope != "others" else []
+    if scope == "rehearsal":
+        # A rehearsal claims no release coverage: it covers what it runs.
+        expected = runtime_cells(plan, callers + environment)
+    else:
+        expected = required_cells(plan, releases)
+    if scope == "others":
         expected = expected - runtime_cells(plan, [(None, "environment")])
     difference = coverage_difference(expected, runtime_cells(plan, callers + environment))
     budget = periodic_runner_budget(entries) if allocation == "periodic" else runner_budget(entries)

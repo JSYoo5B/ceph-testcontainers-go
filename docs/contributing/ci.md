@@ -1102,6 +1102,12 @@ promotion run already qualifies the pushed commit:
    check and the hashes of its logs and reports) and the report of each
    retry. The jobs' own artifacts expire after 7 to 14 days; the receipt and
    this evidence are kept for 90.
+   The job fetches the rows through the API, page by page, because a
+   release run writes more artifacts than `actions/download-artifact`
+   lists, and it fails when the record does not account for every runtime
+   job or the checked-out commit is not a merge of two parents. The gate's
+   result stays as it is; the failed job says before the merge that the
+   push will run the full matrix.
 3. On a push to `main`, `Promotion reuse` runs
    `scripts/release/promotion_reuse.py verify` and writes
    `promotion-reuse-receipt-<attempt>` with its decision and, on a reuse, its
@@ -1144,21 +1150,33 @@ holds their hashes.
 The reuse path only runs for a protected merge, so it cannot be tried on a
 feature branch, and trying it first on a real promotion would make a release
 the test. The branch `rehearsal/promotion` exists for that: `release-matrix.yml`
-treats a PR to it and a push to it exactly as it treats `main`, with the gate
+treats a PR to it and a push to it as it treats `main`, with the gate
 `Release candidate validated (rehearsal/promotion)`, and
 `promotion_reuse.py` applies the same checks. A receipt names its target, so a
 rehearsal never qualifies a push to `main`, nor the reverse. Nothing is tagged
 or published from the branch, and no other workflow runs for it.
 
-The branch is not kept. To rehearse a change of the Release matrix, the
-receipts or the reuse decision:
+A rehearsal tries the candidate record and the reuse decision, not the
+coverage of a release, so its matrix is small: `tag_scenarios.py releases
+--scope rehearsal` plans one caller, `REHEARSAL_CATEGORY` on the current
+release, beside the environment caller. A run takes minutes instead of
+hours. What only the size of a release run shows (its number of artifacts,
+its runner demand) is not rehearsed: for the runner demand dispatch
+`Release matrix` by hand, and check the record of a large run by recording
+it again from a depth-1 clone of its tested commit with
+`promotion_reuse.py record`.
+
+The branch is not kept. To rehearse a change of the receipts or the reuse
+decision:
 
 1. Create `rehearsal/promotion` at the base to promote onto, with a ruleset
    for it alone that requires a pull request and forbids deletion and
    non-fast-forward pushes.
-2. Open a PR to it from the branch under test. Its Release matrix is a full
-   one; when the gate has passed, check that `Candidate receipt` wrote
-   `release-candidate-receipt-<attempt>`.
+2. Push the commit under test to a branch of its own and open a PR from it
+   to `rehearsal/promotion`. A branch that is also the head of another open
+   PR gives two PRs one head commit, and the checks that publish to "the"
+   PR of a commit then refuse. When the gate has passed, check that
+   `Candidate receipt` succeeded and wrote `release-candidate-receipt-<attempt>`.
 3. Merge the PR with a merge commit. The push run must end with
    `Promotion reuse` successful, the runtime and environment callers skipped
    and the gate passed, and its `promotion-reuse-receipt-<attempt>` must say
@@ -1167,10 +1185,6 @@ receipts or the reuse decision:
    (cancel it first). The push run's receipt must say `full-matrix` with the
    reason, and the callers must start; cancel that run once they have.
 5. Delete the ruleset and the branch.
-
-The PR run of step 2 is also a Release matrix under the current
-[runner budget](#runner-budget), so its makespan and peak concurrency are the
-measurement to compare a changed allocation with.
 
 A push to `support/*` always runs its full matrix. The six Code checks run
 on the pushed commit in either case.

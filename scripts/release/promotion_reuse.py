@@ -28,6 +28,7 @@ the full matrix, whether or not the receipt itself is still there.
 """
 
 import argparse
+import concurrent.futures
 import hashlib
 import io
 import json
@@ -52,6 +53,10 @@ REUSE = "promotion-reuse-receipt"
 # The files of the two artifacts: a receipt and the evidence it accounts for.
 RECEIPT_FILE = {CANDIDATE: CANDIDATE + ".json", REUSE: REUSE + ".json"}
 EVIDENCE_FILE = "release-candidate-evidence.jsonl"
+# A runtime job's artifact, and in it the history row and the retry report.
+ROW_ARTIFACT = "tag-scenario-"
+ROW_FILE = "history-row.json"
+RETRY_FILE = "native-retry/report.json"
 ROW_SCHEMA = "ceph-scenario-history/v1"
 RETRY_SCHEMA = "ceph-tag-scenarios/v1/retry"
 PLAN_JOB = "Plan"
@@ -95,7 +100,39 @@ def collect_evidence(directory):
         retry = path.parent / "native-retry" / "report.json"
         entries.append({"row": json.loads(path.read_text(encoding="utf-8")),
                         "retry": json.loads(retry.read_text(encoding="utf-8")) if retry.exists() else None})
+    return ordered(entries)
+
+
+def ordered(entries):
     return sorted(entries, key=lambda entry: str((entry["row"].get("execution_key") or {}).get("job_id")))
+
+
+def archive_entry(content):
+    """The evidence entry in one job artifact's archive, or None when the
+    artifact holds no history row."""
+    with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        names = set(archive.namelist())
+        rows = sorted(name for name in names if name.rsplit("/", 1)[-1] == ROW_FILE)
+        if len(rows) != 1:
+            return None
+        retry = rows[0][:-len(ROW_FILE)] + RETRY_FILE
+        return {"row": json.loads(archive.read(rows[0])),
+                "retry": json.loads(archive.read(retry)) if retry in names else None}
+
+
+def fetch_evidence(api, fetch, run_id):
+    """The evidence entries of a run, from every live job artifact of it.
+
+    The artifacts are listed and fetched through the API, page by page: a
+    Release matrix writes more artifacts than actions/download-artifact
+    lists, and a record that misses jobs qualifies nothing. Each fetch is
+    one request of the workflow token's hourly allowance."""
+    artifacts = [artifact for artifact in api("actions/runs/{}/artifacts?per_page=100".format(run_id),
+                                              pages="artifacts")
+                 if artifact["name"].startswith(ROW_ARTIFACT) and not artifact.get("expired")]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        entries = list(pool.map(lambda artifact: archive_entry(fetch(artifact)), artifacts))
+    return ordered([entry for entry in entries if entry is not None])
 
 
 def encode_evidence(entries):
@@ -362,6 +399,11 @@ def decide(api, download, repository, branch, sha, coverage=None):
     return result, reasons, None if reasons else evidence
 
 
+def fetch_archive(artifact):
+    """An artifact's archive, through the authenticated CLI."""
+    return subprocess.run(["gh", "api", artifact["archive_download_url"]], check=True, capture_output=True).stdout
+
+
 def download_files(artifact):
     """The files of an artifact as {name: bytes}, through the authenticated
     CLI. A receipt artifact holds a receipt and at most its evidence file."""
@@ -379,7 +421,13 @@ def checked_out():
         return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout.split()
 
     sha, tree = git("rev-parse", "HEAD", "HEAD^{tree}")
-    return {"sha": sha, "tree": tree, "parents": git("rev-list", "--parents", "-n", "1", "HEAD")[1:]}
+    # The commit object, not the history: actions/checkout makes a shallow
+    # clone, in which rev-list reports a commit at the boundary without
+    # parents.
+    commit = subprocess.run(["git", "cat-file", "commit", "HEAD"], check=True, capture_output=True,
+                            text=True).stdout.split("\n\n", 1)[0]
+    return {"sha": sha, "tree": tree,
+            "parents": [line.split()[1] for line in commit.splitlines() if line.startswith("parent ")]}
 
 
 def write_output(values):
@@ -400,8 +448,9 @@ def main(argv=None):
                              help="The report of tag_scenarios.py releases for the checked-out tree")
         command.add_argument("--output", required=True, type=Path,
                              help="Directory for the receipt and its evidence file")
-    commands.choices["record"].add_argument("--rows", required=True, type=Path,
-                                            help="Directory of this run's downloaded tag-scenario artifacts")
+    commands.choices["record"].add_argument("--rows", type=Path,
+                                            help="Directory of the run's tag-scenario artifacts, already "
+                                                 "downloaded; without it they are fetched from the run")
     args = parser.parse_args(argv)
     report = json.loads(args.coverage.read_text())
     repository, run_id = os.environ["GITHUB_REPOSITORY"], int(os.environ["GITHUB_RUN_ID"])
@@ -410,7 +459,8 @@ def main(argv=None):
     if args.command == "record":
         event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())["pull_request"]
         jobs = git_flow.api("actions/runs/{}/attempts/{}/jobs?per_page=100".format(run_id, attempt), pages="jobs")
-        content = encode_evidence(collect_evidence(args.rows))
+        content = encode_evidence(collect_evidence(args.rows) if args.rows
+                                  else fetch_evidence(git_flow.api, fetch_archive, run_id))
         receipt = candidate_receipt(repository, event["number"], event["base"]["ref"], event["head"]["sha"],
                                     run_id, attempt, checked_out(), report["coverage"], report["images"], jobs,
                                     evidence_summary(content))
@@ -420,9 +470,12 @@ def main(argv=None):
         # The record is only usable if it accounts for the run; say so now
         # instead of at the publication push.
         tested = {"sha": receipt["tested"]["sha"], "tree": {"sha": receipt["tested"]["tree"]}}
-        for problem in evidence_problems(repository, {"id": run_id}, jobs, receipt, tested, content):
-            print("::warning::The candidate evidence will not qualify a reuse: " + problem)
-        return 0
+        problems = evidence_problems(repository, {"id": run_id}, jobs, receipt, tested, content)
+        if len(receipt["tested"]["parents"]) != 2:
+            problems.insert(0, "the checked-out commit is not a merge of two parents")
+        for problem in problems:
+            print("::error::The candidate record will not qualify a reuse: " + problem)
+        return 1 if problems else 0
     receipt, reasons, evidence = decide(git_flow.api, download_files, repository, os.environ["GITHUB_REF_NAME"],
                                         os.environ["GITHUB_SHA"], report["coverage"]["digest"])
     (args.output / RECEIPT_FILE[REUSE]).write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
