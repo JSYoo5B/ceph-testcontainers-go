@@ -273,6 +273,39 @@ class ApplyTest(WslConfigCase):
         self.assertEqual(self.read(), b"[wsl2]\nmemory=2GB\n")
 
 
+class ListKeyTest(WslConfigCase):
+    def test_list_key_is_extended_never_shortened_and_restored(self):
+        wanted = {"loadkernelmodules": ["nbd", "dm_delay"]}
+        for original, expected in (
+                (None, b"[wsl2]\nloadKernelModules=nbd,dm_delay\n"),
+                (b"[wsl2]\nmemory=2GB\n", b"[wsl2]\nmemory=2GB\nloadKernelModules=nbd,dm_delay\n"),
+                (b"[wsl2]\nLoadKernelModules = tun, dm-delay\n", b"[wsl2]\nLoadKernelModules = tun,dm-delay,nbd\n"),
+                (b"[wsl2]\nloadKernelModules=\n", b"[wsl2]\nloadKernelModules=nbd,dm_delay\n")):
+            with self.subTest(original=original):
+                for name in self.names():
+                    os.remove(self.directory / name)
+                if original is not None:
+                    self.write(original)
+                self.assertEqual(wslconfig.apply(self.path, wanted), ["loadkernelmodules"])
+                self.assertEqual(self.read(), expected)
+                self.assertEqual(wslconfig.apply(self.path, wanted), [])
+                wslconfig.restore(self.path)
+                self.assertEqual(self.names(), [] if original is None else [".wslconfig"])
+                if original is not None:
+                    self.assertEqual(self.read(), original)
+
+    def test_list_that_already_has_the_modules_is_left_alone(self):
+        self.write(b"[wsl2]\nloadKernelModules=dm_delay,nbd,tun\n")
+        self.assertEqual(wslconfig.apply(self.path, {"loadkernelmodules": ["nbd", "dm-delay"]}), [])
+        self.assertEqual(self.names(), [".wslconfig"])
+
+    def test_unreadable_list_is_refused(self):
+        self.write(b"[wsl2]\nloadKernelModules=nbd dm_delay\n")
+        with self.assertRaises(wslconfig.Refusal) as raised:
+            wslconfig.apply(self.path, {"loadkernelmodules": ["nbd"]})
+        self.assertEqual(raised.exception.code, "ambiguous")
+
+
 class RestoreTest(WslConfigCase):
     def test_restore_returns_every_starting_shape_to_its_bytes(self):
         shapes = (None, b"", b"[wsl2]", b"[wsl2]\n", b"[wsl2]\nmemory=2GB", b"[wsl2]\r\nprocessors=2\r\nmemory=2GB\r\n",

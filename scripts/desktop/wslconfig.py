@@ -1,8 +1,8 @@
-"""Edit the WSL 2 resource keys of a .wslconfig file and undo exactly that edit.
+"""Edit the WSL 2 resource and module keys of a .wslconfig file and undo exactly that edit.
 
 The file belongs to the user and configures every WSL 2 distribution of the
 account, so this module changes as little as it can: it rewrites or adds only
-the [wsl2] keys it is asked to raise, keeps every other byte (encoding, byte
+the [wsl2] keys it is asked to raise or extend, keeps every other byte (encoding, byte
 order mark, line endings, comments, key spelling), records what it wrote in a
 state file next to the config, and restores from that record line by line.
 Anything it cannot read unambiguously is refused instead of guessed.
@@ -16,7 +16,12 @@ import tempfile
 SECTION = "wsl2"
 SIZE_KEYS = ("memory", "swap")
 COUNT_KEYS = ("processors",)
-MANAGED_KEYS = SIZE_KEYS + COUNT_KEYS
+# Keys whose value is a comma-separated list that is extended, never shortened.
+LIST_KEYS = ("loadkernelmodules",)
+MANAGED_KEYS = SIZE_KEYS + COUNT_KEYS + LIST_KEYS
+# Keys are matched without regard to case; a key this module adds is spelled
+# as the WSL documentation spells it.
+SPELLING = {"loadkernelmodules": "loadKernelModules"}
 STATE_VERSION = 1
 STATE_SUFFIX = ".ceph-testcontainers.state.json"
 BACKUP_SUFFIX = ".ceph-testcontainers.bak"
@@ -30,6 +35,7 @@ _EOL = re.compile(r"(\r\n|\n|\r)")
 _SECTION_LINE = re.compile(r"^\s*\[([^\[\]]+)\]\s*(?:[#;].*)?$")
 _KEY_LINE = re.compile(r"^(\s*)([A-Za-z0-9_.]+)(\s*=\s*)(.*?)\s*$")
 _SIZE = re.compile(r"^(\d+)\s*([KMGT]?B)?$", re.IGNORECASE)
+_LIST_ITEM = re.compile(r"^[A-Za-z0-9_-]+$")
 _UNITS = {"": 1, "B": 1, "KB": 1 << 10, "MB": 1 << 20, "GB": 1 << 30, "TB": 1 << 40}
 
 
@@ -73,14 +79,19 @@ def format_size(size):
 
 
 def parse_value(key, text):
-    """The comparable number of a managed key's value, or None."""
+    """The comparable number, or for a list key the list, of a managed key's value, or None."""
     if key in SIZE_KEYS:
         return parse_size(text)
+    if key in LIST_KEYS:
+        items = [item.strip() for item in text.split(",")] if text.strip() else []
+        return items if all(_LIST_ITEM.match(item) for item in items) else None
     text = text.strip()
     return int(text) if text.isdigit() else None
 
 
 def format_value(key, value):
+    if key in LIST_KEYS:
+        return ",".join(value)
     return format_size(value) if key in SIZE_KEYS else str(value)
 
 
@@ -193,7 +204,7 @@ class Document:
         return None if found is None else _split(self.lines[found[0]])[0]
 
     def value(self, key):
-        """The comparable number a managed key is set to, or None when unset.
+        """The number or list a managed key is set to, or None when unset.
 
         A value that is set but not understood is refused: comparing it or
         overwriting it would be a guess.
@@ -229,7 +240,7 @@ class Document:
         else:
             position = section[1]
             self._terminate(position, record)
-        written = "%s=%s" % (key, text)
+        written = "%s=%s" % (SPELLING.get(key, key), text)
         self.lines.insert(position, written + self.newline)
         record["keys"].setdefault(key, {"previous": None})
         record["keys"][key]["written"] = written
@@ -355,15 +366,21 @@ def inspect(path, files=None, newline="\n"):
 def plan(document, wanted):
     """Keys of wanted that the document must raise, as {key: value text}.
 
-    wanted maps a managed key to the least value that is enough. A key that
-    is already set to that much or more is left alone.
+    wanted maps a managed key to the least value that is enough, or for a
+    list key to the items the list must contain. A key that is already set to
+    that much or more is left alone, and a list keeps the items it has.
     """
     changes = {}
     for key in MANAGED_KEYS:
         if key not in wanted:
             continue
         current = None if document is None else document.value(key)
-        if current is None or current < wanted[key]:
+        if key in LIST_KEYS:
+            present = [item.replace("-", "_") for item in current or []]
+            missing = [item for item in wanted[key] if item.replace("-", "_") not in present]
+            if missing:
+                changes[key] = format_value(key, (current or []) + missing)
+        elif current is None or current < wanted[key]:
             changes[key] = format_value(key, wanted[key])
     return changes
 
