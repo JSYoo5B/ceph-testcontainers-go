@@ -23,6 +23,12 @@ LINE = r"(release|support)/(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
 VERSION = r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
 PREFIX = "Git Flow / "
 GUARD = PREFIX + "reserve line names"
+# The commit status of .github/scripts/required_ci.py. Its rule is optional:
+# it exists only after "apply --requested-ci", and verify checks it when it
+# is installed.
+REQUESTED = "Required requested CI"
+REQUESTED_RULE = PREFIX + "requested CI"
+MAINTAINED = ["refs/heads/main", "refs/heads/develop", "refs/heads/release/**/*", "refs/heads/support/**/*"]
 
 
 def require(condition, message):
@@ -69,6 +75,22 @@ def candidate(branch):
     return ruleset(PREFIX + branch, "branch", ["refs/heads/" + branch], [checks([gate(branch)], strict=True)])
 
 
+def requested():
+    """Require the requested CI status on every maintained branch.
+
+    The branches are those whose pull requests start Code checks, because
+    that request is what makes the gate publish the status on a new head. A
+    narrower rule would leave the status advisory where reviewers can still
+    require coverage; a wider one would wait on pull requests that nothing
+    evaluates."""
+    return ruleset(REQUESTED_RULE, "branch", MAINTAINED, [checks([REQUESTED])])
+
+
+def optional(managed):
+    """The optional rulesets that are installed."""
+    return [requested()] if REQUESTED_RULE in managed else []
+
+
 def reserved(lines):
     return ruleset(GUARD, "branch", ["refs/heads/release/**/*", "refs/heads/support/**/*"],
                    [rule("creation")], ["refs/heads/" + name for name in lines])
@@ -79,8 +101,7 @@ def baseline():
               require_last_push_approval=False, require_code_owner_review=False,
               required_review_thread_resolution=True, allowed_merge_methods=["merge"])
     return [
-        ruleset(PREFIX + "reviewed changes", "branch",
-                ["refs/heads/main", "refs/heads/develop", "refs/heads/release/**/*", "refs/heads/support/**/*"],
+        ruleset(PREFIX + "reviewed changes", "branch", MAINTAINED,
                 [rule("deletion"), rule("non_fast_forward"), pr, checks(CODE)]),
         candidate("main"),
         ruleset(PREFIX + "immutable version tags", "tag", ["refs/tags/v*"],
@@ -139,9 +160,12 @@ def effective(branch):
 
 def verify_branch(managed, branch, expected):
     active = effective(branch)
+    expected = [*expected, *optional(managed)]
     contexts = set(CODE)
     if any(policy["name"] == PREFIX + branch for policy in expected):
         contexts.add(gate(branch))
+    if any(policy["name"] == REQUESTED_RULE for policy in expected):
+        contexts.add(REQUESTED)
     for item in active:
         params = item.get("parameters", {})
         if item["type"] == "pull_request":
@@ -160,7 +184,7 @@ def verify_branch(managed, branch, expected):
 
 def verify(managed, lines):
     core, main, tags = baseline()
-    desired = [core, main, tags, reserved(lines)] + [candidate(line) for line in sorted(lines)]
+    desired = [core, main, tags, reserved(lines)] + [candidate(line) for line in sorted(lines)] + optional(managed)
     require(set(managed) == {p["name"] for p in desired}, "unexpected managed ruleset or incomplete line setup")
     for policy in desired:
         ensure(managed, policy, "verify")
@@ -172,6 +196,37 @@ def verify(managed, lines):
                 f"creation rule still applies to registered line {line}")
     for branch in ["release/unregistered", "support/unregistered"]:
         verify_branch(managed, branch, [core, reserved(lines)])
+
+
+def without_requested_status():
+    """The open pull requests to a maintained branch whose head commit has no
+    requested CI status yet. Once the rule exists each of them waits for one,
+    and only a new pull request event or a dispatch of the gate brings it."""
+    waiting = []
+    for pull in api("pulls?state=open&per_page=100", pages=True):
+        base, sha = pull["base"]["ref"], pull["head"]["sha"]
+        if base not in {"main", "develop"} and not re.fullmatch(LINE, base):
+            continue
+        statuses = api(f"commits/{sha}/status?per_page=100", pages="statuses")
+        if not any(status["context"] == REQUESTED for status in statuses):
+            waiting.append(f"#{pull['number']} ({base}, {sha[:12]})")
+    return waiting
+
+
+def require_requested(managed, lines, mode):
+    """Install the requested CI rule beside the existing rulesets, which are
+    verified first and never changed."""
+    verify(managed, lines)
+    if REQUESTED_RULE in managed:
+        print("Already installed:", REQUESTED_RULE)
+        return
+    waiting = without_requested_status()
+    for pull in waiting:
+        print(f"No {REQUESTED} status: {pull}")
+    require(mode != "apply" or not waiting,
+            f"{len(waiting)} open pull request(s) have no {REQUESTED} status; "
+            'run `gh workflow run "Requested CI gate"` and plan again')
+    ensure(managed, requested(), mode)
 
 
 def refs():
@@ -292,12 +347,15 @@ def main(argv=None):
     parser.add_argument("--line", help="prepare and seed release/X.Y or support/X.Y")
     parser.add_argument("--from", dest="source", help="develop or a published stable tag, for --line")
     parser.add_argument("--at", help="reviewed seed SHA from the line registration plan")
+    parser.add_argument("--requested-ci", action="store_true",
+                        help="plan or apply the rule that requires the requested CI status on maintained branches")
     parser.add_argument("--branch", help="target branch for evidence")
     parser.add_argument("--sha", help="full candidate commit for evidence")
     args = parser.parse_args(argv)
     require(not args.at or (args.mode == "apply" and args.line), "--at is for applying a line registration")
     if args.mode == "evidence":
-        require(not (args.line or args.source or args.policy_pr), "evidence takes --branch and --sha")
+        require(not (args.line or args.source or args.policy_pr or args.requested_ci),
+                "evidence takes --branch and --sha")
         require(args.branch == "main" or re.fullmatch(LINE, args.branch or ""), "expected a maintained candidate branch")
         require(re.fullmatch("[a-f0-9]{40}", args.sha or ""), "expected a full commit SHA")
         require(refs().get(args.branch) == args.sha, "candidate is not the current branch tip")
@@ -308,11 +366,13 @@ def main(argv=None):
     require(not args.line or re.fullmatch(LINE, args.line), "invalid release/support line")
     require(not (args.line and args.policy_pr), "separate cutover from opening a line")
     require(args.mode != "verify" or not (args.line or args.policy_pr), "verify checks all managed lines")
+    require(not args.requested_ci or (args.mode in {"plan", "apply"} and not (args.line or args.policy_pr)),
+            "--requested-ci is a plan or apply of its own")
     repo = api("")
     default = repo["default_branch"]
     require(repo["allow_merge_commit"], "enable merge commits")
     require(default in {"main", "develop"}, "expected main or develop as the default branch")
-    if args.mode in {"plan", "apply"} and not args.line:
+    if args.mode in {"plan", "apply"} and not (args.line or args.requested_ci):
         require(default == "main", "initial cutover requires main as the default branch")
     managed, branches = managed_rules(), refs()
     lines = installed_lines(managed)
@@ -327,7 +387,11 @@ def main(argv=None):
         require(lines <= branches.keys(), "a registered line has not been seeded; resume its apply")
         verify(managed, lines)
         return
-    if args.line:
+    if args.requested_ci:
+        require("develop" in branches, "apply the cutover first")
+        require(lines <= branches.keys(), "a registered line has not been seeded; resume its apply")
+        require_requested(managed, lines, args.mode)
+    elif args.line:
         require("develop" in branches, "apply the cutover first")
         require(args.line.split("/")[0] == "release" or args.source != "develop",
                 "support lines start from their published stable tag")
@@ -366,8 +430,8 @@ def main(argv=None):
             sha = branches["main"]
             print("Preview only. The merged policy SHA and its checks are required by apply.")
         policies = [reserved(lines), *baseline()]
-        require(set(managed) <= {p["name"] for p in policies} | {candidate(line)["name"] for line in lines},
-                "unexpected managed ruleset")
+        require(set(managed) <= {p["name"] for p in policies} | {candidate(line)["name"] for line in lines}
+                | {REQUESTED_RULE}, "unexpected managed ruleset")
         for policy in policies:
             if policy["name"] in managed:
                 ensure(managed, policy, "verify")
