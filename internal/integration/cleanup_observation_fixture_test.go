@@ -66,15 +66,3 @@ func TestNetworkAbsenceRejectsFailedInspection(t *testing.T) {
 	}
 	requireNetworkAbsent(t, "fixture-network", fmt.Errorf("inspect: %w", errdefs.ErrNotFound))
 }
-
-func TestContainerAbsenceRejectsPresentAndFailedInspection(t *testing.T) {
-	if message := evidenceRejected(func() { requireContainerAbsent(evidenceFailure{}, "manager", "fixture-container", nil) }); !strings.Contains(message, "still exists") {
-		t.Fatalf("present container accepted as removed: %q", message)
-	}
-	for _, err := range []error{context.Canceled, errdefs.ErrPermissionDenied, errors.New("Docker unavailable")} {
-		if message := evidenceRejected(func() { requireContainerAbsent(evidenceFailure{}, "manager", "fixture-container", err) }); !strings.Contains(message, "removal was not confirmed") {
-			t.Fatalf("failed inspection accepted as absence: %v, %q", err, message)
-		}
-	}
-	requireContainerAbsent(t, "manager", "fixture-container", fmt.Errorf("inspect: %w", errdefs.ErrNotFound))
-}

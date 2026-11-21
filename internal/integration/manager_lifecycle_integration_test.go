@@ -65,7 +65,7 @@ func TestManagerLifecycle(t *testing.T) {
 	requireRemoved := func(name, id string) {
 		t.Helper()
 		_, err := docker.ContainerInspect(ctx, id, mobycl.ContainerInspectOptions{})
-		requireContainerAbsent(t, "manager "+name, id, err)
+		harness.RequireContainerAbsent(t, "manager "+name, id, err)
 	}
 	checkMap("a")
 	managerLifecycleRBDReady(t, ctx, cluster)

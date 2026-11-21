@@ -22,6 +22,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
+	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -44,6 +45,15 @@ func TestMonitorRollingReplacement(t *testing.T) {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
 			cluster, caller := harness.NewServiceCluster(t, opts...)
+			docker, err := testcontainers.NewDockerClientWithOpts(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := docker.Close(); err != nil {
+					t.Error(err)
+				}
+			})
 			if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
@@ -136,9 +146,16 @@ func TestMonitorRollingReplacement(t *testing.T) {
 				}
 				monitorRollingQuorum(t, ctx, cluster, 4)
 				record("mon."+added.DaemonName, "/etc/ceph/mon.keyring", added)
-				if err := harness.MonitorHandle(t, ctx, cluster, pair[0]).Remove(ctx); err != nil {
+				// A removed MON leaves no container. The engine is asked by
+				// the ID recorded before the removal, before the cluster's
+				// teardown can remove a leftover.
+				removed := harness.MonitorHandle(t, ctx, cluster, pair[0])
+				removedID := removed.GetContainerID()
+				if err := removed.Remove(ctx); err != nil {
 					t.Fatal(err)
 				}
+				_, inspectErr := docker.ContainerInspect(ctx, removedID, mobycl.ContainerInspectOptions{})
+				harness.RequireContainerAbsent(t, "mon."+pair[0], removedID, inspectErr)
 				delete(nodes, "mon."+pair[0])
 				monitorRollingQuorum(t, ctx, cluster, 3)
 				monitorRollingRADOS(t, ctx, harness.ToolkitContainer(t, cluster), payload)
