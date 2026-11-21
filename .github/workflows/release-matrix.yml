@@ -5,11 +5,14 @@ name: Release matrix
 # A push to release/X.Y runs none: that line follows develop, and its
 # candidate is validated once, by its promotion PR to main
 # (docs/contributing/ci.md, "Release candidate validation").
+# rehearsal/promotion is not a line: it exists only while the promotion
+# path is rehearsed end to end (docs/contributing/ci.md, "Rehearsing a
+# promotion").
 on:
   push:
-    branches: [main, 'support/**']
+    branches: [main, 'support/**', rehearsal/promotion]
   pull_request:
-    branches: [main, 'release/**', 'support/**']
+    branches: [main, 'release/**', 'support/**', rehearsal/promotion]
     types: [opened, synchronize, reopened, edited]
   workflow_dispatch:
 
@@ -63,14 +66,15 @@ jobs:
           path: artifacts/release-coverage.json
           retention-days: 14
           if-no-files-found: warn
-  # A push to main that is the protected merge of a promotion PR, with the
+  # A push to main (or to the rehearsal branch) that is the protected merge
+  # of a promotion PR, with the
   # tree and parents that the PR's Release matrix tested, reuses that run
   # instead of a second matrix (docs/contributing/ci.md, "Promotion reuse").
   # Anything else, a failure of this job included, runs the full matrix.
   reuse:
     name: Promotion reuse
     needs: releases
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/rehearsal/promotion')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -161,8 +165,11 @@ jobs:
   receipt:
     name: Candidate receipt
     needs: [releases, validated]
-    # Only a promotion to main is reused, so only it keeps the records.
-    if: github.event_name == 'pull_request' && github.base_ref == 'main' && needs.validated.result == 'success'
+    # Only a promotion to main, or its rehearsal, is reused, so only they
+    # keep the records. Promotion reuse is skipped on a pull request and the
+    # gate depends on it: without a status function this job would be skipped
+    # with it, whatever the gate's result.
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && (github.base_ref == 'main' || github.base_ref == 'rehearsal/promotion') && needs.validated.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:

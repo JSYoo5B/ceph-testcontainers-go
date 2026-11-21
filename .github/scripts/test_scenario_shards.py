@@ -475,9 +475,9 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         with self.subTest(workflow=self.RELEASE_MATRIX):
             workflow = self.workflows[self.RELEASE_MATRIX]
             self.assertRegex(workflow, r"(?m)^name: Release matrix$")
-            branches = "    branches: [main, 'release/**', 'support/**']\n"
+            branches = "    branches: [main, 'release/**', 'support/**', rehearsal/promotion]\n"
             # A release line's push runs no second matrix of its candidate.
-            pushed = "    branches: [main, 'support/**']\n"
+            pushed = "    branches: [main, 'support/**', rehearsal/promotion]\n"
             self.assertIn("\non:\n  push:\n" + pushed + "  pull_request:\n" + branches +
                           "    types: [opened, synchronize, reopened, edited]\n  workflow_dispatch:\n", workflow)
             self.assertNotIn("paths", workflow)
@@ -529,7 +529,8 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             reuse = jobs["reuse"]
             header = reuse.split("    steps:", 1)[0]
             self.assertEqual(scalar(header, "needs"), "releases")
-            self.assertEqual(scalar(header, "if"), "github.event_name == 'push' && github.ref == 'refs/heads/main'")
+            self.assertEqual(scalar(header, "if"), "github.event_name == 'push' && (github.ref == 'refs/heads/main' || "
+                             "github.ref == 'refs/heads/rehearsal/promotion')")
             self.assertEqual(scalar(header, "reused"), "${{ steps.verify.outputs.reused }}")
             self.assertIn("python3 scripts/release/promotion_reuse.py verify --coverage artifacts/release-coverage.json "
                           "--output artifacts/promotion-reuse\n", reuse)
@@ -548,8 +549,10 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             receipt = jobs["receipt"]
             header = receipt.split("    steps:", 1)[0]
             self.assertEqual(scalar(header, "needs"), "[releases, validated]")
-            self.assertEqual(scalar(header, "if"), "github.event_name == 'pull_request' && github.base_ref == 'main' "
-                                                   "&& needs.validated.result == 'success'")
+            self.assertEqual(scalar(header, "if"), "${{ !cancelled() && github.event_name == 'pull_request' && "
+                                                   "(github.base_ref == 'main' || "
+                                                   "github.base_ref == 'rehearsal/promotion') "
+                                                   "&& needs.validated.result == 'success' }}")
             self.assertEqual(scalar(header, "name"), "Candidate receipt")
             # It keeps the history row of every runtime job with the
             # receipt, for as long as the receipt.
