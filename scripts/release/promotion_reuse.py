@@ -40,9 +40,13 @@ import zipfile
 
 SCHEMA = "promotion-reuse/v1"
 WORKFLOW = ".github/workflows/release-matrix.yml"
-# Publication branches whose push may reuse a promotion run. A support line
-# keeps full push validation until its protected path has been demonstrated.
-BRANCHES = ("main",)
+# The branch on which the promotion path is rehearsed end to end. It is no
+# publication branch: nothing is tagged or published from it.
+REHEARSAL = "rehearsal/promotion"
+# Branches whose push may reuse a promotion run: the publication branch and
+# its rehearsal. A support line keeps full push validation until its
+# protected path has been demonstrated.
+BRANCHES = ("main", REHEARSAL)
 CANDIDATE = "release-candidate-receipt"
 REUSE = "promotion-reuse-receipt"
 # The files of the two artifacts: a receipt and the evidence it accounts for.

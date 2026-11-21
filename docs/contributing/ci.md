@@ -1139,6 +1139,39 @@ the image IDs and digests it resolved to, and the Go toolchains. The full
 native logs are not kept beyond their own artifacts' retention; the evidence
 holds their hashes.
 
+#### Rehearsing a promotion
+
+The reuse path only runs for a protected merge, so it cannot be tried on a
+feature branch, and trying it first on a real promotion would make a release
+the test. The branch `rehearsal/promotion` exists for that: `release-matrix.yml`
+treats a PR to it and a push to it exactly as it treats `main`, with the gate
+`Release candidate validated (rehearsal/promotion)`, and
+`promotion_reuse.py` applies the same checks. A receipt names its target, so a
+rehearsal never qualifies a push to `main`, nor the reverse. Nothing is tagged
+or published from the branch, and no other workflow runs for it.
+
+The branch is not kept. To rehearse a change of the Release matrix, the
+receipts or the reuse decision:
+
+1. Create `rehearsal/promotion` at the base to promote onto, with a ruleset
+   for it alone that requires a pull request and forbids deletion and
+   non-fast-forward pushes.
+2. Open a PR to it from the branch under test. Its Release matrix is a full
+   one; when the gate has passed, check that `Candidate receipt` wrote
+   `release-candidate-receipt-<attempt>`.
+3. Merge the PR with a merge commit. The push run must end with
+   `Promotion reuse` successful, the runtime and environment callers skipped
+   and the gate passed, and its `promotion-reuse-receipt-<attempt>` must say
+   `reused` and name the PR's run.
+4. For the other path, merge a second PR whose Release matrix has not passed
+   (cancel it first). The push run's receipt must say `full-matrix` with the
+   reason, and the callers must start; cancel that run once they have.
+5. Delete the ruleset and the branch.
+
+The PR run of step 2 is also a Release matrix under the current
+[runner budget](#runner-budget), so its makespan and peak concurrency are the
+measurement to compare a changed allocation with.
+
 A push to `support/*` always runs its full matrix. The six Code checks run
 on the pushed commit in either case.
 

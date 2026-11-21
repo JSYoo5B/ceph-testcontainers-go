@@ -133,6 +133,45 @@ class QualifyTests(unittest.TestCase):
         self.assertEqual(receipt["reasons"], reasons)
         self.assertNotIn("source", receipt)
 
+    @staticmethod
+    def rehearsal():
+        """The same promotion, made to the rehearsal branch."""
+        facts = Facts()
+        facts.pulls[0]["base"]["ref"] = reuse.REHEARSAL
+        facts.jobs[40][-1] = facts.job(6, reuse.gate(reuse.REHEARSAL))
+        facts.receipts[40] = reuse.candidate_receipt(
+            REPO, 7, reuse.REHEARSAL, HEAD, 40, 2, {"sha": TEST, "tree": TREE, "parents": [BASE, HEAD]},
+            {"cells": 3, "callers": 2, "digest": DIGEST}, {"20.2.4": {"official": "image"}}, facts.jobs[40],
+            reuse.evidence_summary(facts.evidence[40]))
+        return facts
+
+    def test_the_rehearsal_branch_reuses_by_the_same_rules(self):
+        self.assertEqual(reuse.BRANCHES, ("main", reuse.REHEARSAL))
+        receipt, reasons = self.rehearsal().decide(branch=reuse.REHEARSAL)
+        self.assertEqual(reasons, [])
+        self.assertEqual(receipt["disposition"], "reused")
+        self.assertEqual(receipt["publication"]["branch"], reuse.REHEARSAL)
+        # A rehearsal never qualifies a publication, nor the reverse.
+        self.assert_refused(self.rehearsal(), "another branch or repository")
+        self.assert_refused(Facts(), "another branch or repository", branch=reuse.REHEARSAL)
+        facts = self.rehearsal()
+        facts.pulls[0]["base"]["ref"] = "main"
+        self.assert_refused(facts, "another PR, target or head")
+        facts = self.rehearsal()
+        facts.jobs[40][-1] = facts.job(6, reuse.gate("main"))
+        self.assert_refused(facts, "is missing or unsuccessful", branch=reuse.REHEARSAL)
+
+    def test_the_workflow_asks_for_a_reuse_on_exactly_the_reusing_branches(self):
+        workflow = (Path(__file__).resolve().parents[2] / reuse.WORKFLOW).read_text()
+        refs = " || ".join("github.ref == 'refs/heads/" + branch + "'" for branch in reuse.BRANCHES)
+        bases = " || ".join("github.base_ref == '" + branch + "'" for branch in reuse.BRANCHES)
+        self.assertIn("    if: github.event_name == 'push' && (" + refs + ")\n", workflow)
+        self.assertIn("    if: github.event_name == 'pull_request' && (" + bases + ") && ", workflow)
+        for trigger in ("  push:\n    branches: [", "  pull_request:\n    branches: ["):
+            listed = workflow.split(trigger, 1)[1].split("]", 1)[0].split(", ")
+            for branch in reuse.BRANCHES:
+                self.assertIn(branch, listed)
+
     def test_identical_tree_and_parents_reuse_the_promotion_run(self):
         receipt, reasons = Facts().decide()
         self.assertEqual(reasons, [])
