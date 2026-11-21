@@ -698,12 +698,35 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
                     if (filename, name) in publishers:
                         self.assertIn("    concurrency:\n      group: required-requested-ci\n"
                                       "      cancel-in-progress: false\n", job)
-                        self.assertEqual(scalar(job, "GH_TOKEN"), "${{ github.token }}")
+                        self.assertEqual(set(re.findall(r"GH_TOKEN: (.*)", job)), {"${{ github.token }}"})
                     else:
                         self.assertNotIn("required-requested-ci\n", job)
-        # Only the script names the context, so no other job sets it.
+        # A failed job does not fail a commit status, so each publisher
+        # ends with a step that sets the error itself unless the script
+        # reported every head published. It runs after a failed checkout or
+        # a cancelled step as well, and it is the only place a workflow
+        # names the context: no step sets it to anything but error.
+        commits = {(self.COMMAND, "register"): ("register", "needs.command.outputs.sha"),
+                   (self.COMMAND, "gate"): ("evaluate", "needs.command.outputs.sha"),
+                   (self.GATE, "evaluate"): ("evaluate", "github.event.workflow_run.head_sha")}
+        for (filename, name), (step, commit) in commits.items():
+            with self.subTest(workflow=filename, job=name):
+                job = self.jobs[filename][name]
+                script, withdraw = job.split("      - name: Withdraw the status when the evaluation did not finish\n")
+                self.assertIn("        id: " + step + "\n", script)
+                self.assertIn('--github-output "$GITHUB_OUTPUT"\n', script)
+                self.assertTrue(withdraw.startswith(
+                    "        if: always() && steps." + step + ".outputs.settled != 'true' && " + commit + " != ''\n"))
+                self.assertEqual(scalar(withdraw, "HEAD_SHA"), "${{ " + commit + " }}")
+                self.assertIn('gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA"\n'
+                              "          -f state=error -f context='" + command_gate.CONTEXT + "' ", withdraw)
+                self.assertNotIn("- name:", withdraw)
+                if name != "evaluate" or filename == self.COMMAND:
+                    self.assertIn("command", scalar(job, "needs"))
         for filename, workflow in self.workflows.items():
-            self.assertNotRegex(workflow, r"context=.?Required requested CI")
+            self.assertEqual(workflow.count(command_gate.CONTEXT + "'"),
+                             sum(key[0] == filename for key in commits), filename)
+            self.assertNotRegex(workflow, r"state=(?!error)\S+ -f context='" + command_gate.CONTEXT)
 
     def test_the_gate_evaluates_from_the_default_branch_on_every_pull_request_event(self):
         workflow, jobs = self.workflows[self.GATE], self.jobs[self.GATE]
@@ -720,14 +743,14 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertNotIn("paths", code.split("\njobs:\n", 1)[0])
         self.assertEqual(set(jobs), {"evaluate"})
         job = jobs["evaluate"]
-        self.assertEqual(scalar(job, "if"),
+        self.assertEqual(scalar(job.split("    steps:", 1)[0], "if"),
                          "github.event_name == 'workflow_dispatch' || github.event.workflow_run.event == 'pull_request'")
         self.assertEqual(scalar(job, "ref"), "${{ github.event.repository.default_branch }}")
         self.assertEqual(re.findall(r"(?m)^ +(?:- )?uses: (.*)$", job), ["actions/checkout@v7"])
         self.assertIn("persist-credentials: false", job)
-        self.assertIn("run: python3 .github/scripts/required_ci.py evaluate\n", job)
+        self.assertIn('run: python3 .github/scripts/required_ci.py evaluate --github-output "$GITHUB_OUTPUT"\n', job)
         # The job's own check is not the status: the status is the script's.
-        self.assertNotIn(command_gate.CONTEXT, workflow.split("\njobs:\n", 1)[1])
+        self.assertNotIn("name: " + command_gate.CONTEXT, workflow)
 
     def test_comment_command_runs_named_profiles_with_minimal_permissions_per_job(self):
         workflow, jobs = self.workflows[self.COMMAND], self.jobs[self.COMMAND]
@@ -811,9 +834,11 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertEqual(scalar(jobs["register"], "RESOLVED"), "${{ needs.validate.outputs.accepted == 'true' }}")
         # Gate evaluates after the result is recorded, also after a failed
         # or cancelled run.
-        self.assertIn("    needs: [register, report]\n", jobs["gate"])
-        self.assertEqual(scalar(jobs["gate"], "if"), "always() && needs.register.outputs.run == 'true'")
-        self.assertIn("run: python3 .github/scripts/required_ci.py evaluate\n", jobs["gate"])
+        self.assertIn("    needs: [command, register, report]\n", jobs["gate"])
+        self.assertEqual(scalar(jobs["gate"].split("    steps:", 1)[0], "if"),
+                         "always() && needs.register.outputs.run == 'true'")
+        self.assertIn('run: python3 .github/scripts/required_ci.py evaluate --github-output "$GITHUB_OUTPUT"\n',
+                      jobs["gate"])
         self.assertNotIn("rerun", workflow)
         # A comment reaches scripts only through the event file and env.
         self.assertNotIn("github.event.comment.body }}", workflow)

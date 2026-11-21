@@ -41,6 +41,20 @@ jobs:
           persist-credentials: false
           ref: ${{ github.event.repository.default_branch }}
       - name: Publish the status of every open pull request
+        id: evaluate
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 .github/scripts/required_ci.py evaluate
+        run: python3 .github/scripts/required_ci.py evaluate --github-output "$GITHUB_OUTPUT"
+      # A failed job does not fail the status: the commit would keep the
+      # status it has. Whatever stopped the step above, before or after it
+      # started, the commit that started this job must not stay green.
+      - name: Withdraw the status when the evaluation did not finish
+        if: always() && steps.evaluate.outputs.settled != 'true' && github.event.workflow_run.head_sha != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: >-
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA"
+          -f state=error -f context='Required requested CI' -f target_url="$RUN_URL"
+          -f description='The evaluation did not finish; run the Requested CI gate again' > /dev/null

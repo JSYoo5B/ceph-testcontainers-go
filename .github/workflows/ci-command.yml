@@ -174,6 +174,19 @@ jobs:
           python3 .github/scripts/required_ci.py register
           --request "$COMMAND_REQUEST" --resolved "$RESOLVED" --run-url "$RUN_URL"
           --github-output "$GITHUB_OUTPUT"
+      # A failed job does not fail the status: the commit would keep the
+      # status it has. Whatever stopped the step above, before or after it
+      # started, the commit that started this job must not stay green.
+      - name: Withdraw the status when the evaluation did not finish
+        if: always() && steps.register.outputs.settled != 'true' && needs.command.outputs.sha != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ needs.command.outputs.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: >-
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA"
+          -f state=error -f context='Required requested CI' -f target_url="$RUN_URL"
+          -f description='The evaluation did not finish; run the Requested CI gate again' > /dev/null
 
   acknowledge:
     name: Acknowledge
@@ -292,7 +305,7 @@ jobs:
   # passes.
   gate:
     name: Gate
-    needs: [register, report]
+    needs: [command, register, report]
     if: always() && needs.register.outputs.run == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -308,9 +321,23 @@ jobs:
         with:
           persist-credentials: false
       - name: Publish the status of every open pull request
+        id: evaluate
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 .github/scripts/required_ci.py evaluate
+        run: python3 .github/scripts/required_ci.py evaluate --github-output "$GITHUB_OUTPUT"
+      # A failed job does not fail the status: the commit would keep the
+      # status it has. Whatever stopped the step above, before or after it
+      # started, the commit that started this job must not stay green.
+      - name: Withdraw the status when the evaluation did not finish
+        if: always() && steps.evaluate.outputs.settled != 'true' && needs.command.outputs.sha != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ needs.command.outputs.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: >-
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA"
+          -f state=error -f context='Required requested CI' -f target_url="$RUN_URL"
+          -f description='The evaluation did not finish; run the Requested CI gate again' > /dev/null
 
   structural-source:
     name: Locate structural source run
