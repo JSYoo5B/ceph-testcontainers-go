@@ -235,6 +235,12 @@ prove Docker or native Ceph interoperability. Run substantial checks and Docker
 integration on an authorized Linux runner. Use a desktop engine only for an
 explicitly required desktop-specific behavior check.
 
+When the same operation fails again after a fix, or a regression is reported
+while its test stays green, do not rely on another narrow fix or a clean
+rerun. First check whether that test fails for the defect, as
+[Checking that a test rejects a wrong result](docs/contributing/testing.md#checking-that-a-test-rejects-a-wrong-result)
+describes.
+
 For structural triage, start with the current-head PR comment or Code artifact
 described in [Structural review](docs/contributing/structural-review.md). Follow
 its source locations rather than recounting methods or diagnostics through broad
