@@ -1,0 +1,46 @@
+name: Requested CI gate
+
+# Publishes the commit status "Required requested CI" on the head commit of
+# every open pull request: success when the pull request requires no
+# requested CI, or when every selection that a reviewer required with
+# "/ci require" passed on that head (see ci-command.yml).
+#
+# Code checks starts for every pull request event of a maintained branch, so
+# its request is the signal that a head is new. workflow_run runs this file
+# and its script from the default branch, whatever the pull request changes,
+# and the job never checks out, imports or executes pull request code. A
+# manual run publishes the same statuses again, for example before a branch
+# rule starts to require the context.
+on:
+  workflow_run:
+    workflows: [Code checks]
+    types: [requested]
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  # The group is shared with the Register and Gate jobs of ci-command.yml.
+  # An evaluation reads every ledger again, so a waiting one that GitHub
+  # replaces with a newer one loses nothing.
+  evaluate:
+    name: Evaluate
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+      statuses: write
+    concurrency:
+      group: required-requested-ci
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Publish the status of every open pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/required_ci.py evaluate

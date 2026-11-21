@@ -17,6 +17,7 @@ from unittest import mock
 
 import periodic_gate
 import report_test_failures as failure_reporter
+import required_ci as command_gate
 import run_image_matrix as runner
 import tag_scenarios as engine
 
@@ -135,6 +136,8 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
     PERIODIC, RELEASE_MATRIX = "periodic.yml", "release-matrix.yml"
     # The pull request comment command: issue_comment only.
     COMMAND = "ci-command.yml"
+    # The fixed status of the requested CI that a reviewer required.
+    GATE = "requested-ci-gate.yml"
     # The scratch-device research probe (#7): its own paths only, no scenarios.
     BLOCK_FAULT_PROBE = "block-fault-probe.yml"
     # The native ARM64 qualification of the source-owned arm64 cohort.
@@ -311,7 +314,8 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
 
     def test_pr_checks_are_separate_workflows_with_independent_entry_points(self):
         expected = {"code.yml", "tagged-runtime.yml", "native-regressions.yml", "experiments.yml", self.PERIODIC,
-                    self.RELEASE_MATRIX, self.COMMAND, self.BLOCK_FAULT_PROBE, self.ARM64, "structural-review.yml",
+                    self.RELEASE_MATRIX, self.COMMAND, self.GATE, self.BLOCK_FAULT_PROBE, self.ARM64,
+                    "structural-review.yml",
                     "structural-collect.yml", *self.ENTRY_POINTS}
         self.assertEqual(set(self.workflows), expected)
         probe = self.workflows[self.BLOCK_FAULT_PROBE]
@@ -655,6 +659,76 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertIn("Verify post-image runner headroom", runtime)
         self.assertLess(runtime.index("Verify post-image runner headroom"), runtime.index("Native assertions and completion proof"))
 
+    def test_only_trusted_jobs_can_write_the_required_status_or_its_ledger(self):
+        # A commit status and a pull request comment are what the required
+        # status and its ledger are made of. The jobs that can write either
+        # run default-branch code only: none checks out a pull request head,
+        # builds Go or calls the runtime template.
+        writers = set()
+        for filename, jobs in self.jobs.items():
+            for name, job in jobs.items():
+                if re.search(r"(?m)^      (?:statuses|pull-requests|issues): write$", job):
+                    writers.add((filename, name))
+                    with self.subTest(workflow=filename, job=name):
+                        self.assertNotIn("uses: ./", job)
+                        self.assertNotIn("setup-go", job)
+                        self.assertNotIn("go test", job)
+                        self.assertNotIn("head.sha", job)
+                        self.assertNotIn("outputs.sha }}\n          path:", job)
+                        for ref in re.findall(r"(?m)^          ref: (.*)$", job):
+                            self.assertIn(ref, ("${{ github.event.repository.default_branch }}", "${{ github.sha }}"))
+        self.assertEqual(writers, {(self.COMMAND, "register"), (self.COMMAND, "acknowledge"), (self.COMMAND, "report"),
+                                   (self.COMMAND, "gate"), (self.COMMAND, "structural-report"),
+                                   (self.GATE, "evaluate"), ("structural-review.yml", "publish")})
+        for filename, workflow in self.workflows.items():
+            with self.subTest(workflow=filename):
+                # No workflow grants a write scope to all its jobs, and none
+                # runs pull request code with the base repository's token.
+                top = workflow.split("\njobs:\n", 1)[0]
+                self.assertNotRegex(top, r"(?m)^  [a-z-]+: write$")
+                self.assertNotIn("write-all", workflow)
+                self.assertNotIn("pull_request_target", workflow)
+
+    def test_every_publication_of_the_required_status_is_in_one_concurrency_group(self):
+        publishers = {(self.COMMAND, "register"), (self.COMMAND, "gate"), (self.GATE, "evaluate")}
+        for filename, jobs in self.jobs.items():
+            for name, job in jobs.items():
+                with self.subTest(workflow=filename, job=name):
+                    self.assertEqual("required_ci.py" in job, (filename, name) in publishers)
+                    if (filename, name) in publishers:
+                        self.assertIn("    concurrency:\n      group: required-requested-ci\n"
+                                      "      cancel-in-progress: false\n", job)
+                        self.assertEqual(scalar(job, "GH_TOKEN"), "${{ github.token }}")
+                    else:
+                        self.assertNotIn("required-requested-ci\n", job)
+        # Only the script names the context, so no other job sets it.
+        for filename, workflow in self.workflows.items():
+            self.assertNotRegex(workflow, r"context=.?Required requested CI")
+
+    def test_the_gate_evaluates_from_the_default_branch_on_every_pull_request_event(self):
+        workflow, jobs = self.workflows[self.GATE], self.jobs[self.GATE]
+        self.assertRegex(workflow, r"(?m)^name: Requested CI gate$")
+        self.assertIn("\non:\n  workflow_run:\n    workflows: [Code checks]\n    types: [requested]\n"
+                      "  workflow_dispatch:\n\npermissions: {}\n", workflow)
+        self.assertNotRegex(workflow, r"(?m)^  (?:push|pull_request|pull_request_target|issue_comment):")
+        # Code checks is the workflow that starts for every pull request
+        # event of every maintained branch, documentation-only ones included.
+        code = self.workflows["code.yml"]
+        self.assertRegex(code, r"(?m)^name: Code checks$")
+        self.assertIn("  pull_request:\n    branches: [develop, main, 'release/**', 'support/**']\n"
+                      "    types: [opened, synchronize, reopened, edited]\n", code)
+        self.assertNotIn("paths", code.split("\njobs:\n", 1)[0])
+        self.assertEqual(set(jobs), {"evaluate"})
+        job = jobs["evaluate"]
+        self.assertEqual(scalar(job, "if"),
+                         "github.event_name == 'workflow_dispatch' || github.event.workflow_run.event == 'pull_request'")
+        self.assertEqual(scalar(job, "ref"), "${{ github.event.repository.default_branch }}")
+        self.assertEqual(re.findall(r"(?m)^ +(?:- )?uses: (.*)$", job), ["actions/checkout@v7"])
+        self.assertIn("persist-credentials: false", job)
+        self.assertIn("run: python3 .github/scripts/required_ci.py evaluate\n", job)
+        # The job's own check is not the status: the status is the script's.
+        self.assertNotIn(command_gate.CONTEXT, workflow.split("\njobs:\n", 1)[1])
+
     def test_comment_command_runs_named_profiles_with_minimal_permissions_per_job(self):
         workflow, jobs = self.workflows[self.COMMAND], self.jobs[self.COMMAND]
         self.assertRegex(workflow, r"(?m)^name: CI command$")
@@ -663,15 +737,18 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         # No workflow-level group: a comment that is not a command must never
         # cancel or queue behind a command run.
         self.assertNotRegex(workflow, r"(?m)^concurrency:")
-        self.assertEqual(set(jobs), {"command", "validate", "acknowledge", "runtime", "report", "structural-source", "structural-report"})
+        self.assertEqual(set(jobs), {"command", "validate", "register", "acknowledge", "runtime", "report", "gate",
+                                     "structural-source", "structural-report"})
         permissions = {name: dict(re.findall(r"(?m)^      ([a-z-]+): (read|write)$", re.search(
                            r"(?m)^    permissions:\n((?:      .*\n)+)", job)[1])) for name, job in jobs.items()}
         self.assertEqual(permissions, {
             "command": {"contents": "read", "pull-requests": "read"},
             "validate": {"contents": "read"},
+            "register": {"contents": "read", "pull-requests": "write", "statuses": "write"},
             "acknowledge": {"statuses": "write"},
             "runtime": {"contents": "read"},
             "report": {"contents": "read", "pull-requests": "write", "statuses": "write"},
+            "gate": {"contents": "read", "pull-requests": "write", "statuses": "write"},
             "structural-source": {"actions": "read"},
             "structural-report": {"contents": "read", "actions": "read", "pull-requests": "write"}})
         self.assertEqual(scalar(jobs["command"], "if"),
@@ -679,7 +756,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         # Only Validate checks out the head commit, beside the default
         # branch's scripts; no checkout keeps credentials.
         self.assertEqual(workflow.count("uses: actions/checkout@v7"), workflow.count("persist-credentials: false"))
-        for name in ("command", "report"):
+        for name in ("command", "register", "report", "gate"):
             self.assertNotIn("ref:", jobs[name])
             self.assertNotIn("head/", jobs[name])
         self.assertEqual(scalar(jobs["validate"], "ref"), "${{ needs.command.outputs.sha }}")
@@ -688,7 +765,14 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
                       jobs["validate"])
         runtime = jobs["runtime"]
         self.assertEqual(scalar(runtime, "uses"), "./.github/workflows/tagged-runtime.yml")
-        self.assertEqual(scalar(runtime, "if"), "needs.validate.outputs.accepted == 'true'")
+        # An advisory run starts once its names resolve. A command that
+        # changes the requirements starts only as the attempt that Register
+        # recorded, and Acknowledge marks exactly the commands that start.
+        starts = ("    if: >-\n      !cancelled() && needs.validate.outputs.accepted == 'true'\n"
+                  "      && (needs.command.outputs.verb == 'run' || needs.register.outputs.run == 'true')\n")
+        for name in ("acknowledge", "runtime"):
+            self.assertIn(starts, jobs[name])
+            self.assertIn("    needs: [command, validate, register]\n", jobs[name])
         self.assertEqual(scalar(runtime, "category"), "selected")
         self.assertEqual(scalar(runtime, "profiles"), "${{ needs.validate.outputs.profiles }}")
         self.assertEqual(scalar(runtime, "ref"), "${{ needs.command.outputs.sha }}")
@@ -711,6 +795,25 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertIn("if: steps.reply.outputs.state != ''\n", jobs["report"])
         self.assertEqual(scalar(jobs["report"].split("    steps:", 1)[0], "if"),
                          "always() && needs.command.outputs.command == 'true'")
+        self.assertIn("        if: steps.reply.outputs.post == 'true'\n", jobs["report"])
+        self.assertIn("    needs: [command, validate, register, acknowledge, runtime]\n", jobs["report"])
+        # drop is not validated: its names may be gone from the head.
+        self.assertEqual(scalar(jobs["validate"], "if"),
+                         "needs.command.outputs.accepted == 'true' && needs.command.outputs.verb != 'drop'")
+        # Register records drop always, require only with resolved names,
+        # and retry whenever Validate decided, resolved or not.
+        self.assertIn("    if: >-\n      !cancelled() && needs.command.outputs.accepted == 'true'\n"
+                      "      && (needs.command.outputs.verb == 'drop'\n"
+                      "      || (needs.command.outputs.verb == 'require' && needs.validate.outputs.accepted == 'true')\n"
+                      "      || (needs.command.outputs.verb == 'retry' && needs.validate.result == 'success'))\n",
+                      jobs["register"])
+        self.assertIn("python3 .github/scripts/required_ci.py register\n", jobs["register"])
+        self.assertEqual(scalar(jobs["register"], "RESOLVED"), "${{ needs.validate.outputs.accepted == 'true' }}")
+        # Gate evaluates after the result is recorded, also after a failed
+        # or cancelled run.
+        self.assertIn("    needs: [register, report]\n", jobs["gate"])
+        self.assertEqual(scalar(jobs["gate"], "if"), "always() && needs.register.outputs.run == 'true'")
+        self.assertIn("run: python3 .github/scripts/required_ci.py evaluate\n", jobs["gate"])
         self.assertNotIn("rerun", workflow)
         # A comment reaches scripts only through the event file and env.
         self.assertNotIn("github.event.comment.body }}", workflow)

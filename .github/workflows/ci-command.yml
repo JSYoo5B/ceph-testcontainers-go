@@ -5,6 +5,14 @@ name: CI command
 # Default pull request CI, pushes to develop and the ci:full and
 # ci:selected-batches labels are unchanged by it.
 #
+# "/ci require", "/ci retry" and "/ci drop" take the same selection and also
+# change what the fixed commit status "Required requested CI" requires of
+# the pull request. Register records the change, Report records the result
+# of the run and Gate publishes the status; requested-ci-gate.yml publishes
+# it for every other pull request event. The three never check out the pull
+# request, and Scenarios, which runs it, has no token that can write a
+# comment or a status.
+#
 # issue_comment runs this file and its scripts from the default branch.
 # Native Command and Report check out only the default branch; Validate and the
 # runtime jobs check out the recorded head commit with a read-only token and
@@ -51,6 +59,7 @@ jobs:
       accepted: ${{ steps.authorize.outputs.accepted }}
       reply: ${{ steps.authorize.outputs.reply }}
       sha: ${{ steps.authorize.outputs.sha }}
+      verb: ${{ steps.authorize.outputs.verb }}
       request: ${{ steps.authorize.outputs.request }}
     steps:
       - uses: actions/checkout@v7
@@ -72,7 +81,9 @@ jobs:
   validate:
     name: Validate
     needs: command
-    if: needs.command.outputs.accepted == 'true'
+    # drop names a selection as it was required; its names may no longer
+    # resolve, which is one reason to drop it.
+    if: needs.command.outputs.accepted == 'true' && needs.command.outputs.verb != 'drop'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -117,10 +128,59 @@ jobs:
           COMMAND_REQUEST: ${{ needs.command.outputs.request }}
         run: python3 trusted/.github/scripts/ci_command.py select --request "$COMMAND_REQUEST" --vocabulary "$RUNNER_TEMP/vocabulary.json" --github-output "$GITHUB_OUTPUT"
 
+  # Records a require, retry or drop command in the pull request's ledger
+  # and publishes the status. A retry whose names no longer resolve is
+  # recorded as blocked; a require with unknown names changes nothing and is
+  # answered by Report.
+  #
+  # Every job that publishes "Required requested CI" is in this one
+  # concurrency group, here and in requested-ci-gate.yml, so no evaluation
+  # publishes from a ledger that another job is changing. GitHub keeps one
+  # waiting job per group: a waiting evaluation that is replaced loses
+  # nothing, because the next one reads every ledger again, and a waiting
+  # Register that is replaced is reported by Report as not confirmed.
+  register:
+    name: Register
+    needs: [command, validate]
+    if: >-
+      !cancelled() && needs.command.outputs.accepted == 'true'
+      && (needs.command.outputs.verb == 'drop'
+      || (needs.command.outputs.verb == 'require' && needs.validate.outputs.accepted == 'true')
+      || (needs.command.outputs.verb == 'retry' && needs.validate.result == 'success'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+      statuses: write
+    concurrency:
+      group: required-requested-ci
+      cancel-in-progress: false
+    outputs:
+      attempt: ${{ steps.register.outputs.attempt }}
+      run: ${{ steps.register.outputs.run }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Record the command and publish the status
+        id: register
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMAND_REQUEST: ${{ needs.command.outputs.request }}
+          RESOLVED: ${{ needs.validate.outputs.accepted == 'true' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: >-
+          python3 .github/scripts/required_ci.py register
+          --request "$COMMAND_REQUEST" --resolved "$RESOLVED" --run-url "$RUN_URL"
+          --github-output "$GITHUB_OUTPUT"
+
   acknowledge:
     name: Acknowledge
-    needs: [command, validate]
-    if: needs.validate.outputs.accepted == 'true'
+    needs: [command, validate, register]
+    if: >-
+      !cancelled() && needs.validate.outputs.accepted == 'true'
+      && (needs.command.outputs.verb == 'run' || needs.register.outputs.run == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -142,10 +202,15 @@ jobs:
   # it; GitHub keeps one waiting caller per group, so a third identical
   # command replaces the waiting one. The group names the selection, not the
   # comment, while the commit status context names the comment.
+  #
+  # A command that changes the requirements runs only after Register has
+  # recorded it as the selection's attempt.
   runtime:
     name: Scenarios ${{ matrix.release }}
-    needs: [command, validate]
-    if: needs.validate.outputs.accepted == 'true'
+    needs: [command, validate, register]
+    if: >-
+      !cancelled() && needs.validate.outputs.accepted == 'true'
+      && (needs.command.outputs.verb == 'run' || needs.register.outputs.run == 'true')
     permissions:
       contents: read
     strategy:
@@ -168,10 +233,12 @@ jobs:
       save_caches: false
 
   # Runs after a refusal, a validation failure, a finished run and a
-  # cancelled one alike. It never re-runs anything.
+  # cancelled one alike. It never re-runs anything. The reply to a run of a
+  # required selection starts with the ledger record of its result, which
+  # Gate then evaluates.
   report:
     name: Report
-    needs: [command, validate, acknowledge, runtime]
+    needs: [command, validate, register, acknowledge, runtime]
     if: always() && needs.command.outputs.command == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -189,12 +256,15 @@ jobs:
           COMMAND_OUTPUTS: ${{ toJSON(needs.command.outputs) }}
           VALIDATE_OUTPUTS: ${{ toJSON(needs.validate.outputs) }}
           VALIDATE_RESULT: ${{ needs.validate.result }}
+          REGISTER_OUTPUTS: ${{ toJSON(needs.register.outputs) }}
+          REGISTER_RESULT: ${{ needs.register.result }}
           RUNTIME_RESULT: ${{ needs.runtime.result }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: >-
           python3 .github/scripts/ci_command.py report
           --command-outputs "$COMMAND_OUTPUTS" --validate-outputs "$VALIDATE_OUTPUTS"
           --validate-result "$VALIDATE_RESULT" --runtime-result "$RUNTIME_RESULT"
+          --register-outputs "$REGISTER_OUTPUTS" --register-result "$REGISTER_RESULT"
           --run-url "$RUN_URL" --body "$RUNNER_TEMP/reply.md" --github-output "$GITHUB_OUTPUT"
       - name: Set the commit status of the head commit
         if: steps.reply.outputs.state != ''
@@ -210,10 +280,37 @@ jobs:
           -f state="$STATUS_STATE" -f context="$STATUS_CONTEXT" -f target_url="$RUN_URL"
           -f description="$STATUS_DESCRIPTION" > /dev/null
       - name: Reply on the pull request
+        if: steps.reply.outputs.post == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           PULL_NUMBER: ${{ github.event.issue.number }}
         run: gh api "repos/$GITHUB_REPOSITORY/issues/$PULL_NUMBER/comments" -F body=@"$RUNNER_TEMP/reply.md" > /dev/null
+
+  # Publishes the status once the result of a required selection is
+  # recorded, also after a failed or cancelled run. A result that Report
+  # could not record leaves the selection without evidence, which never
+  # passes.
+  gate:
+    name: Gate
+    needs: [register, report]
+    if: always() && needs.register.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+      statuses: write
+    concurrency:
+      group: required-requested-ci
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Publish the status of every open pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/required_ci.py evaluate
 
   structural-source:
     name: Locate structural source run
