@@ -1,0 +1,40 @@
+{
+  "profiles": {
+    "single-cluster": {
+      "description": "One cluster at a time on container-local sparse BlueStore, tests run sequentially",
+      "cpus": 4,
+      "memory_gib": 4,
+      "swap_gib": 0,
+      "disk_free_gib": 12,
+      "kernel_features": [],
+      "basis": "Memory is the VM size the suite is sized for (docs/contributing/testing.md). CPUs are those of the hosted CI runner; fewer were not measured. Disk is the 8 GiB image-preparation allowance plus the 4 GiB runtime allowance of the smallest qualified CI storage profile (docs/contributing/ci.md)."
+    },
+    "in-memory-osds": {
+      "description": "One cluster of up to three 1 GiB WithInMemory (tmpfs) BlueStore OSDs",
+      "cpus": 4,
+      "memory_gib": 8,
+      "swap_gib": 0,
+      "disk_free_gib": 12,
+      "kernel_features": [],
+      "basis": "single-cluster plus 3 GiB for three fully allocated 1 GiB tmpfs stores, rounded up to the next common VM size. An arithmetic bound, not a measured peak."
+    },
+    "ci-parity": {
+      "description": "A CI batch as CI runs it: two tests at once (CEPH_TEST_PARALLEL=2), multicluster fixtures included",
+      "cpus": 4,
+      "memory_gib": 16,
+      "swap_gib": 0,
+      "disk_free_gib": 16,
+      "kernel_features": [],
+      "basis": "The size of the hosted CI runner and the largest qualified CI storage profile, 8 GiB image preparation plus 8 GiB runtime (docs/contributing/ci.md)."
+    },
+    "block-fault-delay": {
+      "description": "single-cluster plus the device-mapper delay target that the delay window of the block fault test needs",
+      "cpus": 4,
+      "memory_gib": 4,
+      "swap_gib": 0,
+      "disk_free_gib": 12,
+      "kernel_features": ["dm-delay"],
+      "basis": "single-cluster. The kernel feature is a property of the engine kernel; no resource value provides it."
+    }
+  }
+}
