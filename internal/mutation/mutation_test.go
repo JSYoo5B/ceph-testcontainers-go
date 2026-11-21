@@ -89,6 +89,40 @@ func TestCanceledMutationKeepsLaterFailure(t *testing.T) {
 	}
 }
 
+// The caller's cancellation ends its wait, not the write it dispatched: the
+// callback keeps a live context that only Run's own bound ends.
+func TestCanceledCallerLeavesDispatchedWriteItsOwnBound(t *testing.T) {
+	started, release := make(chan struct{}), make(chan struct{})
+	ctx, cancel := context.WithCancel(t.Context())
+	result := make(chan error, 1)
+	var write context.Context
+	go func() {
+		result <- Run(ctx, time.Minute, func(run context.Context) (bool, error) {
+			write = run
+			close(started)
+			<-release
+			return true, nil
+		})
+	}()
+	<-started
+	cancel()
+	var f Fence
+	if err := f.Record(<-result); !Uncertain(err) || !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled caller: %v", err)
+	}
+	// Run returned for the cancellation, and the callback still waits.
+	if err := write.Err(); err != nil {
+		t.Fatalf("the caller's cancellation reached the dispatched write: %v", err)
+	}
+	if _, bounded := write.Deadline(); !bounded {
+		t.Fatal("the dispatched write has no bound of its own")
+	}
+	close(release)
+	if err := f.Wait(t.Context()); err != nil {
+		t.Fatalf("the write did not complete under its own bound: %v", err)
+	}
+}
+
 // callbackBeforeSelection lets the callback finish before Run chooses between
 // callback completion and cancellation, so both events are ready.
 type callbackBeforeSelection struct{ context.Context }

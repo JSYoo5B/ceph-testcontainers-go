@@ -15,6 +15,19 @@ func requireNetworkAbsent(t testing.TB, name string, err error) {
 	}
 }
 
+// requireContainerAbsent takes the error of a Docker inspection of id. Only
+// Docker's not-found answer shows the removal: an inspectable container was
+// not removed, and any other failure observes neither state.
+func requireContainerAbsent(t testing.TB, what, id string, err error) {
+	t.Helper()
+	switch {
+	case err == nil:
+		t.Fatalf("%s container %s still exists after its removal", what, id)
+	case !errdefs.IsNotFound(err):
+		t.Fatalf("%s container %s removal was not confirmed: %v", what, id, err)
+	}
+}
+
 // Only ESRCH proves that the exact PID no longer exists. Permission errors
 // and other failed observations must fail the cancellation scenario.
 const requireProcessAbsent = `import os,sys
