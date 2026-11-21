@@ -1173,10 +1173,11 @@ decision:
    for it alone that requires a pull request and forbids deletion and
    non-fast-forward pushes.
 2. Push the commit under test to a branch of its own and open a PR from it
-   to `rehearsal/promotion`. A branch that is also the head of another open
-   PR gives two PRs one head commit, and the checks that publish to "the"
-   PR of a commit then refuse. When the gate has passed, check that
-   `Candidate receipt` succeeded and wrote `release-candidate-receipt-<attempt>`.
+   to `rehearsal/promotion`, before that commit is the head of any other
+   open PR. Two open PRs with one head commit make the checks that publish
+   to the PR of a commit (the structural review comment) refuse. When the
+   gate has passed, check that `Candidate receipt` succeeded and wrote
+   `release-candidate-receipt-<attempt>`.
 3. Merge the PR with a merge commit. The push run must end with
    `Promotion reuse` successful, the runtime and environment callers skipped
    and the gate passed, and its `promotion-reuse-receipt-<attempt>` must say
