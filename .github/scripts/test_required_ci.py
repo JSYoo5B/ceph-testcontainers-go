@@ -485,13 +485,45 @@ class RegisterTests(Case):
         self.assertEqual(len(self.repository.records(10)), records)
         self.assertEqual(len(gate.fold(self.repository.records(10))), 1)
         reply = self.repository.reply(10)
-        self.assertTrue(reply.startswith("Already required: `rbd_mirror_bandwidth network_delay on squid` is running"))
+        self.assertTrue(reply.startswith("Already required: `rbd_mirror_bandwidth network_delay on squid` is running on "
+                                         + A[:12] + ". Nothing changed and nothing runs;"), reply)
         # The first command stays the attempt, so the repeated comment's
         # run, had it started, could not pass the requirement.
         self.flow.finish(second, "success")
         self.assertGate(A, "pending", "1 running")
         self.flow.finish(first, "success")
         self.assertGate(A, "success")
+
+    def test_the_reply_to_a_repeated_require_reads_as_a_sentence_in_every_state(self):
+        self.assertEqual(set(gate.SENTENCES), set(gate.STATES))
+        said = {}
+
+        def repeat(state, head=A):
+            _, decision = self.flow.command(10, "require", ["network_delay"])
+            self.assertEqual(decision, {"attempt": False, "run": False})
+            said[state] = self.repository.reply(10)
+            self.assertTrue(said[state].startswith(
+                "Already required: `network_delay` " + gate.SENTENCES[state] + " " + head[:12] + ". Nothing changed"),
+                said[state])
+
+        request, _ = self.flow.command(10, "require", ["network_delay"])
+        repeat("running")
+        self.flow.finish(request, "failure")
+        repeat("failed")
+        self.flow.finish(request, "cancelled")
+        repeat("incomplete")
+        self.flow.finish(request, "success")
+        repeat("passed")
+        self.repository.push(10, B)
+        repeat("awaiting", B)
+        self.flow.command(10, "retry", ["network_delay"], resolved=False)
+        repeat("blocked", B)
+        self.assertEqual(set(said), set(gate.STATES))
+        self.assertEqual(said["awaiting"].split(". ")[0], "Already required: `network_delay` has no run on " + B[:12])
+        for reply in said.values():
+            # A verb follows the selection; no state reads "is <noun phrase>".
+            self.assertNotRegex(reply, r"` is (?!running )")
+            self.assertNotIn(" at " + A[:12], reply)
 
     def test_the_identity_is_the_selection_as_typed(self):
         identity = ci_command.selection_id

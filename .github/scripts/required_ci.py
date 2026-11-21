@@ -77,6 +77,9 @@ FIELDS = {
 SEVERITY = ("error", "failure", "pending", "success")
 STATES = {"passed": "success", "running": "pending", "awaiting": "pending",
           "failed": "failure", "incomplete": "failure", "blocked": "failure"}
+# What the reply to a repeated require says of the selection on a commit.
+SENTENCES = {"passed": "passed on", "running": "is running on", "awaiting": "has no run on",
+             "failed": "failed on", "incomplete": "did not complete its run on", "blocked": "no longer resolves on"}
 LABELS = {"passed": "passed", "running": "running", "awaiting": "no run on this head",
           "failed": "failed", "incomplete": "run did not complete", "blocked": "names no longer resolve"}
 
@@ -428,8 +431,8 @@ def register(github, request, resolved, run_url, server, repository, log=print):
     if verb == "require" and not resolved:
         record, reply = None, "Nothing is required: the names of " + selection + " were not resolved."
     elif verb == "require" and key in required:
-        record, reply = None, ("Already required: " + selection + " is " + LABELS[requirement_state(required[key], head)]
-                               + " at " + head[:12] + ". Nothing changed and nothing runs; `/ci retry` runs a "
+        record, reply = None, ("Already required: " + selection + " " + SENTENCES[requirement_state(required[key], head)]
+                               + " " + head[:12] + ". Nothing changed and nothing runs; `/ci retry` runs a "
                                "required selection again.")
     elif verb != "require" and key not in required:
         record, reply = None, ("Nothing changed: " + selection + " is not a required selection of this pull request. "
