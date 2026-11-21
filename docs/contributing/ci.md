@@ -21,7 +21,8 @@ run tests locally and how to add them is described in [Testing](testing.md).
 | Native regressions | `native-regressions.yml` | manual only | One optional batch chosen from the workflow's `batch` input, taking only its pass or failure: an experiment case, another optional native check or the `failure_archive` proof (see [Native regressions](#native-regressions) for how to list and dispatch the choices) |
 | ARM64 | `arm64.yml` | weekly (Wednesday 05:37 UTC); pull request touching its planner, image, storage, runtime template, bootstrap or helper paths; manual | The source-owned arm64 cohort on a native GitHub-hosted ARM64 runner (see [Native ARM64 cohort](#native-arm64-cohort)); not a required check |
 | Block fault probe | `block-fault-probe.yml` | pull request touching its scripts or workflow, manual | A research probe of delay and I/O-error tables on a scratch loop and device-mapper mapping, without Ceph; manual `public_api` also qualifies the public API on every supported release using a source-pinned helper; not a required check |
-| CI command | `ci-command.yml` | pull request comment `/ci run ...` | The named runtime batches on the pull request's head commit (see [Running chosen batches from a comment](#running-chosen-batches-from-a-comment)) |
+| CI command | `ci-command.yml` | pull request comment `/ci run ...`, `/ci require ...`, `/ci retry ...` or `/ci drop ...` | The named runtime batches on the pull request's head commit (see [Running chosen batches from a comment](#running-chosen-batches-from-a-comment)); the last three also change the pull request's [required requested CI](#requiring-requested-ci-before-a-merge) |
+| Requested CI gate | `requested-ci-gate.yml` | every pull request run of Code checks, when it is requested; manual | Runs no test. Sets the commit status `Required requested CI` on the head of every open pull request (see [Requiring requested CI before a merge](#requiring-requested-ci-before-a-merge)) |
 
 The ordinary runtime workflows and explicit full periodic runs call the reusable template `tagged-runtime.yml`
 (`workflow_call` only). The workflows are independent: none waits for
@@ -74,7 +75,9 @@ continues under ordinary CI while a candidate is frozen.
 
 To run any other batch on a pull request, such as one batch of another
 category or a batch on Squid, use `/ci run <batch>`. The command adds a run
-and never changes the checks above.
+and never changes the checks above. A reviewer who needs that run to pass
+before the merge uses [`/ci require <batch>`](#requiring-requested-ci-before-a-merge)
+instead.
 
 The workflows set `GOPROXY=https://proxy.golang.org|direct`, so a failed
 proxy request falls back to the module's origin. The Go jobs share one module
@@ -139,6 +142,7 @@ lists renames as a deletion and an addition.
 | Topology, Multicluster, Recovery | as above, plus the run ID for a label other than `ci:full` | An unrelated label starts a run that skips its jobs and cancels nothing. |
 | Short | as above, plus the run ID for a label other than `ci:selected-batches` | Adding or removing `ci:selected-batches` replaces the run in progress. |
 | CI command | per caller job: PR number, head commit, selected profiles and release | An identical command waits for the one in progress; a third identical command replaces the waiting one, which ends cancelled. Different selections run independently. |
+| CI command (`Register`, `Gate`), Requested CI gate | the fixed name `required-requested-ci`, per job | Every job that publishes `Required requested CI` waits its turn and none is cancelled while it runs. A waiting job is replaced by a newer one (see [How the status is kept](#how-the-status-is-kept)). |
 | Structural review evidence | workflow name and PR number | A new commit on a PR cancels that PR's previous run. |
 | Native regressions | none | Runs are independent. |
 | ARM64 | workflow name, then the PR number or the run ID | A new commit on a PR cancels that PR's previous run. Scheduled and manual runs are never cancelled. |
@@ -380,9 +384,11 @@ workflow and scripts from the protected default branch:
 | --- | --- | --- |
 | `Command` | `contents: read`, `pull-requests: read` | Runs `ci_command.py authorize` on the default-branch checkout. No pull request code runs. |
 | `Validate` | `contents: read` | Checks out the default branch and the recorded head side by side without credentials; the head's planner lists batches and releases, the default branch's `ci_command.py select` resolves the names. |
+| `Register` | `contents: read`, `pull-requests: write`, `statuses: write` | Only for `/ci require`, `/ci retry` and `/ci drop`: runs `required_ci.py register` on the default-branch checkout (see [Requiring requested CI before a merge](#requiring-requested-ci-before-a-merge)). |
 | `Acknowledge` | `statuses: write` | Sets a pending commit status on the head. |
 | `Scenarios <release>` | `contents: read` | Calls `tagged-runtime.yml` with category `selected` and the resolved profile IDs, once per release. |
 | `Report` | `contents: read`, `pull-requests: write`, `statuses: write` | Sets the final status and replies with the result, run link or refusal. |
+| `Gate` | `contents: read`, `pull-requests: write`, `statuses: write` | Only after the run of a required selection: runs `required_ci.py evaluate` on the default-branch checkout. |
 
 The result appears on the pull request as the commit status
 `CI command <comment-id>: <names> on <releases>` (`success`, `failure`, or
@@ -400,6 +406,176 @@ python3 .github/scripts/ci_command.py select \
   --request '{"names": ["network_faults"], "selectors": ["squid"], "duplicates": [], "sha": "<head>", "pull": 1, "comment_id": 1}' \
   --vocabulary artifacts/vocabulary.json
 ```
+
+### Requiring requested CI before a merge
+
+`/ci run` is advisory: no merge depends on its result. To make a selection
+part of the merge decision of one pull request, a reviewer requires it:
+
+```text
+/ci require <batch|profile>... [on <release|codename|all>...]
+/ci retry <batch|profile>... [on <release|codename|all>...]
+/ci drop <batch|profile>... [on <release|codename|all>...]
+```
+
+The names, releases, format and authorization are those of `/ci run`, and so
+are the refusals: an unknown name, a fork, a closed pull request or an
+unauthorized author changes no requirement.
+
+| Command | Effect |
+| --- | --- |
+| `/ci require` | Adds the selection to the pull request's requirements and runs it on the head commit. Requiring a selection that is already required changes nothing and runs nothing. Different selections add up, and each must pass. |
+| `/ci retry` | Runs a required selection again on the current head commit, after a failure, a cancelled run or a new push. That run replaces the earlier one as the selection's evidence. Its names are resolved again on the new head; if they no longer resolve, the selection is recorded as blocked and fails until the pull request restores the names or the selection is dropped. |
+| `/ci drop` | Removes the selection from the requirements. Its names are not resolved, so a selection whose batch is gone can be dropped. |
+
+A selection is its names and release selectors as typed, in any order.
+`/ci require network_faults` and `/ci require network_faults on tentacle`
+are two selections even while Tentacle is the current release, so `retry` and
+`drop` repeat the selection as it was required. The summary comment lists the
+exact commands.
+
+#### The status
+
+The commit status `Required requested CI` is set on the head commit of
+every open pull request, with or without requirements:
+
+| State | Meaning |
+| --- | --- |
+| `success` | The pull request requires nothing, or every required selection passed on this head commit. |
+| `pending` | A required selection is running, or has no run on this head commit. |
+| `failure` | A required selection failed, its run was cancelled, skipped or ended without a known result, or its names no longer resolve. |
+| `error` | A comment of the requirement ledger was edited or cannot be read. |
+
+A pull request with requirements has one summary comment, which the status
+links to. It lists every required selection with its state, the commit that
+was tested, the command, run and result that are its evidence, who required
+it, and the `retry` and `drop` commands for it. The comment is updated in
+place.
+
+What satisfies a requirement is narrow on purpose:
+
+- only a successful run of the selection's latest accepted `require` or
+  `retry` command counts. The result of a command that a later `retry`
+  replaced, or of a requirement that was dropped and required again, is
+  ignored whenever it arrives;
+- the run must have tested the pull request's current head commit. After a
+  push the requirement stays and its evidence does not: the new head is
+  `pending` until the selection is retried on it. Nothing starts that run
+  automatically;
+- the run tests the head commit itself, not a merge with the base, so a
+  change of the base branch or of the pull request's target neither
+  satisfies nor invalidates a requirement;
+- a result is recorded on the pull request whose command started the run.
+  The same commit tested for another pull request is no evidence;
+- a run without a recorded result is no evidence. A selection that stays
+  `running` after its run ended lost its result; retry it.
+
+A commit status belongs to a commit, and GitHub evaluates a required status
+on the head commit of the pull request. Pull requests that share a head
+commit therefore share the status, and it is the worst of theirs: none of
+them passes until the requirements of each are met. The description names
+the pull request that decides it.
+
+#### Reviewer steps
+
+1. **Request.** Comment `/ci require <selection>` on the pull request.
+2. **Wait for the acknowledgment.** The comment is processed by a workflow
+   run, seconds to minutes later. Until then nothing is required and the
+   status can still be green, so hold the merge. The acknowledgment is a
+   reply of `github-actions` that starts with `Required:`; the status of the
+   head is set `pending` before that reply is written. A reply that says the
+   command is not confirmed, or no reply at all, means that the command may
+   not have been recorded: read the summary comment and repeat the command.
+3. **Read the result.** `Report` replies with the outcome and the run link,
+   and the status and the summary follow. A failed selection is diagnosed
+   like any failed batch (see [Reading a failing batch](#reading-a-failing-batch)).
+4. **Retry or drop.** `/ci retry <selection>` after a fix was pushed or when
+   the failure was not the change's; `/ci drop <selection>` when the
+   selection is no longer wanted. Both are acknowledged the same way
+   (`Retrying the required selection:`, `No longer required:`), and both stay
+   on the pull request with their author.
+5. **Verify before the merge.** `Required requested CI` is `success` on the
+   exact commit to merge, and the summary comment names that commit as its
+   head and lists every selection that was asked for as `passed`:
+
+   ```sh
+   gh api repos/<owner>/<repository>/commits/<head-sha>/status \
+     --jq '.statuses[] | select(.context == "Required requested CI") | {state, description, target_url}'
+   ```
+
+   The status blocks a merge by itself only on a branch whose rule requires
+   the context (see [Enabling the branch rule](#enabling-the-branch-rule)).
+   On any other branch this step is the reviewer's.
+
+Do not edit or delete the replies of `github-actions` that record a
+requirement. An edited one turns the status into `error`; the summary then
+links to it, and deleting it and repeating the commands it stood for
+restores the ledger. GitHub shows the deletion in the pull request's
+timeline.
+
+This is separate from the release gate. A release candidate's own retry
+rule (see [Release candidate validation](#release-candidate-validation))
+decides what a candidate may contain; a required selection is a check of one
+reviewed commit and of exactly the coverage the reviewer asked for, and it
+has no automatic retry.
+
+#### How the status is kept
+
+The requirements of a pull request are a ledger of comments on it. A record
+is the first line of a comment written with the workflow token, an HTML
+comment that `Register` (require, retry, blocked, drop) and `Report`
+(result) write and never change. `required_ci.py` reads the ledgers again on
+every evaluation and derives every status from them; nothing else stores a
+requirement. A comment by anyone else that copies a record is not one.
+
+Three jobs publish the status, all with `required_ci.py` from the default
+branch, and none checks out a pull request:
+
+| Job | When | What it does |
+| --- | --- | --- |
+| `Register` of `ci-command.yml` | an accepted `require`, `retry` or `drop` | Sets the head `pending` (not for `drop`), writes the record with the acknowledgment, then evaluates. |
+| `Gate` of `ci-command.yml` | after `Report` recorded the result of a required selection's run | Evaluates. |
+| `Evaluate` of `requested-ci-gate.yml` | every pull request run of Code checks, when it is requested; manual dispatch | Evaluates. |
+
+Code checks starts for every opened, pushed, reopened or retargeted pull
+request of a maintained branch, documentation-only ones included, so each
+new head gets its status without a command. An evaluation covers every open
+pull request, sets a status only where it changed, and fails after
+publishing the others when the comments of one pull request cannot be read;
+that pull request keeps the status it had.
+
+The three jobs share the concurrency group `required-requested-ci`, so no
+evaluation publishes from a ledger that another job is changing. GitHub
+keeps one waiting job per group. A waiting evaluation that a newer one
+replaces loses nothing; a waiting `Register` that is replaced has recorded
+nothing, and `Report` answers that the command is not confirmed.
+
+The jobs that compile and run the pull request (`Validate` and
+`Scenarios`, and every job of the pull request workflows) hold a read-only
+token and can write neither a status nor a comment. Pull requests from forks
+cannot be given requirements, and their heads get the `success` of a pull
+request without any. As for every check of this repository, someone with
+write access can change a workflow on a branch and so set any status; the
+rule that only GitHub Actions may provide the context excludes statuses set
+with a personal token, not that.
+
+#### Enabling the branch rule
+
+A branch rule must require the context only when every open pull request to
+that branch already has it, otherwise those pull requests wait for a status
+that no event will bring:
+
+1. Dispatch the gate and check that it succeeded:
+   `gh workflow run "Requested CI gate"`.
+2. Confirm that every open pull request to the branch shows
+   `Required requested CI` on its head, a pull request without requirements
+   as `success`.
+3. Add the context to the branch's required status checks, provided by
+   GitHub Actions like the Code check contexts (see
+   [Maintained branches](git-flow.md)).
+
+After that, a pull request opened or pushed later gets the status from the
+Code checks request of that event.
 
 ## How a batch runs
 
