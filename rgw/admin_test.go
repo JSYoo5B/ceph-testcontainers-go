@@ -3,7 +3,9 @@ package rgw
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -30,6 +32,9 @@ type rgwAdminResponse struct {
 	data       string
 	code       int
 	err        error
+	// reply is what the stopped command answered to the supervisor's
+	// question before the stop.
+	reply string
 }
 
 type rgwAdminTestContainer struct {
@@ -41,8 +46,9 @@ type rgwAdminTestContainer struct {
 	// supervised call in calls.
 	limits []string
 	// signals holds the deadline signal that each supervised call asked
-	// its supervisor for, "" for none.
-	signals []string
+	// its supervisor for, "" for none, and queries the socket and request
+	// of its question before that signal.
+	signals, queries []string
 	// stopped makes State report an exited container; paused and restarting
 	// report a container whose Running flag stays true but refuses Exec.
 	stopped, paused, restarting bool
@@ -77,13 +83,19 @@ func (ctr *rgwAdminTestContainer) Exec(_ context.Context, args []string, opts ..
 		for _, opt := range opts {
 			opt.Apply(options)
 		}
-		signal := ""
+		signal, socket, request := "", "", ""
 		for _, variable := range options.ExecConfig.Env {
 			if value, ok := strings.CutPrefix(variable, "TC_SUPERVISED_DEADLINE_SIGNAL="); ok {
 				signal = value
 			}
+			if value, ok := strings.CutPrefix(variable, "TC_SUPERVISED_DEADLINE_SOCKET="); ok {
+				socket = value
+			}
+			if value, ok := strings.CutPrefix(variable, "TC_SUPERVISED_DEADLINE_REQUEST="); ok {
+				request = value
+			}
 		}
-		ctr.signals = append(ctr.signals, signal)
+		ctr.signals, ctr.queries = append(ctr.signals, signal), append(ctr.queries, socket+" "+request)
 	}
 	args = gwtest.Argv(args)
 	if ctr.onExec != nil {
@@ -110,7 +122,19 @@ func (ctr *rgwAdminTestContainer) Exec(_ context.Context, args []string, opts ..
 	var stream bytes.Buffer
 	stream.Write(header[:])
 	stream.WriteString(response.data)
-	return gwtest.Reply(original, response.code, &stream, response.stopped)
+	code, reader, err := gwtest.Reply(original, response.code, &stream, response.stopped)
+	if response.reply == "" || err != nil {
+		return code, reader, err
+	}
+	// Add the answer to the supervisor's envelope as the supervisor does.
+	var envelope map[string]any
+	data, _ := io.ReadAll(reader)
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return 0, nil, err
+	}
+	envelope["deadline_reply"], envelope["deadline_reply_size"] = base64.StdEncoding.EncodeToString([]byte(response.reply)), len(response.reply)
+	data, _ = json.Marshal(envelope)
+	return code, bytes.NewReader(data), nil
 }
 
 func TestAdminRequiresPythonOnlyAtCommandDispatch(t *testing.T) {
@@ -143,7 +167,7 @@ func TestRGWAdminPreservesDeclaredScopeAndConnection(t *testing.T) {
 	if _, err := gateway.Admin(t.Context(), "zone", "get"); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"radosgw-admin", "--conf", "/etc/ceph/ceph.conf", "--keyring", "/etc/ceph/ceph.client.admin.keyring",
+	want := []string{"radosgw-admin", "--admin-socket=/tmp/tc-supervised/radosgw-admin.$pid.asok", "--debug-objecter=0/20", "--log-max-recent=10000", "--conf", "/etc/ceph/ceph.conf", "--keyring", "/etc/ceph/ceph.client.admin.keyring",
 		"--rgw-realm", "realm-a", "--rgw-zonegroup", "group-a", "--rgw-zone", "zone-a", "--osd-pool-default-pg-num", "1", "--osd-pool-default-pgp-num", "0",
 		"--format", "json", "zone", "get"}
 	if !slices.Equal(ctr.calls[0], want) {

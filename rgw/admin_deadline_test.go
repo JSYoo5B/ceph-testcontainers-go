@@ -63,9 +63,26 @@ func TestRGWAdminReportsAStoppedCommand(t *testing.T) {
 			t.Fatalf("the stop report exposes %q: %v", leaked, err)
 		}
 	}
-	// The supervisor is asked to stop the command with SIGABRT at its limit.
-	if len(ctr.signals) != 1 || ctr.signals[0] != "6" {
-		t.Fatalf("deadline signals: %v", ctr.signals)
+	// The supervisor is asked to stop the command with SIGABRT at its limit,
+	// and to ask the command's admin socket for its RADOS requests first.
+	if len(ctr.signals) != 1 || ctr.signals[0] != "6" || ctr.queries[0] != `/tmp/tc-supervised/radosgw-admin.{pid}.asok {"prefix":"objecter_requests"}` {
+		t.Fatalf("deadline signals: %v, questions: %v", ctr.signals, ctr.queries)
+	}
+	// A command that also answered the question and dumped its recent
+	// events: the error says what it waited for and what its objecter did,
+	// in that order after the frames, without the other events.
+	const events = "--- begin dump of recent events ---\n" +
+		"   -3> 2026-11-21T12:57:48.233+0000 ffff91307040 20 rgw: signing with secret PRIVATE\n" +
+		"   -2> 2026-11-21T12:57:48.234+0000 ffff91307040 15 client.4440.objecter _send_op 1 to 2.2 on osd.0\n" +
+		"   -1> 2026-11-21T12:57:53.269+0000 ffff6dfb8c40  2 client.4440.objecter  tid 1 on osd.0 is laggy\n--- logging levels ---\n"
+	gateway, _ = newRGWAdminTestGateway(Config{}, rgwAdminResponse{code: 134, stopped: true, data: stopped + events,
+		reply: `{"ops":[{"tid":1,"pg":"2.85fca992","osd":0,"object_id":"default.realm","object_locator":"@2","age":104.5,"attempts":1,"osd_ops":["read 0~0"]}]}`})
+	_, err = gateway.Admin(ctx, "bucket", "stats", "--bucket", "b")
+	if !errors.Is(err, ceph.ErrNativeFailure) || !strings.HasSuffix(err.Error(), "RGWSI_BucketIndex_RADOS::cls_bucket_head+0x2e1 < main; "+
+		"it waited for 1 RADOS object requests: tid 1 [read 0~0] of default.realm in @2, pg 2.85fca992, on osd.0, sent 1 times, 104.5s old; "+
+		"the last 2 of the 2 different objecter events among its 3 recent events (2 of the objecter): 12:57:48.234 _send_op 1 to 2.2 on osd.0 | 12:57:53.269 tid 1 on osd.0 is laggy") ||
+		strings.Contains(err.Error(), "PRIVATE") {
+		t.Fatalf("a stopped radosgw-admin with an answer and events: %v", err)
 	}
 	// Another failure stays redacted.
 	gateway, _ = newRGWAdminTestGateway(Config{}, rgwAdminResponse{code: 22, data: "Error: invalid secret PRIVATE"})

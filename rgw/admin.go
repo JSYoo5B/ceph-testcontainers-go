@@ -150,8 +150,18 @@ type UserInfo struct {
 // thread's backtrace; the error text then also says "when it was stopped,
 // thread radosgw-admin was in" and names the first frames, functions of the
 // binary without arguments or addresses, so that a command that hung says
-// where. Give a command whose normal duration is known a ctx of its own with
-// that bound, not the whole test's. When Admin
+// where. It then also says what the command waited for: the RADOS requests
+// it had outstanding, which the supervisor asks the command's admin socket
+// for within one second before the signal ("it waited for N RADOS object
+// requests", each with its operations, object, pool, placement group and
+// OSD), and the last events of its RADOS client (the OSD map epochs it
+// received, the requests it sent and their replies), bounded in number and
+// length. For that every radosgw-admin of the gateway runs with an admin
+// socket below /tmp/tc-supervised, with its RADOS client's events kept in
+// memory at level 20 and with room for 10000 recent events; a command that
+// ends normally writes none of it. The name of an object in an access key or
+// Swift key namespace is left out. Give a command whose normal duration is
+// known a ctx of its own with that bound, not the whole test's. When Admin
 // cannot confirm the stop, for example because the gateway is paused or the
 // engine is unreachable, it returns a *ceph.NativeCommandUnstoppedError whose
 // Stop retries; Terminate retries too. Stopping radosgw-admin does not undo a
@@ -165,7 +175,8 @@ type UserInfo struct {
 // with Exec to see the native text. When radosgw-admin reports a fatal signal, the
 // error text also names the signal, its thread and the first backtrace
 // frames, and says how many bytes of standard output it wrote and whether
-// they are one complete JSON document, never what they say.
+// they are one complete JSON document, never what they say, and ends with
+// the last events of its RADOS client as for a stopped command.
 //
 //purpose:native
 func (g *Gateway) Admin(ctx context.Context, args ...string) ([]byte, error) {

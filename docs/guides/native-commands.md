@@ -693,6 +693,21 @@ stats, err := gateways[0].Admin(ctx, "bucket", "stats", "--bucket", "photos")
   still ran after 105s and was stopped; when it was stopped, thread
   radosgw-admin was in ...`, followed by the first frames of that thread
   (function names of the binary, without arguments or addresses).
+- The same error says what the command waited for. `it waited for N RADOS
+  object requests: tid 1 [read 0~0] of default.realm in @2, pg 2.85fca992, on
+  osd.0, sent 1 times, 104.9s old` lists the requests that had no reply,
+  which the supervisor asks the command's admin socket for right before the
+  stop (`on no OSD` is a request that has no target in the command's OSD
+  map); `it had no RADOS object request outstanding` means that the command
+  waited for something else. Then come the last events of the command's
+  RADOS client: the OSD map epochs it received, each request and reply, and
+  a repeated event such as the five-second `tick` once with its count. Both
+  parts are bounded, and the name of an object in an access key or Swift key
+  namespace is left out. To have this, every `radosgw-admin` of the gateway
+  runs with `--admin-socket` below `/tmp/tc-supervised`,
+  `--debug-objecter=0/20` and `--log-max-recent=10000`: the events stay in
+  the command's memory, and a command that ends normally writes none of
+  them. An argument of yours for one of these options comes later and wins.
 
 Commands that RGW tests commonly need:
 
