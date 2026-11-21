@@ -387,7 +387,7 @@ python3 scripts/desktop/desktop_setup.py --profile kernel-clients --kernel-featu
 ```
 
 The helper image must already be on the engine and contain `sh`, `nsenter`,
-`zcat`, `grep`, `sed` and `cut`; `busybox` is enough. The script runs it
+`zcat`, `grep`, `cut` and `tr`; `busybox` is enough. The script runs it
 privileged, in the engine's PID namespace and without a network, and enters
 the namespaces of the engine VM's PID 1 to read `/proc/config.gz`,
 `/proc/modules`, the VM's `modules.dep` and the requested `/proc/sys` values.
@@ -414,7 +414,8 @@ python3 scripts/desktop/desktop_setup.py apply-kernel --profile <profile> \
 `apply-kernel` loads each `planned` module with the VM's own `modprobe` and
 writes each `planned` parameter to `/proc/sys` in the VM's namespaces. It never
 lowers a parameter, loads nothing that is already there, and does nothing on a
-second run. It needs `--confirm-engine-kernel`, because the change is not
+second run. A later run with more features or parameters adds to what an
+earlier run did, and a parameter write counts only when the value reads back. It needs `--confirm-engine-kernel`, because the change is not
 scoped to your tests: it affects every container on the engine, and on the
 WSL 2 backend the one kernel that all WSL 2 distributions share.
 
@@ -433,7 +434,10 @@ script loaded that is no longer in use, and removes the volume. It keeps, and
 reports, a parameter that was changed afterwards, a module that is in use and
 a module on a kernel built without module unloading; its exit status is then
 1. If the VM restarted in between, the changes are already gone and the
-record is only removed.
+record is only removed. Both commands stop before changing anything when the
+engine's volumes cannot be listed or inspected, or when a volume of that name
+exists without the script's label: a failed lookup is not taken for a missing
+record.
 
 **These changes do not survive a restart of the engine VM**: quitting Docker
 Desktop, `wsl --shutdown`, a Docker Desktop update or a reboot undo them. Run
