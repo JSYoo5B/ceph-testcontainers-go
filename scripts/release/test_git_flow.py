@@ -21,6 +21,8 @@ class Repository:
         self.admin = True
         self.extra = []
         self.releases = [{"tag_name": "v1.0.0", "draft": False, "prerelease": False}]
+        self.pulls = []
+        self.statuses = {}
 
     def api(self, path, *, method="GET", body=None, pages=False):
         path = path.split("?")[0]
@@ -54,6 +56,10 @@ class Repository:
             return [{"name": name, "commit": {"sha": sha}} for name, sha in self.branches.items()]
         if path == "releases":
             return self.releases
+        if path == "pulls":
+            return self.pulls
+        if path.startswith("commits/") and path.endswith("/status"):
+            return [{"context": context} for context in self.statuses.get(path.split("/")[1], [])]
         if path.startswith("releases/tags/"):
             return {"draft": False, "prerelease": False}
         if path.startswith("git/ref/tags/"):
@@ -188,6 +194,171 @@ class CutoverTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "administration"):
             self.cutover()
         self.assertFalse(self.repo.writes)
+
+
+class RequestedCITests(unittest.TestCase):
+    ARGS = ["--requested-ci"]
+
+    def setUp(self):
+        self.repo = Repository()
+        for cm in (redirect_stdout(StringIO()), patch.object(flow, "api", self.repo.api),
+                   patch.object(flow, "cutover_ready", return_value=self.repo.branches["main"])):
+            cm.__enter__()
+            self.addCleanup(cm.__exit__, None, None, None)
+        flow.main(["apply", "--policy-pr", "42"])
+        self.repo.default_branch = "develop"
+        flow.main(["apply", "--line", "release/1.1", "--from", "develop", "--at", self.repo.branches["develop"]])
+        self.repo.writes.clear()
+        self.before = deepcopy(self.repo.policies)
+
+    def pull(self, number, base, sha, *contexts):
+        self.repo.pulls.append({"number": number, "base": {"ref": base}, "head": {"sha": sha}})
+        self.repo.statuses[sha] = list(contexts)
+
+    def installed(self):
+        return [policy for policy in self.repo.policies.values() if policy["name"] == flow.REQUESTED_RULE]
+
+    def test_the_rule_requires_the_gate_status_from_actions_on_the_maintained_branches(self):
+        policy = flow.requested()
+        self.assertEqual(policy["name"], "Git Flow / requested CI")
+        self.assertEqual(policy["conditions"]["ref_name"], flow.baseline()[0]["conditions"]["ref_name"])
+        self.assertEqual((policy["enforcement"], policy["bypass_actors"]), ("active", []))
+        self.assertEqual(policy["rules"], [{"type": "required_status_checks", "parameters": {
+            "required_status_checks": [{"context": "Required requested CI", "integration_id": 15368}],
+            "strict_required_status_checks_policy": False, "do_not_enforce_on_create": True}}])
+        # The context is the one the gate publishes, and the branches are
+        # those whose pull requests start Code checks, which triggers it.
+        root = Path(flow.__file__).resolve().parents[2]
+        self.assertIn('\nCONTEXT = "' + flow.REQUESTED + '"\n', (root / ".github/scripts/required_ci.py").read_text())
+        code = (root / ".github/workflows/code.yml").read_text()
+        self.assertIn("  pull_request:\n    branches: [develop, main, 'release/**', 'support/**']\n", code)
+        self.assertEqual(sorted(ref.removeprefix("refs/heads/").removesuffix("/*") for ref in flow.MAINTAINED),
+                         sorted(["develop", "main", "release/**", "support/**"]))
+        self.assertIn("workflows: [Code checks]", (root / ".github/workflows/requested-ci-gate.yml").read_text())
+
+    def test_without_the_option_nothing_installs_or_expects_the_rule(self):
+        flow.main(["verify"])
+        flow.main(["plan", "--line", "release/1.2", "--from", "develop"])
+        flow.main(["apply", "--line", "release/1.2", "--from", "develop", "--at", self.repo.branches["develop"]])
+        flow.main(["verify"])
+        self.assertFalse(self.installed())
+        self.assertNotIn(flow.REQUESTED_RULE, [write[2].get("name") for write in self.repo.writes])
+
+    def test_plan_writes_nothing_and_apply_adds_one_ruleset_beside_the_others(self):
+        self.pull(7, "develop", "1" * 40, flow.REQUESTED)
+        out = StringIO()
+        with redirect_stdout(out):
+            flow.main(["plan", *self.ARGS])
+        self.assertIn("Create ruleset", out.getvalue())
+        self.assertIn(flow.REQUESTED_RULE, out.getvalue())
+        self.assertFalse(self.repo.writes)
+        flow.main(["apply", *self.ARGS])
+        self.assertEqual(self.repo.writes, [("rulesets", "POST", flow.requested())])
+        # Every ruleset that existed is what it was.
+        self.assertEqual({key: self.repo.policies[key] for key in self.before}, self.before)
+        self.assertEqual(len(self.repo.policies), len(self.before) + 1)
+        flow.main(["verify"])
+        # Applying or planning again changes nothing.
+        flow.main(["apply", *self.ARGS])
+        flow.main(["plan", *self.ARGS])
+        self.assertEqual(len(self.repo.writes), 1)
+
+    def test_verify_checks_the_rule_only_once_it_is_installed(self):
+        # Not installed: the context is as unexpected as any other.
+        self.repo.extra[:] = [flow.checks([flow.REQUESTED])]
+        with self.assertRaisesRegex(ValueError, "unexpected effective"):
+            flow.main(["verify"])
+        self.repo.extra.clear()
+        flow.main(["apply", *self.ARGS])
+        flow.main(["verify"])
+        rule = self.installed()[0]
+        # Installed: every maintained branch must have it in effect.
+        for include in (["refs/heads/develop"], ["refs/heads/main", "refs/heads/release/**/*", "refs/heads/support/**/*"]):
+            with self.subTest(include=include):
+                kept = rule["conditions"]
+                rule["conditions"] = {"ref_name": {"include": include, "exclude": []}}
+                with self.assertRaisesRegex(ValueError, "drift"):
+                    flow.main(["verify"])
+                rule["conditions"] = kept
+        for change, value in (("enforcement", "disabled"), ("bypass_actors", [{"actor_type": "RepositoryRole"}])):
+            with self.subTest(change=change):
+                kept, rule[change] = rule[change], value
+                with self.assertRaisesRegex(ValueError, "drift"):
+                    flow.main(["verify"])
+                with self.assertRaisesRegex(ValueError, "drift"):
+                    flow.main(["apply", *self.ARGS])
+                rule[change] = kept
+        kept = deepcopy(rule["rules"])
+        rule["rules"][0]["parameters"]["required_status_checks"][0]["integration_id"] = None
+        with self.assertRaisesRegex(ValueError, "drift"):
+            flow.main(["verify"])
+        rule["rules"][0]["parameters"]["required_status_checks"].append({"context": "Other", "integration_id": 15368})
+        with self.assertRaisesRegex(ValueError, "drift"):
+            flow.main(["verify"])
+        rule["rules"] = kept
+        flow.main(["verify"])
+        self.assertEqual(len(self.repo.writes), 1)
+
+    def test_an_installed_rule_does_not_stop_a_line_registration(self):
+        flow.main(["apply", *self.ARGS])
+        args = ["--line", "release/1.2", "--from", "develop"]
+        flow.main(["plan", *args])
+        flow.main(["apply", *args, "--at", self.repo.branches["develop"]])
+        flow.main(["verify"])
+        self.assertEqual(len(self.installed()), 1)
+        active = self.repo.api("rules/branches/release%2F1.2")
+        self.assertIn(self.installed()[0]["id"], [rule["ruleset_id"] for rule in active])
+
+    def test_apply_refuses_while_an_open_pull_request_has_no_status(self):
+        self.pull(7, "develop", "1" * 40, flow.REQUESTED, "Unit tests")
+        self.pull(8, "release/1.1", "2" * 40, "Unit tests")
+        self.pull(9, "main", "3" * 40)
+        self.pull(10, "scratch/base", "4" * 40)
+        self.pull(11, "release/next", "5" * 40)
+        out = StringIO()
+        with redirect_stdout(out):
+            flow.main(["plan", *self.ARGS])
+        lines = [line for line in out.getvalue().splitlines() if line.startswith("No ")]
+        self.assertEqual(lines, ["No Required requested CI status: #8 (release/1.1, 222222222222)",
+                                 "No Required requested CI status: #9 (main, 333333333333)"])
+        with self.assertRaisesRegex(ValueError, "2 open pull request.*Requested CI gate"):
+            flow.main(["apply", *self.ARGS])
+        self.assertFalse(self.repo.writes)
+        self.repo.statuses["2" * 40].append(flow.REQUESTED)
+        self.repo.statuses["3" * 40].append(flow.REQUESTED)
+        flow.main(["apply", *self.ARGS])
+        self.assertEqual(len(self.repo.writes), 1)
+        # Installed: a later pull request without a status is the gate's to
+        # serve, not a reason to refuse an idempotent apply.
+        self.pull(12, "develop", "6" * 40)
+        flow.main(["apply", *self.ARGS])
+        self.assertEqual(len(self.repo.writes), 1)
+
+    def test_the_option_is_its_own_operation_on_sound_rules(self):
+        for arguments in (["verify", *self.ARGS], ["evidence", *self.ARGS, "--branch", "main", "--sha", "a" * 40],
+                          ["apply", *self.ARGS, "--policy-pr", "42"],
+                          ["plan", *self.ARGS, "--line", "release/1.2", "--from", "develop"]):
+            with self.subTest(arguments=arguments), self.assertRaises(ValueError):
+                flow.main(arguments)
+        self.repo.admin = False
+        with self.assertRaisesRegex(ValueError, "administration"):
+            flow.main(["apply", *self.ARGS])
+        self.repo.admin = True
+        guard = next(p for p in self.repo.policies.values() if p["name"] == flow.GUARD)
+        guard["bypass_actors"] = [{"actor_type": "RepositoryRole"}]
+        with self.assertRaisesRegex(ValueError, "drift"):
+            flow.main(["apply", *self.ARGS])
+        guard["bypass_actors"] = []
+        self.repo.extra[:] = [flow.checks(["Unexpected"])]
+        with self.assertRaisesRegex(ValueError, "unexpected effective"):
+            flow.main(["apply", *self.ARGS])
+        self.assertFalse(self.repo.writes)
+
+    def test_before_the_cutover_the_rule_cannot_be_planned(self):
+        self.repo.policies.clear()
+        del self.repo.branches["develop"], self.repo.branches["release/1.1"]
+        with self.assertRaisesRegex(ValueError, "cutover first"):
+            flow.main(["plan", *self.ARGS])
 
 
 class BootstrapTests(unittest.TestCase):
