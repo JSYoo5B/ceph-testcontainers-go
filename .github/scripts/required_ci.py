@@ -36,6 +36,15 @@ concurrency group that serializes every publication of the status:
   then evaluates.
 - evaluate recomputes the status and the summary comment of every open pull
   request from the ledgers. A newer evaluation always supersedes an older one.
+
+A failed job does not fail the status: a commit keeps the status it has until
+another one is set. So whatever an evaluation cannot establish it publishes
+as an error, never leaves as it was: a pull request whose comments cannot be
+read makes its head an error. Both subcommands write settled=true to
+GITHUB_OUTPUT only after every head was published; without it the workflow
+sets the error itself on the commit that started the job. Only an evaluation
+that cannot list the pull requests, or cannot set a status at all, leaves a
+head as it was.
 """
 
 import argparse
@@ -45,6 +54,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 
 import ci_command
 
@@ -253,16 +263,27 @@ def summary(view, server, repository):
 class GitHub:
     """The REST calls of register and evaluate, through gh."""
 
-    def __init__(self, repository, run=subprocess.run):
-        self.repository, self.run = repository, run
+    # A read is repeated after these pauses, in seconds: a pull request
+    # that cannot be read becomes an error, which one lost request should
+    # not cause. A write is never repeated: it may have arrived.
+    RETRY = (2, 5)
+
+    def __init__(self, repository, run=subprocess.run, sleep=time.sleep):
+        self.repository, self.run, self.sleep = repository, run, sleep
 
     def api(self, path, method="GET", body=None):
         args = ["gh", "api", "--method", method, "repos/" + self.repository + "/" + path]
         if body is not None:
             args += ["--input", "-"]
-        done = self.run(args, input=None if body is None else json.dumps(body).encode(), stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE, check=True)
-        return json.loads(done.stdout)
+        for pause in (*self.RETRY, None) if method == "GET" else (None,):
+            try:
+                done = self.run(args, input=None if body is None else json.dumps(body).encode(),
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+                return json.loads(done.stdout)
+            except (subprocess.CalledProcessError, ValueError):
+                if pause is None:
+                    raise
+                self.sleep(pause)
 
     def pages(self, path, key=None):
         rows = []
@@ -302,60 +323,89 @@ class GitHub:
 
 def publish(github, sha, status):
     """Set the status unless the commit already shows it. GitHub keeps a
-    bounded number of statuses per commit and context."""
-    if github.status(sha) != status:
-        github.set_status(sha, status)
-        return True
-    return False
+    bounded number of statuses per commit and context. A status that cannot
+    be read is set."""
+    try:
+        if github.status(sha) == status:
+            return False
+    except Exception:
+        pass
+    github.set_status(sha, status)
+    return True
+
+
+def unreadable(pull, head, error):
+    """The view of a pull request whose requirements are unknown. They may
+    be unmet, so its head must not stay or become green."""
+    return {"pull": pull, "head": head, "state": "error", "unread": str(error), "rows": [], "problems": [],
+            "description": "The requirements of #" + str(pull) + " could not be read", "summary": None}
 
 
 def evaluate_all(github, server, repository, log=print):
     """Publish the status and the summary of every open pull request.
 
+    Nothing that fails here leaves a head as it was when another status can
+    be set. A pull request whose comments cannot be read, or cannot be
+    evaluated, makes its head an error, for every pull request of that head.
+    A head whose status cannot be set is reported, and so is a pull request
+    without a readable head. The caller fails the job for any of them.
+
     The status goes first: a summary is what a reviewer reads as the state of
-    the requirements, and it must never run ahead of the status. A pull
-    request whose comments cannot be read keeps the status its head has,
-    and the evaluation fails after the others are published."""
-    heads, unread = {}, []
-    for pull in sorted(github.open_pulls(), key=lambda pull: pull["number"]):
-        number, head = pull["number"], pull["head"]["sha"]
+    the requirements, and it never runs ahead of the status of its head."""
+    heads, unread, unpublished, unsummarized = {}, [], [], []
+    for pull in sorted(github.open_pulls(), key=lambda pull: pull.get("number") or 0):
+        number, head = pull.get("number"), (pull.get("head") or {}).get("sha")
+        if not (positive(number) and isinstance(head, str) and SHA.match(head)):
+            unpublished.append("pull request " + str(number)[:20])
+            log("A pull request without a readable number or head commit: " + str(number)[:20])
+            continue
         try:
             comments = github.comments(number)
-        except (subprocess.CalledProcessError, RuntimeError, ValueError) as error:
+            view = evaluate(number, head, *ledger(comments, number))
+            view["summary"] = next((comment for comment in comments
+                                    if (comment.get("user") or {}).get("login") == BOT
+                                    and (comment.get("body") or "").startswith(SUMMARY)), None)
+        except Exception as error:
             unread.append(number)
-            heads.setdefault(head, []).append(None)
-            log("#" + str(number) + ": comments could not be read: " + str(error))
-            continue
-        view = evaluate(number, head, *ledger(comments, number))
-        view["summary"] = next((comment for comment in comments
-                                if (comment.get("user") or {}).get("login") == BOT
-                                and (comment.get("body") or "").startswith(SUMMARY)), None)
+            view = unreadable(number, head, error)
+            log("#" + str(number) + ": requirements could not be read: " + repr(error))
         heads.setdefault(head, []).append(view)
 
     def publish_heads():
         for head, views in heads.items():
-            if None in views:
-                continue
             worst, status = combine(views)
             status["target_url"] = (worst["summary"] or {}).get("html_url") or (
                 server + "/" + repository + "/pull/" + str(worst["pull"]))
-            if publish(github, head, status):
-                log(head + ": " + status["state"] + ": " + status["description"])
+            try:
+                if publish(github, head, status):
+                    log(head + ": " + status["state"] + ": " + status["description"])
+            except Exception as error:
+                if head not in unpublished:
+                    unpublished.append(head)
+                log(head + ": the status could not be set: " + repr(error))
 
     publish_heads()
     created = False
-    for views in heads.values():
-        for view in filter(None, views):
-            body = summary(view, server, repository)
-            if view["summary"] is None and (view["records"] or view["problems"]):
-                view["summary"], created = github.create_comment(view["pull"], body), True
-            elif view["summary"] is not None and (view["summary"].get("body") or "").replace("\r\n", "\n").strip() != body:
-                github.update_comment(view["summary"]["id"], body)
+    for head, views in heads.items():
+        for view in views:
+            if "unread" in view or head in unpublished:
+                continue
+            try:
+                body = summary(view, server, repository)
+                if view["summary"] is None and (view["records"] or view["problems"]):
+                    view["summary"], created = github.create_comment(view["pull"], body), True
+                elif view["summary"] is not None and (
+                        view["summary"].get("body") or "").replace("\r\n", "\n").strip() != body:
+                    github.update_comment(view["summary"]["id"], body)
+            except Exception as error:
+                unsummarized.append(view["pull"])
+                log("#" + str(view["pull"]) + ": the summary could not be written: " + repr(error))
     if created:
         # The status of a head links to its summary once that exists.
         publish_heads()
-    return {"heads": {head: [view and {key: view[key] for key in ("pull", "state", "description")} for view in views]
-                      for head, views in heads.items()}, "unread": unread}
+    return {"heads": {head: [{key: view[key] for key in ("pull", "state", "description")} for view in views]
+                      for head, views in heads.items()},
+            "unread": unread, "unpublished": unpublished, "unsummarized": unsummarized}
 
 
 def register(github, request, resolved, run_url, server, repository, log=print):
@@ -425,7 +475,8 @@ def main(argv=None):
                          help="Whether ci_command.py select accepted the names on the request's commit")
     command.add_argument("--run-url", required=True)
     command.add_argument("--github-output", type=Path)
-    commands.add_parser("evaluate")
+    command = commands.add_parser("evaluate")
+    command.add_argument("--github-output", type=Path)
     args = parser.parse_args(argv)
     repository = os.environ["GITHUB_REPOSITORY"]
     server = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
@@ -441,7 +492,12 @@ def main(argv=None):
             ci_command.write_outputs(args.github_output, {key: str(value).lower() for key, value in decision.items()})
     decision = evaluate_all(github, server, repository)
     print(json.dumps(decision, indent=2, sort_keys=True))
-    return 1 if decision["unread"] else 0
+    # Every head has the status this evaluation computed, an error where a
+    # pull request could not be read. Without this output the workflow
+    # withdraws the status of the commit that started the job.
+    if args.github_output is not None and not decision["unpublished"]:
+        ci_command.write_outputs(args.github_output, {"settled": "true"})
+    return 1 if decision["unread"] or decision["unpublished"] or decision["unsummarized"] else 0
 
 
 if __name__ == "__main__":

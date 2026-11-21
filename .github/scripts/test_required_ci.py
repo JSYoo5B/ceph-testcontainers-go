@@ -44,6 +44,7 @@ class Repository:
             raise subprocess.CalledProcessError(1, ["gh", "api", call])
 
     def open_pulls(self):
+        self.fail("pulls")
         return [{"number": number, "head": {"sha": sha}} for number, sha in self.heads.items()]
 
     def pull(self, number):
@@ -54,19 +55,23 @@ class Repository:
         return copy.deepcopy(self.thread[number])
 
     def status(self, sha):
+        self.fail("status-read")
         return copy.deepcopy(self.statuses[sha][-1]) if self.statuses.get(sha) else None
 
     def set_status(self, sha, status):
         self.fail("status")
+        self.fail("status-" + sha)
         self.calls.append(("status", sha, status["state"]))
         self.statuses.setdefault(sha, []).append(dict(status))
 
     def create_comment(self, number, body):
         self.fail("comment")
+        self.fail("summary" if body.startswith(gate.SUMMARY) else "reply")
         self.calls.append(("comment", number, body.splitlines()[0]))
         return self.comment(number, body, BOT)
 
     def update_comment(self, identifier, body):
+        self.fail("summary")
         self.calls.append(("update", identifier))
         for thread in self.thread.values():
             for comment in thread:
@@ -350,23 +355,124 @@ class GateTests(Case):
         self.flow.command(10, "drop", ["network_delay"])
         self.assertGate(B, "success", "No requested CI is required")
 
-    def test_one_unreadable_pull_request_keeps_its_status_and_fails_the_evaluation(self):
+    def main(self, *arguments):
+        """main with the repository in place of GitHub: its exit code, or the
+        exception it ended with, and the outputs it wrote."""
+        with tempfile.TemporaryDirectory() as directory, mock.patch("sys.stdout"), \
+                mock.patch.object(gate, "GitHub", return_value=self.repository), \
+                mock.patch.dict("os.environ", {"GITHUB_REPOSITORY": NAME}):
+            output = Path(directory) / "output"
+            try:
+                code = gate.main([*arguments, "--github-output", str(output)])
+            except Exception as error:  # noqa: BLE001 - the test reads it
+                code = error
+            return code, output.read_text() if output.exists() else ""
+
+    def test_an_unreadable_pull_request_withdraws_the_green_status_of_its_head(self):
+        # #10 passed its requirement on A and is pushed to B, a commit that
+        # is already green for #11. Its ledger cannot be read: B must not
+        # stay green, because #10 has no evidence there.
+        self.repository = Repository({10: A, 11: B})
+        self.flow = Flow(self.repository)
+        request, _ = self.flow.command(10, "require", ["network_delay"])
+        self.flow.finish(request, "success")
+        self.assertGate(A, "success")
+        self.assertGate(B, "success", "No requested CI is required")
+        self.repository.push(10, B)
+        self.repository.failing.add("comments-10")
+        result = self.flow.evaluate()
+        self.assertEqual((result["unread"], result["unpublished"]), ([10], []))
+        self.assertGate(B, "error", "#10: The requirements of #10 could not be read; head shared by #10, #11")
+        self.assertEqual(self.main("evaluate"), (1, "settled=true\n"))
+        # Readable again, the same state is what the ledger says.
+        self.repository.failing.clear()
+        self.assertEqual(self.main("evaluate"), (0, "settled=true\n"))
+        self.assertGate(B, "pending", "#10: 0 of 1 required selection(s) passed on " + B[:12])
+
+    def test_an_unreadable_pull_request_is_an_error_whatever_its_head_showed(self):
         self.repository = Repository({10: A, 11: B, 12: A})
         self.flow = Flow(self.repository)
-        self.flow.evaluate()
         self.repository.failing.add("comments-10")
-        self.repository.push(11, C)
-        before = len(self.repository.statuses[A])
+        # A head without any status, one that was green and one that failed.
+        self.flow.evaluate()
+        self.assertGate(A, "error", "#10: The requirements of #10 could not be read")
+        self.assertGate(B, "success")
+        self.repository.failing.clear()
+        request, _ = self.flow.command(12, "require", ["network_delay"])
+        self.flow.finish(request, "failure")
+        self.assertGate(A, "failure")
+        self.repository.failing.add("comments-12")
+        del self.repository.calls[:]
+        self.flow.evaluate()
+        self.assertGate(A, "error", "#12: The requirements of #12 could not be read")
+        # No summary is written for a pull request that was not read.
+        self.assertEqual(self.repository.calls, [("status", A, "error")])
+
+    def test_a_pull_request_that_cannot_be_evaluated_is_an_error(self):
+        # Comments that are not what the API returns, not only a failed call.
+        self.flow.evaluate()
+        self.assertGate(A, "success")
+        self.repository.thread[10].append({"body": "no id"})
         result = self.flow.evaluate()
         self.assertEqual(result["unread"], [10])
-        # #12 shares the unreadable head, so nothing is published for it.
-        self.assertEqual(len(self.repository.statuses[A]), before)
+        self.assertGate(A, "error", "The requirements of #10 could not be read")
+
+    def test_a_status_that_cannot_be_read_is_set(self):
+        self.flow.evaluate()
+        self.repository.failing.add("status-read")
+        request, _ = self.flow.command(10, "require", ["network_delay"])
+        self.assertEqual(self.repository.statuses[A][-1]["state"], "pending")
+        self.assertIn("1 running", self.repository.statuses[A][-1]["description"])
+        self.assertEqual(self.flow.evaluate()["unpublished"], [])
+
+    def test_a_status_that_cannot_be_set_is_reported_and_stops_neither_the_others_nor_the_job_failure(self):
+        self.repository = Repository({10: A, 11: B})
+        self.flow = Flow(self.repository)
+        self.flow.evaluate()
+        request = self.flow.request(10, "require", ["network_delay"])
+        gate.register(self.repository, request, True, Flow.run_url(request), SERVER, NAME, log=lambda line: None)
+        self.repository.push(11, C)
+        self.repository.failing.add("status-" + A)
+        result = self.flow.evaluate()
+        self.assertEqual(result["unpublished"], [A])
         self.assertGate(C, "success")
-        with mock.patch.object(gate, "GitHub", return_value=self.repository), mock.patch("sys.stdout"), \
-                mock.patch.dict("os.environ", {"GITHUB_REPOSITORY": NAME}):
-            self.assertEqual(gate.main(["evaluate"]), 1)
-            self.repository.failing.clear()
-            self.assertEqual(gate.main(["evaluate"]), 0)
+        # A keeps the pending that Register set before the acknowledgment,
+        # and the summary does not say more than the status.
+        self.assertGate(A, "pending", "Recording a change")
+        self.assertIsNone(self.repository.summary(10))
+        # The job fails without settled, so the workflow withdraws the
+        # status of the commit that started it.
+        self.assertEqual(self.main("evaluate"), (1, ""))
+        self.repository.failing.clear()
+        self.assertEqual(self.main("evaluate"), (0, "settled=true\n"))
+        self.assertIsNotNone(self.repository.summary(10))
+
+    def test_a_summary_that_cannot_be_written_fails_the_job_after_the_statuses(self):
+        self.flow.evaluate()
+        self.repository.failing.add("summary")
+        request, _ = self.flow.command(10, "require", ["network_delay"])
+        self.assertGate(A, "pending", "1 running")
+        self.assertEqual(self.flow.evaluate()["unsummarized"], [10])
+        self.assertEqual(self.main("evaluate"), (1, "settled=true\n"))
+
+    def test_an_evaluation_that_cannot_list_the_pull_requests_is_not_settled(self):
+        self.flow.evaluate()
+        self.repository.failing.add("pulls")
+        code, output = self.main("evaluate")
+        self.assertIsInstance(code, subprocess.CalledProcessError)
+        self.assertEqual(output, "")
+
+    def test_a_pull_request_without_a_head_is_reported_and_the_others_are_published(self):
+        self.repository = Repository({10: A, 11: B})
+        self.flow = Flow(self.repository)
+        pulls = self.repository.open_pulls()
+        for broken in ({"number": 10, "head": None}, {"number": 10, "head": {"sha": "main"}}, {"head": {"sha": A}}):
+            with self.subTest(broken=broken), mock.patch.object(self.repository, "open_pulls",
+                                                                return_value=[broken, pulls[1]]):
+                result = self.flow.evaluate()
+                self.assertEqual(len(result["unpublished"]), 1)
+                self.assertGate(B, "success")
+                self.assertEqual(self.main("evaluate"), (1, ""))
 
 
 class RegisterTests(Case):
@@ -496,11 +602,20 @@ class RegisterTests(Case):
             self.assertFalse((Path(directory) / "output").exists())
             self.repository.failing.clear()
             self.assertEqual(gate.main(arguments + ["--resolved", "true"]), 0)
+            self.assertEqual((Path(directory) / "output").read_text(), "attempt=true\nrun=true\nsettled=true\n")
+            # The record is written and the evaluation after it fails: the
+            # run it announced still starts, and nothing is settled.
+            retry = self.flow.request(10, "retry", ["network_delay"])
+            (Path(directory) / "output").unlink()
+            with mock.patch.object(gate, "evaluate_all", side_effect=RuntimeError("no API")), \
+                    self.assertRaises(RuntimeError):
+                gate.main(["register", "--request", json.dumps(retry), "--run-url", Flow.run_url(retry),
+                           "--github-output", str(Path(directory) / "output"), "--resolved", "true"])
             self.assertEqual((Path(directory) / "output").read_text(), "attempt=true\nrun=true\n")
+            self.assertGate(A, "pending", "Recording a change")
             with mock.patch("sys.stderr"), self.assertRaises(SystemExit):
                 gate.main(["register", "--request", json.dumps({**request, "verb": "run"}), "--resolved", "true",
                            "--run-url", Flow.run_url(request)])
-        self.assertGate(A, "pending", "1 running")
 
 
 class LedgerTests(Case):
@@ -640,7 +755,7 @@ class GitHubTests(unittest.TestCase):
                 return mock.Mock(stdout=json.dumps({"statuses": rows}).encode())
             return mock.Mock(stdout=json.dumps([{"number": page}] * (100 if page == 1 else 2) if page else {}).encode())
 
-        github = gate.GitHub("o/r", run)
+        github = gate.GitHub("o/r", run, sleep=lambda seconds: self.fail("no retry expected"))
         self.assertEqual(len(github.open_pulls()), 102)
         self.assertEqual([call[0][-1] for call in calls], ["repos/o/r/pulls?state=open&per_page=100&page=1",
                                                            "repos/o/r/pulls?state=open&per_page=100&page=2"])
@@ -654,6 +769,34 @@ class GitHubTests(unittest.TestCase):
             ["--method", "PATCH", "repos/o/r/issues/comments/7"]])
         self.assertEqual(json.loads(calls[0][1]), {"state": "success", "description": "d", "target_url": "u",
                                                    "context": gate.CONTEXT})
+
+
+    def test_a_read_is_repeated_and_a_write_is_not(self):
+        calls, pauses = [], []
+
+        def run(args, **options):
+            calls.append(args[3])
+            if len(calls) < 3:
+                raise subprocess.CalledProcessError(1, args)
+            return mock.Mock(stdout=b"{}" if len(calls) > 3 else b"not json")
+
+        github = gate.GitHub("o/r", run, sleep=pauses.append)
+        with self.assertRaises(ValueError):
+            github.pull(10)
+        self.assertEqual((calls, pauses), (["GET"] * 3, list(gate.GitHub.RETRY)))
+        self.assertEqual(github.pull(10), {})
+        del calls[:], pauses[:]
+
+        def refuse(args, **options):
+            calls.append(args[3])
+            raise subprocess.CalledProcessError(1, args)
+
+        github = gate.GitHub("o/r", refuse, sleep=pauses.append)
+        for write in (lambda: github.set_status(A, {}), lambda: github.create_comment(10, "b"),
+                      lambda: github.update_comment(7, "b")):
+            with self.assertRaises(subprocess.CalledProcessError):
+                write()
+        self.assertEqual((calls, pauses), (["POST", "POST", "PATCH"], []))
 
 
 if __name__ == "__main__":
