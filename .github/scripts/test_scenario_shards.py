@@ -204,7 +204,14 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         releases job and calls tagged-runtime once per entry of that matrix."""
         releases, runtime = jobs["releases"], jobs["runtime"]
         command = shlex.split(run_command(engine_step(steps(releases), "releases")))
-        self.assertEqual(command[command.index("--scope") + 1], scope)
+        if prefix == "Release matrix":
+            # The full matrix everywhere but on the rehearsal branch.
+            self.assertEqual(command[command.index("--scope") + 1], "$SCOPE")
+            self.assertEqual(scalar(engine_step(steps(releases), "releases"), "SCOPE"),
+                             "${{ (github.base_ref == 'rehearsal/promotion' || "
+                             "github.ref == 'refs/heads/rehearsal/promotion') && 'rehearsal' || '" + scope + "' }}")
+        else:
+            self.assertEqual(command[command.index("--scope") + 1], scope)
         self.assertEqual(command[command.index("--allocation") + 1], self.ALLOCATION[prefix])
         self.assertEqual(command[command.index("--check-prefix") + 1], prefix)
         self.assertEqual(command[command.index("--github-output") + 1], "$GITHUB_OUTPUT")
@@ -256,12 +263,35 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertEqual(runner.CODENAMES["21.2.0"], "umbrella")
         self.assertEqual(runner.RELEASE, "20.2.4")
         categories = set(engine.RUNTIME_CATEGORIES) - {"environment"}
-        for scope in engine.RELEASE_SCOPES:
+        for scope in ("all", "others"):
             entries = [entry for entry in engine.release_matrix(scope, "Periodic")
                        if entry["release"] == "21.2.0"]
             self.assertEqual({entry["category"] for entry in entries}, categories)
             self.assertEqual(len(entries), len(categories))
             self.assertTrue(all(entry["codename"] == "umbrella" for entry in entries))
+
+    def test_a_rehearsal_runs_one_category_of_the_current_release(self):
+        """A promotion rehearsal tries the candidate record and the reuse
+        decision; it claims no release coverage and takes every release
+        runner for its one caller."""
+        self.assertEqual(engine.RELEASE_SCOPES, ("all", "others", "rehearsal"))
+        entries = engine.release_matrix("rehearsal", "Release matrix")
+        share = engine.RUNNER_LIMIT - engine.OTHER_REPOSITORY_RUNNERS
+        self.assertEqual([(entry["release"], entry["category"], entry["max_parallel"]) for entry in entries],
+                         [(runner.RELEASE, engine.REHEARSAL_CATEGORY, share - engine.ENVIRONMENT_MAX_PARALLEL)])
+        report = engine.releases_report(self.plan, "rehearsal", "Release matrix")
+        self.assertTrue(report["passed"], report)
+        self.assertEqual(report["releases"], [runner.RELEASE])
+        self.assertEqual(report["runner_budget"], {"runners": share, "available": share, "passed": True})
+        self.assertEqual(report["coverage"]["callers"], 2)
+        self.assertEqual(report["cells"], sum(engine.runtime_cells(
+            self.plan, [(runner.RELEASE, engine.REHEARSAL_CATEGORY), (None, "environment")]).values()))
+        self.assertEqual(sorted(report["images"]), [runner.RELEASE])
+        # It can never be taken for the coverage of a release.
+        full = engine.releases_report(self.plan, "all", "Release matrix")
+        self.assertNotEqual(report["coverage"]["digest"], full["coverage"]["digest"])
+        self.assertLess(report["cells"], full["cells"])
+        self.assertEqual(len(full["include"]), len(runner.SUPPORTED_RELEASES) * (len(engine.RUNTIME_CATEGORIES) - 1))
 
     def test_coverage_difference_names_missing_duplicate_and_unknown_release_cells(self):
         required = engine.required_cells(self.plan, runner.RELEASES)
@@ -1297,7 +1327,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertIn("fail-fast: false", runtime)
         caps = engine.release_max_parallel()
         share = engine.RUNNER_LIMIT - engine.OTHER_REPOSITORY_RUNNERS
-        for scope in engine.RELEASE_SCOPES:
+        for scope in ("all", "others"):
             with self.subTest(scope=scope):
                 entries = engine.release_matrix(scope, "Release matrix")
                 self.assertEqual({entry["category"]: entry["max_parallel"] for entry in entries}, caps)

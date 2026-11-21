@@ -51,12 +51,17 @@ jobs:
           cache: false
       # Fails unless the callers run every required profile on each supported
       # release exactly once.
+      # A rehearsal of the promotion path runs one category on the current
+      # release: it tries the candidate record and the reuse decision, not
+      # the coverage of a release.
       - name: Expand supported releases and prove required coverage
         id: releases
+        env:
+          SCOPE: ${{ (github.base_ref == 'rehearsal/promotion' || github.ref == 'refs/heads/rehearsal/promotion') && 'rehearsal' || 'all' }}
         run: |
           set -o pipefail
           mkdir -p artifacts
-          python3 .github/scripts/tag_scenarios.py releases --scope all --allocation release --check-prefix 'Release matrix' --github-output "$GITHUB_OUTPUT" | tee artifacts/release-coverage.json
+          python3 .github/scripts/tag_scenarios.py releases --scope "$SCOPE" --allocation release --check-prefix 'Release matrix' --github-output "$GITHUB_OUTPUT" | tee artifacts/release-coverage.json
       # The coverage digest and image references of this tree, for the
       # promotion receipts.
       - uses: actions/upload-artifact@v7
