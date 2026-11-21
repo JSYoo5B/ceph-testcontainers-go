@@ -1,0 +1,121 @@
+{
+  "profiles": {
+    "single-cluster": {
+      "description": "One cluster at a time on container-local sparse BlueStore, tests run sequentially",
+      "cpus": 4,
+      "memory_gib": 4,
+      "swap_gib": 0,
+      "disk_free_gib": 12,
+      "kernel_features": [],
+      "basis": "Memory is the VM size the suite is sized for (docs/contributing/testing.md). CPUs are those of the hosted CI runner; fewer were not measured. Disk is the 8 GiB image-preparation allowance plus the 4 GiB runtime allowance of the smallest qualified CI storage profile (docs/contributing/ci.md).",
+      "kernel_parameters": {}
+    },
+    "in-memory-osds": {
+      "description": "One cluster of up to three 1 GiB WithInMemory (tmpfs) BlueStore OSDs",
+      "cpus": 4,
+      "memory_gib": 8,
+      "swap_gib": 0,
+      "disk_free_gib": 12,
+      "kernel_features": [],
+      "basis": "single-cluster plus 3 GiB for three fully allocated 1 GiB tmpfs stores, rounded up to the next common VM size. An arithmetic bound, not a measured peak.",
+      "kernel_parameters": {}
+    },
+    "ci-parity": {
+      "description": "A CI batch as CI runs it: two tests at once (CEPH_TEST_PARALLEL=2), multicluster fixtures included",
+      "cpus": 4,
+      "memory_gib": 16,
+      "swap_gib": 0,
+      "disk_free_gib": 16,
+      "kernel_features": [
+        "netem",
+        "prio",
+        "u32",
+        "packet",
+        "loop",
+        "dm"
+      ],
+      "basis": "The size of the hosted CI runner and the largest qualified CI storage profile, 8 GiB image preparation plus 8 GiB runtime (docs/contributing/ci.md). Kernel features are those of the network fault, capture and block fault tests that ordinary batches run.",
+      "kernel_parameters": {}
+    },
+    "block-fault-delay": {
+      "description": "single-cluster plus the loop and device-mapper pieces of the block fault test, its delay window included",
+      "cpus": 4,
+      "memory_gib": 4,
+      "swap_gib": 0,
+      "disk_free_gib": 12,
+      "kernel_features": [
+        "loop",
+        "dm",
+        "dm-delay"
+      ],
+      "kernel_parameters": {},
+      "basis": "single-cluster. fault/blockio builds a loop device and device-mapper linear, error and delay tables on the engine host."
+    },
+    "network-faults": {
+      "description": "single-cluster plus packet delay, loss and rate faults, with peer selection",
+      "cpus": 4,
+      "memory_gib": 4,
+      "swap_gib": 0,
+      "disk_free_gib": 12,
+      "kernel_features": [
+        "netem",
+        "prio",
+        "u32"
+      ],
+      "kernel_parameters": {},
+      "basis": "single-cluster. fault.ApplyNetworkProfile installs a netem qdisc, and with peers a prio qdisc and u32 filters."
+    },
+    "encrypted-osd": {
+      "description": "single-cluster plus an OSD on a test-owned LUKS2 dm-crypt store",
+      "cpus": 4,
+      "memory_gib": 4,
+      "swap_gib": 0,
+      "disk_free_gib": 12,
+      "kernel_features": [
+        "loop",
+        "dm",
+        "dm-crypt"
+      ],
+      "kernel_parameters": {},
+      "basis": "single-cluster. The osd_encrypted_store batch reads the registered device-mapper targets and needs crypt."
+    },
+    "cephfs-fuse": {
+      "description": "single-cluster plus ceph-fuse mounts in client containers",
+      "cpus": 4,
+      "memory_gib": 4,
+      "swap_gib": 0,
+      "disk_free_gib": 12,
+      "kernel_features": [
+        "fuse"
+      ],
+      "kernel_parameters": {},
+      "basis": "single-cluster. The cephfs_fuse batch mounts through /dev/fuse."
+    },
+    "rbd-nbd": {
+      "description": "single-cluster plus an RBD image mapped as a block device by rbd-nbd (librbd in user space)",
+      "cpus": 4,
+      "memory_gib": 4,
+      "swap_gib": 0,
+      "disk_free_gib": 12,
+      "kernel_features": [
+        "nbd"
+      ],
+      "kernel_parameters": {},
+      "basis": "single-cluster. TestDesktopRBDOverNBD needs the nbd driver and /dev/nbd nodes; librbd and rbd-nbd come from the official Ceph image."
+    },
+    "kernel-clients": {
+      "description": "single-cluster plus the Ceph kernel clients: krbd (rbd over libceph) and the kernel CephFS client",
+      "cpus": 4,
+      "memory_gib": 4,
+      "swap_gib": 0,
+      "disk_free_gib": 12,
+      "kernel_features": [
+        "libceph",
+        "krbd",
+        "cephfs-kernel"
+      ],
+      "kernel_parameters": {},
+      "basis": "single-cluster. The kernel subtest of the cephfs_fscrypt experiment needs the ceph filesystem type; no fixture maps an image through krbd."
+    }
+  }
+}

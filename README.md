@@ -212,6 +212,9 @@ Guides for tasks that span packages:
   full clusters and damaged replicas.
 - [Host network](docs/guides/host-network.md): bridge and host networking, and
   connecting native clients from the test process.
+- [Docker Desktop setup](docs/guides/desktop-setup.md): finding the engine the
+  tests use on macOS and Windows, sizing its VM, and an opt-in script that
+  plans, applies, verifies and undoes the settings.
 - [Regional zones](docs/guides/regional-zones.md): one cluster with logical
   availability zones on a single Docker engine, and delaying or cutting the
   network between the zones.

@@ -282,6 +282,8 @@ by default. Enable it in the Docker Desktop settings (Resources, Network,
 Docker Desktop implements it as layer 4 forwarding between the host and its
 Linux VM, so it does not behave exactly like a Linux engine
 ([Docker documentation](https://docs.docker.com/engine/network/drivers/host/)).
+The setting is manual; [Docker Desktop setup](desktop-setup.md) covers the
+rest of the VM's configuration.
 
 With host networking enabled:
 
