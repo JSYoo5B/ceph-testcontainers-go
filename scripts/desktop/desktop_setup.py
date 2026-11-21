@@ -131,7 +131,12 @@ def select_engine(system):
     default socket, docker.host, the rootless socket) apply only when a
     context names no host, and are reported as unknown here.
     """
-    properties = parse_properties(system.read_text(os.path.join(system.home(), ".testcontainers.properties")))
+    location = os.path.join(system.home(), ".testcontainers.properties")
+    text = system.read_text(location)
+    if text is None and system.exists(location):
+        # The file may name another host; an unreadable file is not an absent one.
+        return {"source": "unknown", "endpoint": None, "command": ["docker"], "context": None}
+    properties = parse_properties(text)
     if properties.get("tc.host"):
         return {"source": "tc.host of ~/.testcontainers.properties", "endpoint": properties["tc.host"],
                 "command": ["docker", "--host", properties["tc.host"]], "context": None}
@@ -344,14 +349,17 @@ def build_report(system, arguments, profile):
         except wslconfig.Refusal as refusal:
             document = state = None
             path, problem, reason = None, refusal.code, ".wslconfig cannot be edited safely: %s" % refusal
+        except OSError as error:
+            # A config or state file that cannot be read is not a missing one.
+            document = state = None
+            path, problem, reason = None, "unreadable", (".wslconfig or this tool's state file next to it could not "
+                                                         "be read (%s)" % type(error).__name__)
     probe = probe_engine(system, selection["command"], probe_image) if probe_image and engine["reachable"] else None
     helper = facts = kernel_state = kernel_problem = None
     if arguments.kernel_helper_image and engine["reachable"]:
         helper = kernel.Helper(system, selection["command"], arguments.kernel_helper_image)
-        facts = helper.inspect([kernel.FEATURES[name][1] for name in profile.get("kernel_features", ())],
-                               profile.get("kernel_parameters", {}))
-        if facts is not None:
-            kernel_state, kernel_problem = kernel.current_state(helper, facts)
+        facts, kernel_state, kernel_problem = kernel.observe(helper, profile.get("kernel_features", ()),
+                                                             profile.get("kernel_parameters", {}))
 
     settings = []
     limits = (("cpus", "processors", profile["cpus"], engine["cpus"], 1.0, str),
@@ -475,9 +483,11 @@ def manual_steps(report, arguments):
         steps.append("Swap and free disk are not in the engine metadata. Pass --probe-image with an image already "
                      "on the engine that has cat and df to read them from a one-shot container.")
     kernel_report = report["kernel"]
-    if kernel_report["helper"] and not kernel_report["helper"]["entered_engine_vm"]:
+    if kernel_report["problem"]:
+        steps.append("The kernel was not inspected: %s." % kernel_report["problem"])
+    elif kernel_report["helper"] and not kernel_report["helper"]["entered_engine_vm"]:
         steps.append("The kernel helper image did not enter the engine VM. It must already be on the selected "
-                     "engine (nothing is pulled), contain sh, nsenter, zcat, grep, sed and cut, and the engine must "
+                     "engine (nothing is pulled), contain sh, nsenter, zcat, grep, cut and tr, and the engine must "
                      "allow a privileged container in its PID namespace.")
     elif any(item["kind"].startswith("kernel") for item in unverifiable) and report["engine"]["reachable"] \
             and not kernel_report["helper"]:
@@ -652,10 +662,10 @@ def kernel_refusal(report, helper, action):
                 "machine that runs the engine" % (action, BACKENDS[backend]))
     if helper is None:
         return "no kernel change was %s: name an image already on the engine with --kernel-helper-image" % action
-    if not report["kernel"]["helper"]["entered_engine_vm"]:
-        return "no kernel change was %s: the helper image did not enter the engine VM" % action
     if report["kernel"]["problem"]:
         return "no kernel change was %s: %s" % (action, report["kernel"]["problem"])
+    if not report["kernel"]["helper"]["entered_engine_vm"]:
+        return "no kernel change was %s: the helper image did not enter the engine VM" % action
     return None
 
 

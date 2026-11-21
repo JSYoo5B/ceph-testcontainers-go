@@ -39,23 +39,52 @@ STATE_VERSION = 1
 # engine's belongs to another machine: both are left to their operator.
 PREPARABLE_BACKENDS = ("desktop-macos", "desktop-windows-wsl2", "desktop-windows-hyperv", "desktop-linux")
 
+# Shell text that runs in the helper. Each script's exit status is decided by
+# an explicit last command, never by an optional read, and what was observed
+# is carried by the records, so an absent optional file is an observation and
+# not a failure. test_kernel_scripts.py executes these texts as they are.
+#
 # Arguments are "module:<name>" and "param:<proc path>". Output is one
 # tab-separated record per line.
-_INSPECT = r'''
-printf 'boot\t%s\n' "$(cat /proc/sys/kernel/random/boot_id)"
+INSPECT_SCRIPT = r"""
+printf 'boot\t%s\n' "$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)"
 printf 'modules_disabled\t%s\n' "$(cat /proc/sys/kernel/modules_disabled 2>/dev/null)"
-(zcat /proc/config.gz 2>/dev/null || true) | grep -E '^CONFIG_[A-Z0-9_]+=' | sed 's/^/config\t/'
-cut -d' ' -f1 /proc/modules 2>/dev/null | sed 's/^/loaded\t/'
-nsenter -t 1 -m -- sh -c 'cat "/lib/modules/$(uname -r)/modules.dep"' 2>/dev/null | sed 's/:.*//; s/^/file\t/'
-nsenter -t 1 -m -- sh -c 'command -v modprobe' >/dev/null 2>&1 && printf 'modprobe\tyes\n'
-nsenter -t 1 -m -- true 2>/dev/null && printf 'entered\tyes\n'
+records() {
+  while IFS= read -r line; do
+    if [ -n "$line" ]; then printf '%s\t%s\n' "$1" "${line%%:*}"; fi
+  done
+}
+(zcat /proc/config.gz 2>/dev/null || true) | (grep -E '^CONFIG_[A-Z0-9_]+=' || true) | records config
+if loaded=$(cut -d' ' -f1 /proc/modules 2>/dev/null); then
+  printf 'modules\tread\n'
+  printf '%s\n' "$loaded" | records loaded
+fi
+if files=$(nsenter -t 1 -m -- sh -c 'cat "/lib/modules/$(uname -r)/modules.dep"' 2>/dev/null); then
+  printf '%s\n' "$files" | records file
+fi
+if nsenter -t 1 -m -- sh -c 'command -v modprobe' >/dev/null 2>&1; then printf 'modprobe\tyes\n'; fi
+if nsenter -t 1 -m -- true 2>/dev/null; then printf 'entered\tyes\n'; fi
 for item in "$@"; do
   case "$item" in
-    module:*) name=${item#module:}; [ -e "/sys/module/$name/refcnt" ] && printf 'refcnt\t%s\t%s\n' "$name" "$(cat "/sys/module/$name/refcnt")";;
-    param:*) path=${item#param:}; printf 'param\t%s\t%s\n' "$path" "$(nsenter -t 1 -n -i -u -- cat "/proc/sys/$path" 2>/dev/null | tr '\t\n' '  ')";;
+    module:*)
+      name=${item#module:}
+      if count=$(cat "/sys/module/$name/refcnt" 2>/dev/null); then printf 'refcnt\t%s\t%s\n' "$name" "$count"; fi;;
+    param:*)
+      path=${item#param:}
+      if value=$(nsenter -t 1 -n -i -u -- cat "/proc/sys/$path" 2>/dev/null); then
+        printf 'param\t%s\t%s\n' "$path" "$(printf '%s' "$value" | tr '\t\n' '  ')"
+      fi;;
   esac
 done
-'''
+exit 0
+"""
+# $1 is the file and $2 the content. The status is that of the comparison: a
+# write the kernel or the filesystem did not take is a failure even when the
+# shell's redirection reported none.
+WRITE_SCRIPT = r"""
+printf '%s\n' "$2" 2>/dev/null > "$1"
+test "$(cat "$1" 2>/dev/null)" = "$2"
+"""
 
 
 def module_name(name):
@@ -86,10 +115,10 @@ class Helper:
     def inspect(self, modules, parameters):
         """Facts of the engine kernel, or None when the helper could not enter the VM."""
         status, output = self._privileged(
-            "sh", "-c", _INSPECT, "sh", *(["module:" + module_name(name) for name in modules]
+            "sh", "-c", INSPECT_SCRIPT, "sh", *(["module:" + module_name(name) for name in modules]
                                           + ["param:" + parameter_path(name) for name in parameters]))
         facts = {"boot": None, "modules_disabled": False, "config": {}, "loaded": set(), "files": set(),
-                 "modprobe": False, "entered": False, "refcnt": {}, "parameters": {}}
+                 "modprobe": False, "entered": False, "modules_read": False, "refcnt": {}, "parameters": {}}
         for line in output.splitlines():
             fields = line.split("\t")
             if fields[0] == "boot" and len(fields) == 2:
@@ -105,6 +134,8 @@ class Helper:
                 facts["files"].add(module_name(fields[1].rsplit("/", 1)[-1].split(".ko", 1)[0]))
             elif fields[0] in ("modprobe", "entered"):
                 facts[fields[0]] = True
+            elif fields[0] == "modules":
+                facts["modules_read"] = True
             elif fields[0] == "refcnt" and len(fields) == 3 and fields[2].strip().isdigit():
                 facts["refcnt"][fields[1]] = int(fields[2])
             elif fields[0] == "param" and len(fields) == 3:
@@ -120,22 +151,46 @@ class Helper:
         return self._privileged("nsenter", "-t", "1", "-m", "--", "modprobe", "-r", module_name(module))[0] == 0
 
     def set_parameter(self, name, value):
-        return self._privileged("nsenter", "-t", "1", "-n", "-i", "-u", "--", "sh", "-c",
-                                'printf "%s\\n" "$2" > "/proc/sys/$1"', "sh", parameter_path(name),
-                                str(value))[0] == 0
+        return self._privileged("nsenter", "-t", "1", "-n", "-i", "-u", "--", "sh", "-c", WRITE_SCRIPT, "sh",
+                                "/proc/sys/" + parameter_path(name), str(value))[0] == 0
+
+    def _volume(self):
+        """("absent" | "present" | "unknown", labels) of the state volume.
+
+        Only a listing that succeeded and does not contain the name is
+        "absent". A failed listing or inspection is "unknown", never absent.
+        """
+        status, output = self.system.run(self.command + ["volume", "ls", "--format", "{{.Name}}"])
+        if status != 0:
+            return "unknown", None
+        if STATE_VOLUME not in output.decode("utf-8", "replace").split():
+            return "absent", None
+        status, output = self.system.run(self.command + ["volume", "inspect", STATE_VOLUME, "--format", "{{json .}}"])
+        try:
+            labels = json.loads(output.decode("utf-8", "replace")).get("Labels") if status == 0 else None
+        except (ValueError, AttributeError):
+            return "unknown", None
+        if status != 0:
+            return "unknown", None
+        return "present", labels or {}
+
+    def _owned_volume(self):
+        """(exists, problem) for the state volume; a problem forbids every write."""
+        presence, labels = self._volume()
+        if presence == "unknown":
+            return False, "the Docker volumes of the selected engine could not be inspected"
+        if presence == "absent":
+            return False, None
+        key, value = STATE_LABEL.split("=")
+        if labels.get(key) != value:
+            return True, "a Docker volume with the state volume's name exists and is not this tool's"
+        return True, None
 
     def read_state(self):
         """(state, problem): the recorded changes, or why the record cannot be used."""
-        status, output = self.system.run(self.command + ["volume", "inspect", STATE_VOLUME, "--format", "{{json .}}"])
-        if status != 0:
-            return None, None
-        try:
-            labels = json.loads(output.decode("utf-8", "replace")).get("Labels") or {}
-        except ValueError:
-            labels = {}
-        key, value = STATE_LABEL.split("=")
-        if labels.get(key) != value:
-            return None, "a Docker volume with the state volume's name exists and is not this tool's"
+        exists, problem = self._owned_volume()
+        if problem or not exists:
+            return None, problem
         status, output = self._run(["-v", STATE_VOLUME + ":/state:ro"], "cat", "/state/state.json")
         try:
             state = json.loads(output) if status == 0 else None
@@ -150,13 +205,22 @@ class Helper:
         return state, None
 
     def write_state(self, state):
-        status, _ = self.system.run(self.command + ["volume", "create", "--label", STATE_LABEL, STATE_VOLUME])
-        if status != 0:
+        """Record state in this tool's volume, creating it only when it is confirmed absent."""
+        exists, problem = self._owned_volume()
+        if problem:
             return False
-        return self._run(["-v", STATE_VOLUME + ":/state"], "sh", "-c", 'printf "%s" "$1" > /state/state.json', "sh",
+        if not exists:
+            if self.system.run(self.command + ["volume", "create", "--label", STATE_LABEL, STATE_VOLUME])[0] != 0:
+                return False
+            # Someone else may have created the name in between: write only into a volume that carries the label.
+            if self._owned_volume() != (True, None):
+                return False
+        return self._run(["-v", STATE_VOLUME + ":/state"], "sh", "-c", WRITE_SCRIPT, "sh", "/state/state.json",
                          json.dumps(state, sort_keys=True))[0] == 0
 
     def remove_state(self):
+        if self._owned_volume() != (True, None):
+            return False
         return self.system.run(self.command + ["volume", "rm", STATE_VOLUME])[0] == 0
 
 
@@ -172,6 +236,8 @@ def feature_status(feature, facts, owned):
     built = facts["config"].get(option) if facts["config"] else None
     if built == "y":
         return "available", "built in", True
+    if not facts["modules_read"]:
+        return "unverifiable", "loaded modules not readable", None
     if module in facts["loaded"]:
         if module in owned:
             return "applied", "loaded by this tool; lost when the engine VM restarts", False
@@ -202,12 +268,31 @@ def parameter_status(name, requested, facts, state):
     return "planned", "below the requested value", False, current
 
 
-def current_state(helper, facts):
-    """(state of this boot or None, problem). A record of an earlier boot is void."""
+def observe(helper, features, parameters):
+    """(facts, state, problem) for a request, with everything this tool owns.
+
+    The record is read first, and the inspection covers the requested items
+    together with every module and parameter the record names: ownership can
+    only be judged for what was observed, whatever the current request asks.
+    A record of an earlier boot of the engine VM is void.
+    """
     state, problem = helper.read_state()
+    if problem:
+        return None, None, problem
+    owned = state or {"modules": [], "parameters": {}}
+    facts = helper.inspect(sorted({FEATURES[name][1] for name in features} | set(owned["modules"])),
+                           sorted(set(parameters) | set(owned["parameters"])))
+    if facts is None:
+        return None, None, None
     if state is not None and state["boot"] != facts["boot"]:
-        return None, None
-    return state, problem
+        state = None
+    return facts, state, None
+
+
+def changed_parameters(facts, state):
+    """Owned parameters that no longer hold the value this tool wrote."""
+    return sorted(name for name, entry in (state or {}).get("parameters", {}).items()
+                  if parameter_value(facts, name) != entry["written"])
 
 
 def apply(helper, features, parameters):
@@ -215,18 +300,18 @@ def apply(helper, features, parameters):
 
     Returns (actions, error). Each action is {item, result}; error is a
     sentence when nothing more could be done, in which case every change of
-    this call has been put back where the kernel allows it.
+    this call has been put back where the kernel allows it. Changes of
+    earlier calls stay owned, so a later call can add to them.
     """
-    facts = helper.inspect([FEATURES[name][1] for name in features], parameters)
-    if facts is None:
-        return [], "the helper image could not enter the engine VM's namespaces"
-    state, problem = current_state(helper, facts)
+    facts, state, problem = observe(helper, features, parameters)
     if problem:
         return [], problem
+    if facts is None:
+        return [], "the helper image could not enter the engine VM's namespaces"
     state = state or {"version": STATE_VERSION, "boot": facts["boot"], "modules": [], "parameters": {}}
-    for name, entry in state["parameters"].items():
-        if parameter_value(facts, name) != entry["written"]:
-            return [], ("kernel parameter %s changed after this tool set it; run restore-kernel first" % name)
+    changed = changed_parameters(facts, state)
+    if changed:
+        return [], ("kernel parameter %s changed after this tool set it; run restore-kernel first" % ", ".join(changed))
     actions, undo = [], []
     for feature in features:
         module = FEATURES[feature][1]
@@ -287,7 +372,9 @@ def restore(helper):
                 result = "kept: writing the previous value failed"
             actions.append({"item": "sysctl:" + name, "result": result})
         for module in state["modules"]:
-            if module not in facts["loaded"]:
+            if not facts["modules_read"]:
+                result = "kept: the loaded modules could not be read"
+            elif module not in facts["loaded"]:
                 result = "already unloaded"
             elif module not in facts["refcnt"]:
                 result = "kept: this kernel cannot unload modules; it stays until the engine VM restarts"

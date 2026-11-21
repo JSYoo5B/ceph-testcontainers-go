@@ -95,11 +95,16 @@ class FakeVM:
         self.fail_state_write = False
         self.busy = set()
         self.volume = None  # None, or {"labels": {...}, "state": text or None}
+        self.fail_volume = set()  # volume subcommands that fail: "ls", "inspect"
         self.changes = []
 
     def run(self, args):
         if "volume" in args:
             action = args[args.index("volume") + 1]
+            if action in self.fail_volume:
+                return 1, b""
+            if action == "ls":
+                return 0, b"some-other-volume\n" + (kernel.STATE_VOLUME.encode() + b"\n" if self.volume else b"")
             if action == "inspect":
                 if self.volume is None:
                     return 1, b""
@@ -122,7 +127,7 @@ class FakeVM:
         if self.refuse_entry:
             return 1, b""
         if program == "sh":  # the inspection script
-            lines = ["boot\t" + self.boot, "modules_disabled\t0", "entered\tyes"]
+            lines = ["boot\t" + self.boot, "modules_disabled\t0", "entered\tyes", "modules\tread"]
             lines += ["config\t%s=%s" % pair for pair in self.config.items()]
             lines += ["loaded\t" + name for name in sorted(self.loaded)]
             lines += ["file\tkernel/drivers/x/%s.ko.xz" % name for name in sorted(self.files)]
@@ -147,7 +152,7 @@ class FakeVM:
             self.loaded.add(name)
             self.changes.append("load " + name)
             return 0, b""
-        name, value = tail[-2].replace("/", "."), tail[-1]
+        name, value = tail[-2][len("/proc/sys/"):].replace("/", "."), tail[-1]
         if name in self.fail_set:
             return 1, b""
         self.parameters[name] = value
@@ -444,6 +449,53 @@ class ApplyTest(SetupCase):
         self.assertEqual(self.config.read_bytes(), b"[wsl2]\nmemory=2GB\n")
 
 
+class UnreadableInputTest(SetupCase):
+    def test_unreadable_testcontainers_properties_do_not_fall_back_to_another_engine(self):
+        home = str(self.profile)
+        system = FakeSystem(home=home, environ={"USERPROFILE": home}, info=engine(cpus=2, memory=1.9))
+        system.exists = lambda path: path == os.path.join(home, ".testcontainers.properties")
+        status, report = self.report(system, "apply", "--confirm-wsl-global")
+        self.assertEqual((status, report["engine"]["selected_by"], report["config"]["route"]),
+                         (setup.EXIT_REFUSED, "unknown", "none"))
+        self.assertEqual(self.names(), [])
+
+    def test_unreadable_config_or_state_is_refused_not_treated_as_missing(self):
+        self.config.write_bytes(b"[wsl2]\nmemory=2GB\n")
+        real = wslconfig.Files.read
+        self.addCleanup(setattr, wslconfig.Files, "read", real)
+        for suffix in (".wslconfig", wslconfig.STATE_SUFFIX):
+            def read(files, path, suffix=suffix):
+                if path.endswith(suffix):
+                    raise PermissionError("injected failure at " + path)
+                return real(files, path)
+
+            wslconfig.Files.read = read
+            # Without a readable record restore has nothing it may undo; an unreadable record is a failure.
+            restore = setup.EXIT_FAILED if suffix == wslconfig.STATE_SUFFIX else setup.EXIT_REFUSED
+            for command, expected in (("plan", setup.EXIT_OK), ("apply", setup.EXIT_REFUSED), ("restore", restore)):
+                with self.subTest(suffix=suffix, command=command):
+                    status, text = self.run_main(self.windows(info=engine(cpus=2, memory=1.9)), command,
+                                                 "--confirm-wsl-global")
+                    self.assertEqual(status, expected)
+                    self.assertIn("PermissionError", text)
+                    self.assertNotIn(str(self.profile), text)
+                    self.assertNotIn("planned", text.split("Settings:")[1].split("Written:")[0])
+            self.assertEqual(self.config.read_bytes(), b"[wsl2]\nmemory=2GB\n")
+            self.assertEqual(self.names(), [".wslconfig"])
+
+    def test_wsl_apply_can_be_extended_with_another_owned_key(self):
+        machine = vm(files={"nbd"})
+        system = self.windows(info=engine(cpus=2, memory=1.9), vm=machine)
+        self.config.write_bytes(b"[wsl2]\nmemory=2GB\n")
+        self.assertEqual(self.run_main(system, "apply", "--confirm-wsl-global")[0], setup.EXIT_OK)
+        status, report = self.report(system, "apply", "--confirm-wsl-global", "--persist-kernel-modules",
+                                     "--kernel-feature", "nbd", "--kernel-helper-image", "busybox")
+        self.assertEqual((status, report["writes"]), (setup.EXIT_OK, ["loadkernelmodules"]))
+        self.assertEqual(report["config"]["owned_keys"], ["loadkernelmodules", "memory", "processors"])
+        self.assertEqual(self.run_main(system, "restore")[0], setup.EXIT_OK)
+        self.assertEqual(self.config.read_bytes(), b"[wsl2]\nmemory=2GB\n")
+
+
 class RestoreTest(SetupCase):
     def test_restore_refuses_a_later_edit_and_keeps_it(self):
         system = self.windows(info=engine(cpus=2, memory=1.9))
@@ -715,6 +767,116 @@ class KernelStepTest(SetupCase):
         status, report = self.report(system, "apply-kernel", "--confirm-engine-kernel", *(WANT + KERNEL))
         self.assertEqual((status, machine.changes), (setup.EXIT_FAILED, []))
         self.assertIn("changed after this tool set it", report["failure"])
+
+    def test_apply_can_be_extended_without_restoring_earlier_changes(self):
+        first = ("--kernel-parameter", "fs.aio-max-nr=1048576")
+        both = ["sysctl:fs.aio-max-nr", "sysctl:vm.max_map_count"]
+        cases = {
+            "another parameter": (first + ("--kernel-parameter", "vm.max_map_count=262144"),
+                                  ["set vm.max_map_count=262144"], both),
+            "a module": (first + ("--kernel-feature", "nbd"), ["load nbd"], ["module:nbd", "sysctl:fs.aio-max-nr"]),
+            "only the new parameter": (("--kernel-parameter", "vm.max_map_count=262144"),
+                                       ["set vm.max_map_count=262144"], both),
+        }
+        for name, (second, changes, owned) in cases.items():
+            with self.subTest(name=name):
+                machine = vm(parameters={"fs.aio-max-nr": "65536", "vm.max_map_count": "65530"})
+                system = self.mac(machine)
+                self.assertEqual(self.run_main(system, "apply-kernel", "--confirm-engine-kernel", *(first + KERNEL))[0],
+                                 setup.EXIT_OK)
+                machine.changes.clear()
+                status, report = self.report(system, "apply-kernel", "--confirm-engine-kernel", *(second + KERNEL))
+                self.assertEqual((status, machine.changes), (setup.EXIT_OK, changes))
+                self.assertEqual(report["kernel"]["owned"], owned)
+                # The first change is still owned with its first previous value, and one restore undoes both.
+                self.assertEqual(json.loads(machine.volume["state"])["parameters"]["fs.aio-max-nr"],
+                                 {"previous": 65536, "written": 1048576})
+                self.assertEqual(self.run_main(system, "restore-kernel", *KERNEL)[0], setup.EXIT_OK)
+                self.assertEqual((machine.parameters, machine.loaded),
+                                 ({"fs.aio-max-nr": "65536", "vm.max_map_count": "65530"}, set()))
+
+    def test_owned_parameter_changed_later_is_seen_even_when_not_requested(self):
+        machine = vm(parameters={"fs.aio-max-nr": "65536", "vm.max_map_count": "65530"})
+        system = self.mac(machine)
+        self.run_main(system, "apply-kernel", "--confirm-engine-kernel", "--kernel-parameter", "fs.aio-max-nr=1048576",
+                      *KERNEL)
+        machine.parameters["fs.aio-max-nr"] = "100"
+        machine.changes.clear()
+        status, report = self.report(system, "apply-kernel", "--confirm-engine-kernel", "--kernel-parameter",
+                                     "vm.max_map_count=262144", *KERNEL)
+        self.assertEqual((status, machine.changes), (setup.EXIT_FAILED, []))
+        self.assertIn("fs.aio-max-nr changed after this tool set it", report["failure"])
+
+    def test_failed_volume_inspection_is_not_an_absent_volume(self):
+        label = dict([kernel.STATE_LABEL.split("=")])
+        earlier = json.dumps({"version": 1, "boot": "boot-1", "modules": [],
+                              "parameters": {"vm.max_map_count": {"previous": 65530, "written": 262144}}})
+        volumes = {"no volume": None, "foreign volume": {"labels": {}, "state": "theirs"},
+                   "own volume": {"labels": label, "state": earlier}}
+        for failing in ("ls", "inspect"):
+            for name, volume in volumes.items():
+                if failing == "inspect" and volume is None:
+                    continue  # a listing without the name never reaches the inspection
+                for command in ("apply-kernel", "restore-kernel"):
+                    with self.subTest(failing=failing, volume=name, command=command):
+                        machine = vm()
+                        machine.volume = None if volume is None else dict(volume)
+                        machine.fail_volume.add(failing)
+                        status, report = self.report(self.mac(machine), command, "--confirm-engine-kernel",
+                                                     *(WANT + KERNEL))
+                        self.assertEqual(status, setup.EXIT_REFUSED)
+                        self.assertIn("could not be inspected", report["refusal"])
+                        self.assertEqual((machine.changes, machine.volume), ([], volume))
+
+    def test_failed_volume_inspection_stops_kernel_apply_before_any_write(self):
+        # The library call itself, with a foreign volume whose inspection alone fails.
+        machine = vm()
+        machine.volume = {"labels": {}, "state": "theirs"}
+        machine.fail_volume.add("inspect")
+        helper = kernel.Helper(self.mac(machine), ["docker"], "busybox")
+        actions, error = kernel.apply(helper, ["nbd"], {"fs.aio-max-nr": 1048576})
+        self.assertEqual(actions, [])
+        self.assertIn("could not be inspected", error)
+        self.assertEqual((machine.changes, machine.volume), ([], {"labels": {}, "state": "theirs"}))
+
+    def test_state_is_never_written_into_a_volume_that_appeared_without_the_label(self):
+        machine = vm()
+        helper = kernel.Helper(self.mac(machine), ["docker"], "busybox")
+        real = machine.run
+
+        def run(args):
+            if "volume" in args and "create" in args:  # someone else creates the name first
+                machine.volume = {"labels": {}, "state": "theirs"}
+                return 0, b""
+            return real(args)
+
+        machine.run = run
+        actions, error = kernel.apply(helper, ["nbd"], {"fs.aio-max-nr": 1048576})
+        self.assertEqual(actions, [])
+        self.assertIn("put back", error)
+        self.assertEqual(machine.volume, {"labels": {}, "state": "theirs"})
+        self.assertEqual((machine.loaded, machine.parameters["fs.aio-max-nr"]), (set(), "65536"))
+
+    def test_unreadable_loaded_modules_are_not_taken_for_unloaded(self):
+        machine = vm()
+        system = self.mac(machine)
+        self.run_main(system, "apply-kernel", "--confirm-engine-kernel", "--kernel-feature", "nbd", *KERNEL)
+        real = machine.run
+
+        def run(args):
+            status, output = real(args)
+            if "--privileged" in args and args[args.index("--entrypoint") + 1] == "sh":
+                output = b"\n".join(line for line in output.split(b"\n")
+                                    if not line.startswith((b"modules\t", b"loaded\t")))
+            return status, output
+
+        machine.run = run
+        _, report = self.report(system, "--kernel-feature", "nbd", *KERNEL)
+        self.assertEqual(self.outcomes(report)["kernel:nbd"], "unverifiable")
+        status, report = self.report(system, "restore-kernel", *KERNEL)
+        self.assertEqual(status, setup.EXIT_UNMET)
+        self.assertIn("could not be read", report["kernel"]["actions"][0]["result"])
+        self.assertIn("nbd", machine.loaded)
 
     def test_foreign_or_unreadable_state_volume_is_refused(self):
         for volume, expected in (({"labels": {}, "state": "{}"}, "not this tool's"),
