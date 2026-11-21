@@ -595,18 +595,39 @@ with a personal token, not that.
 
 #### Enabling the branch rule
 
-A branch rule must require the context only when every open pull request to
-that branch already has it, otherwise those pull requests wait for a status
-that no event will bring:
+The rule is the ruleset `Git Flow / requested CI`, which requires the
+context from GitHub Actions on `main`, `develop` and every release and
+support line. Those are the branches whose pull requests start Code checks,
+and that request is what makes the gate publish the status on a new head.
+The ruleset is optional: `scripts/release/git_flow.py` creates it only when
+asked, beside the other rulesets and without changing them, and `verify`
+checks it only where it is installed. Until then the status is advisory and
+step 5 of the reviewer steps is the reviewer's.
 
-1. Dispatch the gate and check that it succeeded:
+A branch rule must require the context only when every pull request it
+covers gets it, otherwise that pull request waits for a status that no
+event will bring. Install it in this order:
+
+1. Confirm on a Dependabot pull request that `Required requested CI`
+   appears on its head by itself. Its Code checks run is requested by
+   another actor than a maintainer's, and the gate must publish for it as
+   for any other pull request.
+2. Dispatch the gate and check that it succeeded:
    `gh workflow run "Requested CI gate"`.
-2. Confirm that every open pull request to the branch shows
-   `Required requested CI` on its head, a pull request without requirements
-   as `success`.
-3. Add the context to the branch's required status checks, provided by
-   GitHub Actions like the Code check contexts (see
-   [Maintained branches](git-flow.md)).
+3. Plan. The plan prints the ruleset and names every open pull request to a
+   maintained branch whose head has no status yet:
+
+   ```sh
+   python3 scripts/release/git_flow.py plan --requested-ci
+   ```
+
+4. Apply and verify. `apply` refuses while the plan still names a pull
+   request, and after any drift of the existing rulesets:
+
+   ```sh
+   python3 scripts/release/git_flow.py apply --requested-ci
+   python3 scripts/release/git_flow.py verify
+   ```
 
 After that, a pull request opened or pushed later gets the status from the
 Code checks request of that event.
