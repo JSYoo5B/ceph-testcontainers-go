@@ -1102,6 +1102,12 @@ promotion run already qualifies the pushed commit:
    check and the hashes of its logs and reports) and the report of each
    retry. The jobs' own artifacts expire after 7 to 14 days; the receipt and
    this evidence are kept for 90.
+   The job fetches the rows through the API, page by page, because a
+   release run writes more artifacts than `actions/download-artifact`
+   lists, and it fails when the record does not account for every runtime
+   job or the checked-out commit is not a merge of two parents. The gate's
+   result stays as it is; the failed job says before the merge that the
+   push will run the full matrix.
 3. On a push to `main`, `Promotion reuse` runs
    `scripts/release/promotion_reuse.py verify` and writes
    `promotion-reuse-receipt-<attempt>` with its decision and, on a reuse, its

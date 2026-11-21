@@ -181,15 +181,10 @@ jobs:
         with:
           name: release-coverage-${{ github.run_attempt }}
           path: artifacts/coverage
-      - name: Download this run's job records
-        uses: actions/download-artifact@v8
-        with:
-          pattern: tag-scenario-*
-          path: artifacts/rows
       - name: Record the candidate receipt and its evidence
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/release/promotion_reuse.py record --coverage artifacts/coverage/release-coverage.json --rows artifacts/rows --output artifacts/release-candidate
+        run: python3 scripts/release/promotion_reuse.py record --coverage artifacts/coverage/release-coverage.json --output artifacts/release-candidate
       - uses: actions/upload-artifact@v7
         if: always()
         with:

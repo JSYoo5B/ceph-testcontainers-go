@@ -555,12 +555,13 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
                                                    "&& needs.validated.result == 'success' }}")
             self.assertEqual(scalar(header, "name"), "Candidate receipt")
             # It keeps the history row of every runtime job with the
-            # receipt, for as long as the receipt.
-            rows = next(step for step in steps(receipt) if "pattern:" in step)
-            self.assertEqual(scalar(rows, "pattern"), "tag-scenario-*")
-            self.assertEqual(scalar(rows, "path"), "artifacts/rows")
+            # receipt, for as long as the receipt. The script fetches the
+            # rows itself: a release run has more artifacts than
+            # actions/download-artifact lists, so no step downloads them
+            # by pattern.
+            self.assertNotIn("pattern:", receipt)
             self.assertIn("python3 scripts/release/promotion_reuse.py record --coverage artifacts/coverage/release-coverage.json "
-                          "--rows artifacts/rows --output artifacts/release-candidate\n", receipt)
+                          "--output artifacts/release-candidate\n", receipt)
             upload = steps(receipt)[-1]
             self.assertEqual(scalar(upload, "name"), "release-candidate-receipt-${{ github.run_attempt }}")
             self.assertEqual(scalar(upload, "path"), "artifacts/release-candidate/")
