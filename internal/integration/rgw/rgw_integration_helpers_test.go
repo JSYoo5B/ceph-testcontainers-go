@@ -4,6 +4,7 @@ package rgw_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -40,8 +41,9 @@ func rgwAdminStep(ctx context.Context, gateway *rgw.Gateway, args ...string) ([]
 // the test when it fails. It never repeats the command: a stopped or failed
 // mutation may have changed native state, and its outcome is unknown. A
 // failure names how the command ended, its phase deadline and elapsed time,
-// and the gateway container's generation and state and the cluster's OSD map
-// summary, each read once under its own short bound after the failure.
+// and the gateway container's generation and state and the cluster's OSD
+// map summary, pools and placement group states, read once under a short
+// bound after the failure.
 func rgwRequireAdminStep(t *testing.T, ctx context.Context, cluster *ceph.Container, gateway *rgw.Gateway, args ...string) []byte {
 	t.Helper()
 	phase, cancel := context.WithTimeout(ctx, rgwAdminStepBound)
@@ -115,7 +117,44 @@ func rgwSyncStatsOSDs(parent context.Context, cluster *ceph.Container) string {
 	if len(text) > 512 {
 		text = text[:512] + " [truncated]"
 	}
-	return "OSD map: " + text
+	return "OSD map: " + text + "; " + rgwSyncStatsPools(ctx, cluster)
+}
+
+// rgwSyncStatsPools names each pool with its ID, placement group count and
+// the OSD map epoch of its last change, and the placement group states. A
+// stopped command's error names the pool and placement group of the request
+// it waited for; this says what state they were in right after.
+func rgwSyncStatsPools(ctx context.Context, cluster *ceph.Container) string {
+	data, err := cluster.Ceph(ctx, "osd", "pool", "ls", "detail", "--format", "json")
+	var pools []struct {
+		ID      int64  `json:"pool_id"`
+		Name    string `json:"pool_name"`
+		PGs     int    `json:"pg_num"`
+		Changed any    `json:"last_change"`
+	}
+	if err == nil {
+		err = json.Unmarshal(data, &pools)
+	}
+	if err != nil {
+		return "pools: unavailable: " + err.Error()
+	}
+	names := make([]string, 0, len(pools))
+	for _, pool := range pools {
+		names = append(names, fmt.Sprintf("%d %s (%d PGs, changed e%v)", pool.ID, pool.Name, pool.PGs, pool.Changed))
+	}
+	text := "pools: " + strings.Join(names, ", ")
+	if len(text) > 1024 {
+		text = text[:1024] + " [truncated]"
+	}
+	states, err := cluster.Ceph(ctx, "pg", "stat")
+	if err != nil {
+		return text + "; PGs: unavailable: " + err.Error()
+	}
+	summary := strings.TrimSpace(string(states))
+	if len(summary) > 256 {
+		summary = summary[:256] + " [truncated]"
+	}
+	return text + "; PGs: " + summary
 }
 
 // Explicit synchronization prepares deterministic native accounting for the
