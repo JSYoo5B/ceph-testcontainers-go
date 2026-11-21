@@ -444,7 +444,7 @@ every open pull request, with or without requirements:
 | `success` | The pull request requires nothing, or every required selection passed on this head commit. |
 | `pending` | A required selection is running, or has no run on this head commit. |
 | `failure` | A required selection failed, its run was cancelled, skipped or ended without a known result, or its names no longer resolve. |
-| `error` | A comment of the requirement ledger was edited or cannot be read. |
+| `error` | The requirements are not known: a comment of the ledger was edited or cannot be trusted, the comments of a pull request with this head could not be read, or the job that publishes the status did not finish. |
 
 A pull request with requirements has one summary comment, which the status
 links to. It lists every required selection with its state, the commit that
@@ -496,7 +496,9 @@ the pull request that decides it.
    on the pull request with their author.
 5. **Verify before the merge.** `Required requested CI` is `success` on the
    exact commit to merge, and the summary comment names that commit as its
-   head and lists every selection that was asked for as `passed`:
+   head and lists every selection that was asked for as `passed`. A summary
+   for another commit means the status was not evaluated for this pull
+   request (see [How the status is kept](#how-the-status-is-kept)):
 
    ```sh
    gh api repos/<owner>/<repository>/commits/<head-sha>/status \
@@ -533,22 +535,54 @@ branch, and none checks out a pull request:
 
 | Job | When | What it does |
 | --- | --- | --- |
-| `Register` of `ci-command.yml` | an accepted `require`, `retry` or `drop` | Sets the head `pending` (not for `drop`), writes the record with the acknowledgment, then evaluates. |
+| `Register` of `ci-command.yml` | an accepted `require`, `retry` or `drop` | Reads the pull request's head and ledger, sets the head `pending` (not for `drop`), writes the record with the acknowledgment, then evaluates. A failure before the record is written records and acknowledges nothing; a failure to write it leaves the head `pending`. |
 | `Gate` of `ci-command.yml` | after `Report` recorded the result of a required selection's run | Evaluates. |
 | `Evaluate` of `requested-ci-gate.yml` | every pull request run of Code checks, when it is requested; manual dispatch | Evaluates. |
 
 Code checks starts for every opened, pushed, reopened or retargeted pull
 request of a maintained branch, documentation-only ones included, so each
 new head gets its status without a command. An evaluation covers every open
-pull request, sets a status only where it changed, and fails after
-publishing the others when the comments of one pull request cannot be read;
-that pull request keeps the status it had.
+pull request and sets a status only where it changed.
 
 The three jobs share the concurrency group `required-requested-ci`, so no
 evaluation publishes from a ledger that another job is changing. GitHub
 keeps one waiting job per group. A waiting evaluation that a newer one
 replaces loses nothing; a waiting `Register` that is replaced has recorded
 nothing, and `Report` answers that the command is not confirmed.
+
+A failed job does not fail a commit status: a commit keeps the status it
+has until another one is set. The publishing jobs therefore turn what they
+cannot establish into `error` and never leave a head as it was:
+
+- a pull request whose comments cannot be read after two repeated attempts,
+  or cannot be evaluated, makes its head `error`
+  (`The requirements of #N could not be read`), for every pull request that
+  has that head. The others are published and the job fails;
+- a job whose script does not report every head as published, because it
+  failed, was cancelled or timed out, or because the checkout before it
+  failed, ends with a step that sets `error`
+  (`The evaluation did not finish`) on the commit that started it: the head
+  of the Code checks run for `Evaluate`, the commit of the command for
+  `Register` and `Gate`. That step needs only the token and `gh`;
+- a summary comment is not written for a head whose status could not be
+  set, so it never says more than the status.
+
+`error` is cleared by the next evaluation that succeeds: any pull request
+event, any requirement command, or
+`gh workflow run "Requested CI gate"`. A manual dispatch has no commit of
+its own, so a failed one withdraws nothing.
+
+One case is outside what these jobs can do. When the job cannot reach the
+API to list the pull requests or to set a status, or never starts, every
+commit keeps the status it has. That matters for a commit that is already
+green: a pull request pushed to, or opened at, a commit that another pull
+request made green shows that green until an evaluation succeeds. The
+failed `Requested CI gate` or `CI command` run is the signal, and
+[step 5 of the reviewer steps](#reviewer-steps) catches it: the summary
+comment of a pull request with requirements names the head it was written
+for, and a summary that names another commit, or that is missing although
+selections were required, means that the status is not this pull request's.
+Run the gate again before merging.
 
 The jobs that compile and run the pull request (`Validate` and
 `Scenarios`, and every job of the pull request workflows) hold a read-only
