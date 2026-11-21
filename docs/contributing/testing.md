@@ -1037,6 +1037,57 @@ from a public package. Add it to the inventory in the same change when it is
 in a test-only package or when a runtime file gets a new injection seam
 documented as replaced in tests; `testdoublecheck` fails otherwise.
 
+## Checking that a test rejects a wrong result
+
+A rerun that passes shows that a symptom did not recur. It does not show that
+the test fails when the contract it names is broken. For a test that guards an
+event order, an ownership rule or an evidence rule, check that by hand with one
+deliberate fault. This is a review step on a local checkout, not a CI job, and
+its result is a statement about that one test.
+
+1. Name the invariant and the assertion that must fail when it breaks. Run the
+   selected test unmodified with `-count=1` first; a failing baseline ends the
+   check.
+2. Break one thing at a time: a fault that an existing fake offers, an event
+   barrier, or a temporary change of the production check (drop a guard, use a
+   failed read as an empty value, skip a removal). Add a `println` on the
+   changed line, so that the run shows whether the test reached it.
+3. Force the order instead of waiting for it. Hold a callback behind a channel,
+   use a fake's hook at the boundary (`stateHook` of the native target fake
+   fences an instance between its validation and its admission), and run code
+   that only waits on timers and channels in `testing/synctest`. A sleep, or a
+   loop that repeats until a branch was taken, does not select an order. Bound
+   every wait and release every barrier when the test fails.
+4. Classify the run:
+
+   | Result | Condition |
+   | --- | --- |
+   | Detected | The marker was printed and the selected test failed at the assertion of step 1. |
+   | Surviving | The marker was printed and the selected test passed. Run the packages that call the changed code before calling it a gap: a consumer's test may hold the assertion. |
+   | Not reached | The marker was not printed. No selected test drives that path; the fake usually lacks the state that leads there. |
+   | Inconclusive | A build failure, a test that was not selected, another assertion, the deadline of the operation or of the whole test, or a guard test that fails on the marker itself (the lock-contract guards list every call of the functions they cover). |
+
+5. For a gap, add the focused test or the fake state, apply the same fault
+   again and require the failure of step 1. Then remove the fault:
+   `git diff` shows no change outside test files, and the temporary change is
+   never committed.
+6. In a native run, put the fault behind a condition that the test observed
+   on its own (an owned container exists, a daemon generation changed), and
+   make sure a bounded outer cleanup exists before the fault: the cluster's
+   `testcontainers.CleanupContainer` removes every container that carries its
+   owner label. Check the physical effect without the fixture method that
+   reported it, by the identity recorded before the operation
+   (`docker inspect` of a container ID, `docker events` for the order of
+   `create`, `die` and `destroy`). Only Docker's not-found answer is absence;
+   a failed inspection observes neither state. Run the baseline once without
+   and once with the extra recorder, and compare the order of events, not
+   only the verdict.
+
+Record the source commit, the selected test and tags, the fault as a diff, the
+marker line, the expected assertion, the verdict and the cleanup result in the
+issue or pull request that the check belongs to. One checked test says nothing
+about how often other tests miss a defect.
+
 ## Package layout and the export inventory
 
 Each public package holds its own implementation. `rbd`, `cephfs` and `rgw`
