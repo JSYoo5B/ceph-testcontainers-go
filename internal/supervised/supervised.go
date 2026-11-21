@@ -30,6 +30,15 @@ const (
 	// deadlineSignalVariable gives the supervisor the signal of
 	// WithDeadlineSignal.
 	deadlineSignalVariable = "TC_SUPERVISED_DEADLINE_SIGNAL"
+	// deadlineSocketVariable and deadlineRequestVariable give the supervisor
+	// the socket and the request of WithDeadlineQuery.
+	deadlineSocketVariable  = "TC_SUPERVISED_DEADLINE_SOCKET"
+	deadlineRequestVariable = "TC_SUPERVISED_DEADLINE_REQUEST"
+	// DeadlineQueryPID is the part of a WithDeadlineQuery socket path that
+	// the supervisor replaces with the command's process ID.
+	DeadlineQueryPID = "{pid}"
+	// DeadlineReplyLimit bounds the reply of a WithDeadlineQuery in bytes.
+	DeadlineReplyLimit = 65536
 	// CancelTimeout bounds one Cancel.
 	CancelTimeout = 10 * time.Second
 	// ExecCushion is the default reporting allowance for short control reads.
@@ -83,6 +92,16 @@ const (
 // writing into them.
 // The command then runs without core files. A cancellation is unchanged.
 //
+// With a deadline query (WithDeadlineQuery) as well, the supervisor first
+// asks the command, before that signal, over the command's Unix socket: it
+// writes the request and a zero byte and reads a four-byte big-endian length
+// and that many bytes, at most DeadlineReplyLimit, as a Ceph admin socket
+// answers. Connecting, writing and reading together take at most one second,
+// also when the command accepts the connection and never answers, so the
+// stop stays bounded. The envelope then holds what was read and the length
+// the command announced. The supervisor removes the socket's file when the
+// command is gone.
+//
 // With InputVariable set to a byte limit, the supervisor gives the command a
 // pipe as its standard input. It reads its own standard input as soon as data
 // arrives, so that a writer never waits for a command that does not read,
@@ -97,6 +116,7 @@ if not all(hasattr(os, name) for name in ("waitid","P_PID","WEXITED","WNOHANG","
  sys.exit(123)
 marker=os.environ["TC_SUPERVISED"]; cancel_marker=marker+".cancel"
 term_grace=float(os.environ.get("TC_SUPERVISED_TERM_GRACE","0")); deadline_signal=int(os.environ.get("TC_SUPERVISED_DEADLINE_SIGNAL","0"))
+query_socket=os.environ.get("TC_SUPERVISED_DEADLINE_SOCKET",""); query_request=os.environ.get("TC_SUPERVISED_DEADLINE_REQUEST",""); reply=None; reply_size=0
 input_limit=int(os.environ.get("TC_SUPERVISED_INPUT","-1")); source_open=input_limit>=0; pending=bytearray(); received=0; delivered=0; input_eof=False; child_in=None
 os.makedirs(os.path.dirname(marker),mode=0o700,exist_ok=True)
 try: fd=os.open(marker,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
@@ -172,10 +192,33 @@ def take(stream):
   return
  channel=streams[stream]; room=len(data) if limits[channel]<0 else max(0,limits[channel]-len(output[channel]))
  output[channel].extend(data[:room]); clipped[channel]=clipped[channel] or len(data)>room
+def ask_at_deadline():
+ global reply,reply_size
+ until=time.monotonic()+1.0; got=bytearray(); want=4
+ def left():
+  remaining=until-time.monotonic()
+  if remaining<=0: raise TimeoutError()
+  return remaining
+ try:
+  import socket
+  s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
+  try:
+   s.settimeout(left()); s.connect(query_socket.replace("{pid}",str(p.pid)))
+   s.settimeout(left()); s.sendall(query_request.encode()+b"\0")
+   while len(got)<want:
+    s.settimeout(left()); data=s.recv(min(32768,want-len(got)))
+    if not data: break
+    got.extend(data)
+    if want==4 and len(got)==4:
+     reply_size=int.from_bytes(got,"big"); want=4+min(reply_size,65536)
+  finally: s.close()
+ except Exception: pass
+ if len(got)>=4: reply=bytes(got[4:])
 def stop_at_deadline():
  if deadline_signal<=0 or term_grace<=0:
   kill_owned_group(graceful=True)
   return
+ if query_socket: ask_at_deadline()
  try: os.killpg(p.pid,deadline_signal)
  except ProcessLookupError: pass
  stop=time.monotonic()+term_grace
@@ -237,6 +280,9 @@ try:
   p.wait()
   reap_descendants(p.pid)
   cleaned=True
+  if query_socket:
+   try: os.unlink(query_socket.replace("{pid}",str(p.pid)))
+   except OSError: pass
   close_input(False)
   p.stdout.close()
   p.stderr.close()
@@ -247,6 +293,7 @@ finally:
   except FileNotFoundError: pass
 report={'schema_version':1,'stdout':base64.b64encode(output[0]).decode(),'stderr':base64.b64encode(output[1]).decode(),'exit_code':code,'timed_out':timed_out,'stdout_truncated':clipped[0],'stderr_truncated':clipped[1]}
 if input_limit>=0: report.update(input_received=received,input_delivered=delivered,input_eof=input_eof)
+if reply is not None: report.update(deadline_reply=base64.b64encode(reply).decode(),deadline_reply_size=reply_size)
 print(json.dumps(report))
 `
 
@@ -340,6 +387,12 @@ type Report struct {
 	// the end of input after all of them.
 	InputWritten, InputDelivered int64
 	InputEOF                     bool
+	// DeadlineReply is what the command answered to a WithDeadlineQuery
+	// before it was stopped at the deadline, at most DeadlineReplyLimit
+	// bytes, and DeadlineReplyCut reports that the command announced more
+	// than was read. Both are zero when no answer began within the bound.
+	DeadlineReply    []byte
+	DeadlineReplyCut bool
 }
 
 // ProcessTimeoutError records a complete report of the native process timing
@@ -449,6 +502,21 @@ func WithDeadlineSignal(ctx context.Context, signal int) context.Context {
 	return context.WithValue(ctx, deadlineSignalKey{}, signal)
 }
 
+type deadlineQueryKey struct{}
+
+type deadlineQuery struct{ socket, request string }
+
+// WithDeadlineQuery makes a RunRoleCommand under the returned context, which
+// also has a WithDeadlineSignal, ask the command a question right before that
+// signal: the supervisor sends request to the Unix socket at socket, in which
+// DeadlineQueryPID stands for the command's process ID, as a Ceph admin
+// socket takes it, and returns the answer in the report's DeadlineReply. The
+// question takes at most one second of the stop, answered or not. The
+// supervisor removes the socket's file after the command.
+func WithDeadlineQuery(ctx context.Context, socket, request string) context.Context {
+	return context.WithValue(ctx, deadlineQueryKey{}, deadlineQuery{socket: socket, request: request})
+}
+
 // MissingPython reports a missing interpreter or required Linux process API.
 func MissingPython(err error) bool {
 	var exit *ExitError
@@ -477,6 +545,9 @@ func run(ctx, attempt context.Context, ctr testcontainers.Container, label, seco
 		env = append(env, roleTermGrace+"=2")
 		if signal, ok := ctx.Value(deadlineSignalKey{}).(int); ok && signal > 0 {
 			env = append(env, deadlineSignalVariable+"="+strconv.Itoa(signal))
+			if query, ok := ctx.Value(deadlineQueryKey{}).(deadlineQuery); ok && query.socket != "" {
+				env = append(env, deadlineSocketVariable+"="+query.socket, deadlineRequestVariable+"="+query.request)
+			}
 		}
 	}
 	code, reader, err := ctr.Exec(attempt, command, tcexec.Multiplexed(), tcexec.WithEnv(env))
@@ -551,6 +622,8 @@ func parseReport(attempt context.Context, label, marker string, code int, data [
 		InputReceived   *int64  `json:"input_received"`
 		InputDelivered  *int64  `json:"input_delivered"`
 		InputEOF        *bool   `json:"input_eof"`
+		DeadlineReply   *string `json:"deadline_reply"`
+		DeadlineSize    *int    `json:"deadline_reply_size"`
 	}
 	if err := json.Unmarshal(data, &envelope); err != nil || envelope.SchemaVersion == nil || *envelope.SchemaVersion != 1 || envelope.Stdout == nil || envelope.Stderr == nil || envelope.ExitCode == nil || envelope.TimedOut == nil || envelope.StdoutTruncated == nil || envelope.StderrTruncated == nil {
 		return Report{}, fmt.Errorf("invalid %s supervisor protocol", label)
@@ -581,6 +654,13 @@ func parseReport(attempt context.Context, label, marker string, code int, data [
 	}
 	if input != nil {
 		report.InputWritten, report.InputDelivered, report.InputEOF = input.written, *envelope.InputDelivered, *envelope.InputEOF
+	}
+	if envelope.DeadlineReply != nil {
+		reply, err := base64.StdEncoding.DecodeString(*envelope.DeadlineReply)
+		if err != nil || envelope.DeadlineSize == nil || len(reply) > DeadlineReplyLimit || *envelope.DeadlineSize < len(reply) {
+			return Report{}, fmt.Errorf("invalid %s supervisor deadline reply", label)
+		}
+		report.DeadlineReply, report.DeadlineReplyCut = reply, *envelope.DeadlineSize > len(reply)
 	}
 	return report, nil
 }
