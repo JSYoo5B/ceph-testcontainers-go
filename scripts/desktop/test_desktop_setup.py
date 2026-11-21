@@ -13,6 +13,7 @@ import tempfile
 import unittest
 
 import desktop_setup as setup
+import kernel
 import wslconfig
 
 GB = 1 << 30
@@ -29,7 +30,7 @@ def engine(kernel="6.6.87.2-microsoft-standard-WSL2", cpus=16, memory=15.5, syst
 
 class FakeSystem:
     def __init__(self, platform="win32", info=None, endpoint="npipe:////./pipe/dockerDesktopLinuxEngine",
-                 context="desktop-linux", environ=None, files=None, probe=None, home="/nonexistent-home"):
+                 context="desktop-linux", environ=None, files=None, probe=None, home="/nonexistent-home", vm=None):
         self.platform = platform
         self.machine = "amd64"
         self.info = engine() if info is None else info
@@ -39,6 +40,7 @@ class FakeSystem:
         self.files = dict(files or {})
         self.probe = probe
         self._home = home
+        self.vm = vm
         self.commands = []
 
     def home(self):
@@ -63,6 +65,10 @@ class FakeSystem:
         if "version" in args:
             server = {"Platform": {"Name": "Docker Desktop 4.99.0 (1)"}} if self.info else None
             return (0 if server else 1), json.dumps({"Client": {}, "Server": server}).encode()
+        if "volume" in args or "--privileged" in args or any(arg.startswith("ceph-testcontainers-") for arg in args):
+            if self.vm is None:
+                return 125, b""
+            return self.vm.run(args)
         if "run" in args:
             program = args[args.index("--entrypoint") + 1]
             target = args[-1]
@@ -72,7 +78,87 @@ class FakeSystem:
         raise AssertionError("unexpected command: %r" % (args,))
 
 
-def probe(swap_kib=1048572, free_kib=40 * 1024 * 1024, config="CONFIG_DM_DELAY=y\nCONFIG_BLK_DEV_NBD=m\n"):
+class FakeVM:
+    """The kernel of a synthetic engine VM, driven by the helper's Docker commands."""
+
+    def __init__(self, config=None, files=(), loaded=(), parameters=None, unload=True, modprobe=True):
+        self.config = dict(config or {})
+        self.files = set(files)
+        self.loaded = set(loaded)
+        self.parameters = dict(parameters or {})
+        self.unload = unload
+        self.modprobe = modprobe
+        self.boot = "boot-1"
+        self.refuse_entry = False
+        self.fail_load = set()
+        self.fail_set = set()
+        self.fail_state_write = False
+        self.busy = set()
+        self.volume = None  # None, or {"labels": {...}, "state": text or None}
+        self.changes = []
+
+    def run(self, args):
+        if "volume" in args:
+            action = args[args.index("volume") + 1]
+            if action == "inspect":
+                if self.volume is None:
+                    return 1, b""
+                return 0, json.dumps({"Labels": self.volume["labels"]}).encode()
+            if action == "create":
+                key, value = args[args.index("--label") + 1].split("=")
+                self.volume = self.volume or {"labels": {key: value}, "state": None}
+                return 0, b""
+            self.volume = None
+            return 0, b""
+        program = args[args.index("--entrypoint") + 1]
+        tail = args[args.index("--entrypoint") + 3:]
+        if "--privileged" not in args:
+            if program == "cat":
+                return (0, self.volume["state"].encode()) if self.volume and self.volume["state"] else (1, b"")
+            if self.fail_state_write:
+                return 1, b""
+            self.volume["state"] = tail[-1]
+            return 0, b""
+        if self.refuse_entry:
+            return 1, b""
+        if program == "sh":  # the inspection script
+            lines = ["boot\t" + self.boot, "modules_disabled\t0", "entered\tyes"]
+            lines += ["config\t%s=%s" % pair for pair in self.config.items()]
+            lines += ["loaded\t" + name for name in sorted(self.loaded)]
+            lines += ["file\tkernel/drivers/x/%s.ko.xz" % name for name in sorted(self.files)]
+            lines += ["modprobe\tyes"] if self.modprobe else []
+            for item in tail[3:]:
+                kind, name = item.split(":", 1)
+                if kind == "module" and name in self.loaded and self.unload:
+                    lines.append("refcnt\t%s\t%d" % (name, 1 if name in self.busy else 0))
+                if kind == "param":
+                    lines.append("param\t%s\t%s" % (name, self.parameters.get(name.replace("/", "."), "")))
+            return 0, "\n".join(lines).encode()
+        if "modprobe" in tail:
+            name = tail[-1]
+            if "-r" in tail:
+                if not self.unload or name in self.busy:
+                    return 1, b""
+                self.loaded.discard(name)
+                self.changes.append("unload " + name)
+                return 0, b""
+            if name not in self.files or name in self.fail_load:
+                return 1, b""
+            self.loaded.add(name)
+            self.changes.append("load " + name)
+            return 0, b""
+        name, value = tail[-2].replace("/", "."), tail[-1]
+        if name in self.fail_set:
+            return 1, b""
+        self.parameters[name] = value
+        self.changes.append("set %s=%s" % (name, value))
+        return 0, b""
+
+
+BLOCK = "CONFIG_BLK_DEV_LOOP=y\nCONFIG_BLK_DEV_DM=y\n"
+
+
+def probe(swap_kib=1048572, free_kib=40 * 1024 * 1024, config="CONFIG_DM_DELAY=y\nCONFIG_BLK_DEV_NBD=m\n" + BLOCK):
     return {
         ("cat", "/proc/meminfo"): ("MemTotal: 1 kB\nSwapTotal: %d kB\n" % swap_kib).encode(),
         ("df", "/"): ("Filesystem 1024-blocks Used Available Capacity Mounted on\noverlay 1 1 %d 1%% /\n"
@@ -121,7 +207,8 @@ class ProfileTest(SetupCase):
         _, report = self.report(self.windows(), "--profile-file", str(custom), "--profile", "mine",
                                 "--memory-gib", "6.5", "--kernel-feature", "nbd")
         self.assertEqual(report["profile"], {"name": "mine", "cpus": 2, "memory_gib": 6.5, "swap_gib": 0,
-                                             "disk_free_gib": 0, "kernel_features": ["nbd"]})
+                                             "disk_free_gib": 0, "kernel_features": ["nbd"],
+                                             "kernel_parameters": {}})
 
     def test_invalid_profiles_are_rejected_before_any_command(self):
         system = self.windows()
@@ -386,11 +473,12 @@ class RestoreTest(SetupCase):
 
 class VerifyTest(SetupCase):
     def test_kernel_features_are_reported_apart_from_limits(self):
-        system = self.windows(info=engine(cpus=2, memory=1.9), probe=probe(config="CONFIG_BLK_DEV_NBD=m\n"))
+        system = self.windows(info=engine(cpus=2, memory=1.9), probe=probe(config="CONFIG_BLK_DEV_NBD=m\n" + BLOCK))
         status, report = self.report(system, "verify", "--profile", "block-fault-delay", "--kernel-feature", "nbd",
                                      "--probe-image", "busybox")
         self.assertEqual(status, setup.EXIT_UNMET)
         self.assertEqual(self.outcomes(report), {"cpus": "planned", "memory": "planned", "disk-free": "applied",
+                                                 "kernel:loop": "available", "kernel:dm": "available",
                                                  "kernel:dm-delay": "unavailable", "kernel:nbd": "unverifiable"})
         kinds = {item["name"]: item["kind"] for item in report["settings"]}
         self.assertEqual((kinds["memory"], kinds["kernel:dm-delay"]), ("limit", "kernel-feature"))
@@ -454,6 +542,267 @@ class PrivacyTest(SetupCase):
                         for private in (SECRET_ENDPOINT, "build-box", SECRET_SOCKET, "someone", "work-laptop", home,
                                         "private-engine-name", "plenty"):
                             self.assertNotIn(private, text)
+
+
+MAC = dict(platform="darwin", endpoint=SECRET_SOCKET)
+KERNEL = ("--disk-free-gib", "0", "--kernel-helper-image", "busybox")
+WANT = ("--kernel-feature", "nbd", "--kernel-feature", "krbd", "--kernel-feature", "dm-delay", "--kernel-feature",
+        "fuse", "--kernel-parameter", "fs.aio-max-nr=1048576")
+
+
+def vm(**arguments):
+    defaults = dict(config={"CONFIG_FUSE_FS": "y", "CONFIG_BLK_DEV_NBD": "m", "CONFIG_BLK_DEV_RBD": "m",
+                            "CONFIG_MODULE_UNLOAD": "y"},
+                    files={"nbd"}, parameters={"fs.aio-max-nr": "65536"})
+    defaults.update(arguments)
+    return FakeVM(**defaults)
+
+
+class KernelStepTest(SetupCase):
+    def mac(self, machine, **arguments):
+        options = dict(MAC, info=engine(kernel="6.12.54-linuxkit"), home=str(self.profile), vm=machine)
+        options.update(arguments)
+        return FakeSystem(**options)
+
+    def test_plan_reports_each_state_and_changes_nothing(self):
+        machine = vm()
+        system = self.mac(machine)
+        status, report = self.report(system, *(WANT + KERNEL))
+        self.assertEqual(status, setup.EXIT_OK)
+        self.assertEqual(self.outcomes(report), {
+            "cpus": "applied", "memory": "applied",
+            "kernel:fuse": "available",       # built in
+            "kernel:nbd": "planned",          # module file present, not loaded
+            "kernel:krbd": "unavailable",     # built as a module, file not shipped
+            "kernel:dm-delay": "unavailable",  # not built at all
+            "sysctl:fs.aio-max-nr": "planned"})
+        persists = {item["name"]: item.get("persists") for item in report["settings"]}
+        self.assertEqual((persists["kernel:fuse"], persists["kernel:nbd"]), (True, False))
+        self.assertEqual((machine.changes, machine.volume), ([], None))
+        self.assertTrue(any("apply-kernel" in step and "kernel:nbd, sysctl:fs.aio-max-nr" in step
+                            for step in report["manual_steps"]))
+        self.assertTrue(any("kernel:dm-delay, kernel:krbd cannot be provided" in step and "does not build" in step
+                            for step in report["manual_steps"]))
+        for command in system.commands:
+            if "run" in command:
+                self.assertEqual(command[1:6], ["run", "--rm", "--pull=never", "--network", "none"])
+
+    def test_without_the_helper_no_privileged_container_starts(self):
+        system = self.mac(vm())
+        _, report = self.report(system, *(WANT + ("--disk-free-gib", "0")))
+        self.assertEqual({self.outcomes(report)[name] for name in ("kernel:nbd", "sysctl:fs.aio-max-nr")},
+                         {"unverifiable"})
+        self.assertFalse(any("run" in command or "volume" in command for command in system.commands))
+        self.assertTrue(any("--kernel-helper-image" in step for step in report["manual_steps"]))
+
+    def test_apply_kernel_needs_the_scope_confirmation(self):
+        machine = vm()
+        status, report = self.report(self.mac(machine), "apply-kernel", *(WANT + KERNEL))
+        self.assertEqual(status, setup.EXIT_REFUSED)
+        self.assertIn("every container on this engine", report["refusal"])
+        self.assertEqual((machine.changes, machine.volume), ([], None))
+
+    def test_apply_kernel_loads_sets_records_and_repeats_as_a_no_op(self):
+        machine = vm()
+        system = self.mac(machine)
+        status, report = self.report(system, "apply-kernel", "--confirm-engine-kernel", *(WANT + KERNEL))
+        # The features this engine cannot provide stay open, so the run is not a full success of the profile,
+        # but the step itself did what it could and failed nothing.
+        self.assertEqual(status, setup.EXIT_OK)
+        self.assertEqual(machine.changes, ["load nbd", "set fs.aio-max-nr=1048576"])
+        self.assertEqual(report["kernel"]["actions"], [{"item": "kernel:nbd", "result": "loaded"},
+                                                       {"item": "sysctl:fs.aio-max-nr", "result": "set"}])
+        outcomes = self.outcomes(report)
+        self.assertEqual((outcomes["kernel:nbd"], outcomes["sysctl:fs.aio-max-nr"], outcomes["kernel:krbd"]),
+                         ("applied", "applied", "unavailable"))
+        persists = {item["name"]: item.get("persists") for item in report["settings"]}
+        self.assertEqual((persists["kernel:nbd"], persists["sysctl:fs.aio-max-nr"]), (False, False))
+        self.assertEqual(report["kernel"]["owned"], ["module:nbd", "sysctl:fs.aio-max-nr"])
+        self.assertTrue(any("gone when the engine VM restarts" in step for step in report["manual_steps"]))
+        state = json.loads(machine.volume["state"])
+        self.assertEqual(state["parameters"], {"fs.aio-max-nr": {"previous": 65536, "written": 1048576}})
+
+        machine.changes.clear()
+        status, report = self.report(system, "apply-kernel", "--confirm-engine-kernel", *(WANT + KERNEL))
+        self.assertEqual((status, machine.changes, report["kernel"]["actions"]), (setup.EXIT_OK, [], []))
+        self.assertEqual(self.report(system, "verify", "--kernel-feature", "nbd", "--kernel-parameter",
+                                     "fs.aio-max-nr=1048576", *KERNEL)[0], setup.EXIT_OK)
+
+    def test_already_satisfied_items_are_not_touched_or_owned(self):
+        machine = vm(loaded={"nbd"}, parameters={"fs.aio-max-nr": "2097152"})
+        status, report = self.report(self.mac(machine), "apply-kernel", "--confirm-engine-kernel", "--kernel-feature",
+                                     "nbd", "--kernel-parameter", "fs.aio-max-nr=1048576", *KERNEL)
+        self.assertEqual((status, machine.changes, machine.volume, report["satisfied"]), (setup.EXIT_OK, [], None, True))
+        details = {item["name"]: item["effective"] for item in report["settings"]}
+        self.assertEqual(details["kernel:nbd"], "module already loaded")
+        self.assertIn("already at least the requested value", details["sysctl:fs.aio-max-nr"])
+
+    def test_failed_actions_are_reported_and_not_owned(self):
+        machine = vm()
+        machine.fail_load.add("nbd")
+        machine.fail_set.add("fs.aio-max-nr")
+        status, report = self.report(self.mac(machine), "apply-kernel", "--confirm-engine-kernel", *(WANT + KERNEL))
+        self.assertEqual(status, setup.EXIT_FAILED)
+        outcomes = self.outcomes(report)
+        self.assertEqual((outcomes["kernel:nbd"], outcomes["sysctl:fs.aio-max-nr"]), ("failed", "failed"))
+        self.assertEqual((machine.changes, machine.volume, report["kernel"]["owned"]), ([], None, []))
+
+    def test_unwritable_record_puts_the_changes_back(self):
+        machine = vm()
+        machine.fail_state_write = True
+        status, report = self.report(self.mac(machine), "apply-kernel", "--confirm-engine-kernel", *(WANT + KERNEL))
+        self.assertEqual(status, setup.EXIT_FAILED)
+        self.assertIn("put back", report["failure"])
+        self.assertEqual(machine.changes, ["load nbd", "set fs.aio-max-nr=1048576", "unload nbd",
+                                           "set fs.aio-max-nr=65536"])
+        self.assertEqual((machine.loaded, machine.parameters["fs.aio-max-nr"]), (set(), "65536"))
+
+    def test_restore_kernel_puts_parameters_back_and_unloads_unused_modules(self):
+        machine = vm()
+        system = self.mac(machine)
+        self.run_main(system, "apply-kernel", "--confirm-engine-kernel", *(WANT + KERNEL))
+        status, report = self.report(system, "restore-kernel", *KERNEL)
+        self.assertEqual(status, setup.EXIT_OK)
+        self.assertEqual(report["kernel"]["actions"], [{"item": "sysctl:fs.aio-max-nr", "result": "restored"},
+                                                       {"item": "module:nbd", "result": "unloaded"}])
+        self.assertEqual((machine.loaded, machine.parameters["fs.aio-max-nr"], machine.volume), (set(), "65536", None))
+        status, report = self.report(system, "restore-kernel", *KERNEL)
+        self.assertEqual(status, setup.EXIT_REFUSED)
+        self.assertIn("no recorded kernel change", report["refusal"])
+
+    def test_restore_kernel_reports_what_it_cannot_undo(self):
+        cases = {
+            "this kernel cannot unload modules": lambda machine: setattr(machine, "unload", False),
+            "in use": lambda machine: machine.busy.add("nbd"),
+            "changed after this tool set it": lambda machine: machine.parameters.update({"fs.aio-max-nr": "3000000"}),
+        }
+        for expected, change in cases.items():
+            with self.subTest(expected=expected):
+                machine = vm()
+                system = self.mac(machine)
+                self.run_main(system, "apply-kernel", "--confirm-engine-kernel", *(WANT + KERNEL))
+                change(machine)
+                before = dict(machine.parameters)
+                status, report = self.report(system, "restore-kernel", *KERNEL)
+                self.assertEqual(status, setup.EXIT_UNMET)
+                kept = [action for action in report["kernel"]["actions"] if action["result"].startswith("kept")]
+                self.assertEqual(len(kept), 1)
+                self.assertIn(expected, kept[0]["result"])
+                if "changed" in expected:
+                    self.assertEqual(machine.parameters, before)
+                else:
+                    self.assertIn("nbd", machine.loaded)
+                self.assertIsNone(machine.volume)
+
+    def test_a_restarted_vm_voids_the_record(self):
+        machine = vm()
+        system = self.mac(machine)
+        self.run_main(system, "apply-kernel", "--confirm-engine-kernel", *(WANT + KERNEL))
+        machine.boot, machine.loaded, machine.parameters = "boot-2", set(), {"fs.aio-max-nr": "65536"}
+        machine.changes.clear()
+        _, report = self.report(system, *(WANT + KERNEL))
+        self.assertEqual((report["kernel"]["owned"], self.outcomes(report)["kernel:nbd"]), ([], "planned"))
+        status, report = self.report(system, "restore-kernel", *KERNEL)
+        self.assertEqual((status, machine.changes, machine.volume), (setup.EXIT_OK, [], None))
+        self.assertIn("restarted", report["kernel"]["actions"][0]["result"])
+
+    def test_owned_parameter_changed_later_blocks_another_apply(self):
+        machine = vm()
+        system = self.mac(machine)
+        self.run_main(system, "apply-kernel", "--confirm-engine-kernel", *(WANT + KERNEL))
+        machine.parameters["fs.aio-max-nr"] = "100"
+        machine.changes.clear()
+        status, report = self.report(system, "apply-kernel", "--confirm-engine-kernel", *(WANT + KERNEL))
+        self.assertEqual((status, machine.changes), (setup.EXIT_FAILED, []))
+        self.assertIn("changed after this tool set it", report["failure"])
+
+    def test_foreign_or_unreadable_state_volume_is_refused(self):
+        for volume, expected in (({"labels": {}, "state": "{}"}, "not this tool's"),
+                                 ({"labels": dict([kernel.STATE_LABEL.split("=")]), "state": "garbage"}, "unreadable")):
+            with self.subTest(expected=expected):
+                machine = vm()
+                machine.volume = volume
+                for command in ("apply-kernel", "restore-kernel"):
+                    status, report = self.report(self.mac(machine), command, "--confirm-engine-kernel",
+                                                 *(WANT + KERNEL))
+                    self.assertEqual(status, setup.EXIT_REFUSED)
+                    self.assertIn(expected, report["refusal"])
+                self.assertEqual((machine.changes, machine.volume), ([], volume))
+
+    def test_other_engines_are_not_modified_and_get_operator_commands(self):
+        native = engine(kernel="6.8.0-generic", system="Ubuntu 24.04.3 LTS")
+        systems = {
+            "remote": FakeSystem(endpoint=SECRET_ENDPOINT, vm=vm()),
+            "linux-engine": FakeSystem(platform="linux", info=native, endpoint="unix:///var/run/docker.sock", vm=vm()),
+            "unrecognized": FakeSystem(platform="darwin", info=native, endpoint="unix:///x/docker.sock", vm=vm()),
+        }
+        for backend, system in systems.items():
+            for command in ("apply-kernel", "restore-kernel"):
+                with self.subTest(backend=backend, command=command):
+                    status, report = self.report(system, command, "--confirm-engine-kernel", *(WANT + KERNEL))
+                    self.assertEqual((status, report["engine"]["backend"]), (setup.EXIT_REFUSED, backend))
+                    self.assertIn("not this script's to change", report["refusal"])
+                    self.assertEqual((system.vm.changes, system.vm.volume), ([], None))
+                    self.assertEqual(self.outcomes(report)["kernel:nbd"], "manual")
+                    self.assertTrue(any("sudo modprobe nbd; sudo sysctl -w fs.aio-max-nr=1048576" in step
+                                        for step in report["manual_steps"]))
+
+    def test_missing_helper_and_refused_entry_change_nothing(self):
+        machine = vm()
+        status, report = self.report(self.mac(machine), "apply-kernel", "--confirm-engine-kernel",
+                                     *(WANT + ("--disk-free-gib", "0")))
+        self.assertEqual(status, setup.EXIT_REFUSED)
+        self.assertIn("--kernel-helper-image", report["refusal"])
+        machine.refuse_entry = True
+        status, report = self.report(self.mac(machine), "apply-kernel", "--confirm-engine-kernel", *(WANT + KERNEL))
+        self.assertEqual(status, setup.EXIT_REFUSED)
+        self.assertIn("did not enter the engine VM", report["refusal"])
+        self.assertEqual(self.outcomes(report)["kernel:nbd"], "unverifiable")
+        self.assertEqual(machine.changes, [])
+
+    def test_kernel_apply_itself_skips_what_is_not_loadable_or_already_there(self):
+        machine = vm(files={"nbd", "dm_crypt"}, loaded={"dm_crypt"}, parameters={"fs.aio-max-nr": "65536"})
+        helper = kernel.Helper(self.mac(machine), ["docker"], "busybox")
+        actions, error = kernel.apply(helper, ["fuse", "krbd", "dm-delay", "dm-crypt", "nbd"], {"fs.aio-max-nr": 1024})
+        self.assertEqual((actions, error), ([{"item": "kernel:nbd", "result": "loaded"}], None))
+        self.assertEqual(machine.changes, ["load nbd"])
+
+    def test_module_present_but_not_loadable_is_unavailable(self):
+        _, report = self.report(self.mac(vm(modprobe=False)), "--kernel-feature", "nbd", *KERNEL)
+        self.assertEqual(self.outcomes(report)["kernel:nbd"], "unavailable")
+
+    def test_invalid_kernel_parameters_are_rejected_before_any_command(self):
+        system = self.mac(vm())
+        for value in ("fs.aio-max-nr", "fs.aio-max-nr=lots", "aio=1", "fs/../x=1", "fs.aio max=1"):
+            with self.subTest(value=value), redirect_stderr(StringIO()):
+                self.assertEqual(self.run_main(system, "--kernel-parameter", value)[0], setup.EXIT_REFUSED)
+        self.assertEqual(system.commands, [])
+
+    def test_wsl_modules_persist_through_loadkernelmodules_only_on_request(self):
+        machine = vm(files={"nbd", "rbd", "libceph"})
+        system = self.windows(vm=machine)
+        self.config.write_bytes(b"[wsl2]\r\nloadKernelModules=tun\r\n")
+        want = ("--kernel-feature", "nbd", "--kernel-feature", "krbd", "--kernel-feature", "fuse") + KERNEL
+        _, report = self.report(system, *want)
+        self.assertEqual(report["planned_changes"], [])
+        _, report = self.report(system, "--persist-kernel-modules", *want)
+        self.assertEqual(report["planned_changes"], ["loadKernelModules=tun,rbd,nbd"])
+        status, report = self.report(system, "apply", "--confirm-wsl-global", "--persist-kernel-modules", *want)
+        self.assertEqual((status, report["writes"]), (setup.EXIT_OK, ["loadkernelmodules"]))
+        self.assertEqual(self.config.read_bytes(), b"[wsl2]\r\nloadKernelModules=tun,rbd,nbd\r\n")
+        self.assertEqual(machine.changes, [])
+        status, report = self.report(system, "apply", "--confirm-wsl-global", "--persist-kernel-modules", *want)
+        self.assertEqual(report["writes"], [])
+        self.assertEqual(self.run_main(system, "restore")[0], setup.EXIT_OK)
+        self.assertEqual(self.config.read_bytes(), b"[wsl2]\r\nloadKernelModules=tun\r\n")
+
+    def test_kernel_outputs_stay_free_of_private_values(self):
+        system = self.mac(vm(), context="work-laptop")
+        for command in ("plan", "apply-kernel", "restore-kernel"):
+            for fmt in ("text", "json"):
+                _, text = self.run_main(system, command, "--confirm-engine-kernel", "--format", fmt, *(WANT + KERNEL))
+                for private in (SECRET_SOCKET, "someone", "work-laptop", "boot-1", str(self.profile)):
+                    self.assertNotIn(private, text)
 
 
 if __name__ == "__main__":

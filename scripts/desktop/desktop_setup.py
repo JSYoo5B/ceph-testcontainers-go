@@ -3,10 +3,12 @@
 
 The default command, plan, only reads: it resolves the engine that
 Testcontainers would use, compares it with a workload profile and prints what
-differs. apply writes the one thing that has a supported write route, the
-[wsl2] resource keys of the Windows user's .wslconfig, and nothing else; every
-other backend gets exact manual steps. Nothing here restarts Docker Desktop or
-shuts WSL down. See docs/guides/desktop-setup.md.
+differs. apply writes the one configuration that has a supported write route,
+the [wsl2] keys of the Windows user's .wslconfig; every other backend gets
+exact manual steps. apply-kernel loads kernel modules that the engine VM has
+and raises kernel parameters in it, through a helper container, until that VM
+restarts; restore and restore-kernel undo what the script did. Nothing here
+restarts Docker Desktop or shuts WSL down. See docs/guides/desktop-setup.md.
 """
 
 import argparse
@@ -18,6 +20,7 @@ import subprocess
 import sys
 import zlib
 
+import kernel
 import wslconfig
 
 SCHEMA_VERSION = 1
@@ -26,17 +29,11 @@ GIB = 1 << 30
 # An engine reports a little less memory than its VM is given: the kernel
 # keeps some for itself. A value within this share of the request counts.
 MEMORY_TOLERANCE = 0.9
-KERNEL_FEATURES = {
-    "dm-delay": "CONFIG_DM_DELAY",
-    "dm-flakey": "CONFIG_DM_FLAKEY",
-    "dm-crypt": "CONFIG_DM_CRYPT",
-    "fuse": "CONFIG_FUSE_FS",
-    "nbd": "CONFIG_BLK_DEV_NBD",
-    "netem": "CONFIG_NET_SCH_NETEM",
-}
 KNOWN_CONTEXTS = ("default", "desktop-linux", "desktop-windows")
 WSL_SCOPE = ("%UserProfile%\\.wslconfig is global: its [wsl2] values apply to every WSL 2 distribution of "
              "this Windows user, not only to Docker Desktop")
+KERNEL_SCOPE = ("kernel modules and parameters are changed in the engine VM itself: they affect every container "
+                "on this engine (on the WSL 2 backend, every WSL 2 distribution) and last until that VM restarts")
 WSL_RESTART = ("Quit Docker Desktop, run `wsl --shutdown` (it stops every running WSL 2 distribution), "
                "start Docker Desktop again, then run this script with `verify`")
 # Settings Management files of Docker Desktop. Their presence means an
@@ -105,10 +102,15 @@ def check_profile(name, profile):
             raise ValueError("profile %s: %s must be a number of 0 or more" % (name, field))
     if profile["cpus"] < 1 or profile["cpus"] != int(profile["cpus"]) or profile["memory_gib"] <= 0:
         raise ValueError("profile %s: cpus must be a whole number of 1 or more and memory_gib positive" % name)
-    unknown = sorted(set(profile.get("kernel_features", ())) - set(KERNEL_FEATURES))
+    unknown = sorted(set(profile.get("kernel_features", ())) - set(kernel.FEATURES))
     if unknown:
         raise ValueError("profile %s: unknown kernel feature %s (known: %s)"
-                         % (name, ", ".join(unknown), ", ".join(sorted(KERNEL_FEATURES))))
+                         % (name, ", ".join(unknown), ", ".join(sorted(kernel.FEATURES))))
+    for parameter, value in profile.get("kernel_parameters", {}).items():
+        if not kernel.PARAMETER_NAME.match(parameter) or isinstance(value, bool) or not isinstance(value, int) \
+                or value < 0:
+            raise ValueError("profile %s: kernel parameter %s must be a dotted sysctl name with a whole number"
+                             % (name, parameter))
 
 
 def parse_properties(text):
@@ -292,8 +294,43 @@ def gib(value):
     return "unknown" if value is None else "%.2f GiB" % (value / GIB)
 
 
-def build_report(system, mode, profile_name, profile, probe_image=None):
+def kernel_settings(profile, backend, probe, facts, state):
+    """One report entry per kernel feature and kernel parameter of the profile."""
+    preparable = backend in kernel.PREPARABLE_BACKENDS
+    settings = []
+    for feature in profile.get("kernel_features", ()):
+        option, module = kernel.FEATURES[feature]
+        if facts is not None:
+            outcome, detail, persists = kernel.feature_status(feature, facts, (state or {}).get("modules", ()))
+        else:
+            config = (probe or {}).get("kernel_config")
+            value = None if config is None else config.get(option, "not set")
+            outcome, detail, persists = {
+                "y": ("available", "built in", True),
+                "not set": ("unavailable", "not built into the engine kernel", None),
+                "m": ("unverifiable", "built as a module; presence and load state not observed", None),
+            }.get(value, ("unverifiable", "unknown", None))
+        loadable = facts is not None and module in facts["files"] and facts["config"].get(option) != "y"
+        if outcome == "planned" and not preparable:
+            outcome = "manual"
+        settings.append({"name": "kernel:" + feature, "kind": "kernel-feature", "requested": "present",
+                         "effective": detail, "outcome": outcome, "persists": persists, "feature": feature,
+                         "module": module, "loadable": loadable})
+    for name, requested in sorted(profile.get("kernel_parameters", {}).items()):
+        outcome, detail, persists, current = ("unverifiable", "not observed", None, None)
+        if facts is not None:
+            outcome, detail, persists, current = kernel.parameter_status(name, requested, facts, state)
+        if outcome == "planned" and not preparable:
+            outcome = "manual"
+        settings.append({"name": "sysctl:" + name, "kind": "kernel-parameter", "requested": str(requested),
+                         "effective": "%s (%s)" % ("unknown" if current is None else current, detail),
+                         "outcome": outcome, "persists": persists, "parameter": name, "value": requested})
+    return settings
+
+
+def build_report(system, arguments, profile):
     """Inspect the engine and the config, and decide the outcome of every setting."""
+    mode, profile_name, probe_image = arguments.command, arguments.profile, arguments.probe_image
     selection, client, engine = inspect_engine(system)
     path, reason = wslconfig_route(system, client, engine)
     document = state = None
@@ -308,6 +345,13 @@ def build_report(system, mode, profile_name, profile, probe_image=None):
             document = state = None
             path, problem, reason = None, refusal.code, ".wslconfig cannot be edited safely: %s" % refusal
     probe = probe_engine(system, selection["command"], probe_image) if probe_image and engine["reachable"] else None
+    helper = facts = kernel_state = kernel_problem = None
+    if arguments.kernel_helper_image and engine["reachable"]:
+        helper = kernel.Helper(system, selection["command"], arguments.kernel_helper_image)
+        facts = helper.inspect([kernel.FEATURES[name][1] for name in profile.get("kernel_features", ())],
+                               profile.get("kernel_parameters", {}))
+        if facts is not None:
+            kernel_state, kernel_problem = kernel.current_state(helper, facts)
 
     settings = []
     limits = (("cpus", "processors", profile["cpus"], engine["cpus"], 1.0, str),
@@ -338,13 +382,11 @@ def build_report(system, mode, profile_name, profile, probe_image=None):
         outcome = "unverifiable" if effective is None else "applied" if effective >= requested else "manual"
         settings.append({"name": "disk-free", "kind": "capacity", "requested": gib(requested),
                          "effective": gib(effective), "outcome": outcome})
-    for feature in profile.get("kernel_features", ()):
-        config = (probe or {}).get("kernel_config")
-        value = None if config is None else config.get(KERNEL_FEATURES[feature], "not set")
-        outcome = {"y": "available", "not set": "unavailable"}.get(value, "unverifiable")
-        settings.append({"name": "kernel:" + feature, "kind": "kernel-feature", "requested": "built in",
-                         "effective": {None: "unknown", "y": "built in", "m": "module, load state not observed"}
-                         .get(value, value), "outcome": outcome})
+    settings.extend(kernel_settings(profile, engine["backend"], probe, facts, kernel_state))
+    modules = [item["module"] for item in settings if item.get("loadable")]
+    persisted = {}
+    if path and arguments.persist_kernel_modules and modules:
+        persisted = wslconfig.plan(document, {"loadkernelmodules": modules})
 
     admin = ADMIN_SETTINGS.get("linux" if system.platform.startswith("linux") else system.platform)
     report = {
@@ -354,7 +396,8 @@ def build_report(system, mode, profile_name, profile, probe_image=None):
         "engine": engine,
         "profile": dict(name=profile_name, **{field: profile[field] for field in
                                               ("cpus", "memory_gib", "swap_gib", "disk_free_gib")},
-                        kernel_features=list(profile.get("kernel_features", ()))),
+                        kernel_features=list(profile.get("kernel_features", ())),
+                        kernel_parameters=dict(profile.get("kernel_parameters", {}))),
         "config": {
             "route": "wslconfig" if path else "none",
             "reason": reason,
@@ -364,6 +407,16 @@ def build_report(system, mode, profile_name, profile, probe_image=None):
         },
         "managed_settings": "present" if admin and system.exists(admin) else "not found",
         "probe": None if probe is None else {"image_ran": probe["image_ran"]},
+        "kernel": {
+            "helper": None if helper is None else {"entered_engine_vm": facts is not None},
+            "preparable": engine["backend"] in kernel.PREPARABLE_BACKENDS,
+            "scope": KERNEL_SCOPE,
+            "problem": kernel_problem,
+            "owned": sorted(["module:" + name for name in (kernel_state or {}).get("modules", ())]
+                            + ["sysctl:" + name for name in (kernel_state or {}).get("parameters", {})]),
+            "module_unload": None if facts is None else facts["config"].get("CONFIG_MODULE_UNLOAD") == "y",
+            "actions": [],
+        },
         "settings": settings,
         "writes": [],
     }
@@ -371,13 +424,15 @@ def build_report(system, mode, profile_name, profile, probe_image=None):
                          "action": WSL_RESTART if path or engine["backend"] == "desktop-windows-wsl2" else None}
     report["planned_changes"] = ["%s=%s" % (item["config_key"],
                                             wslconfig.format_value(item["config_key"], item["config_value"]))
-                                 for item in settings if item["outcome"] == "planned"]
-    report["manual_steps"] = manual_steps(report, probe_image)
+                                 for item in settings if item["outcome"] == "planned" and "config_key" in item]
+    report["planned_changes"] += ["%s=%s" % (wslconfig.SPELLING[key], text) for key, text in persisted.items()]
+    report["manual_steps"] = manual_steps(report, arguments)
     report["satisfied"] = all(item["outcome"] in ("applied", "available") for item in settings)
-    return report, path
+    return report, {"path": path, "helper": helper, "persisted": persisted}
 
 
-def manual_steps(report, probe_image):
+def manual_steps(report, arguments):
+    probe_image = arguments.probe_image
     """Exact operator steps for everything the script will not or cannot do."""
     backend = report["engine"]["backend"]
     settings = report["settings"]
@@ -414,14 +469,41 @@ def manual_steps(report, probe_image):
     if report["probe"] and not report["probe"]["image_ran"]:
         steps.append("The probe image did not run. It must already be on the selected engine (nothing is pulled) "
                      "and contain cat and df.")
-    if any(item["outcome"] == "unverifiable" for item in settings) and report["engine"]["reachable"] and not probe_image:
-        steps.append("Swap, free disk and kernel features are not in the engine metadata. Pass --probe-image with "
-                     "an image already on the engine that has cat and df to read them from a one-shot container.")
-    for item in settings:
-        if item["kind"] == "kernel-feature" and item["outcome"] == "unavailable":
-            steps.append("%s is not in the engine kernel. That is not a limit: no profile, VM size or restart adds "
-                         "it. Run the scenario on a Linux engine whose kernel has it, such as a managed Linux VM "
-                         "or a remote engine." % item["name"])
+    unverifiable = [item for item in settings if item["outcome"] == "unverifiable"]
+    if any(not item["kind"].startswith("kernel") for item in unverifiable) and report["engine"]["reachable"] \
+            and not probe_image:
+        steps.append("Swap and free disk are not in the engine metadata. Pass --probe-image with an image already "
+                     "on the engine that has cat and df to read them from a one-shot container.")
+    kernel_report = report["kernel"]
+    if kernel_report["helper"] and not kernel_report["helper"]["entered_engine_vm"]:
+        steps.append("The kernel helper image did not enter the engine VM. It must already be on the selected "
+                     "engine (nothing is pulled), contain sh, nsenter, zcat, grep, sed and cut, and the engine must "
+                     "allow a privileged container in its PID namespace.")
+    elif any(item["kind"].startswith("kernel") for item in unverifiable) and report["engine"]["reachable"] \
+            and not kernel_report["helper"]:
+        steps.append("Kernel modules and parameters are read from inside the engine VM. Pass --kernel-helper-image "
+                     "with an image already on the engine, such as busybox, to inspect them through a privileged "
+                     "one-shot container.")
+    planned = [item["name"] for item in settings if item["kind"].startswith("kernel") and item["outcome"] == "planned"]
+    if planned:
+        steps.append("Run `apply-kernel --kernel-helper-image <image> --confirm-engine-kernel` to prepare %s. %s."
+                     % (", ".join(planned), KERNEL_SCOPE[0].upper() + KERNEL_SCOPE[1:]))
+    commands = ["sudo modprobe " + item["module"] for item in settings
+                if item["kind"] == "kernel-feature" and item["outcome"] == "manual"]
+    commands += ["sudo sysctl -w %s=%s" % (item["parameter"], item["value"]) for item in settings
+                 if item["kind"] == "kernel-parameter" and item["outcome"] == "manual"]
+    if commands:
+        steps.append("This script does not change the kernel of %s. On the machine that runs the engine: %s."
+                     % (BACKENDS[backend], "; ".join(commands)))
+    if kernel_report["owned"]:
+        steps.append("Kernel changes of this script (%s) are gone when the engine VM restarts; run apply-kernel "
+                     "again after a restart, or restore-kernel to undo them now." % ", ".join(kernel_report["owned"]))
+    absent = [item["name"] for item in settings if item["kind"] == "kernel-feature" and item["outcome"] == "unavailable"]
+    if absent:
+        steps.append("%s cannot be provided on this engine. That is not a limit, and this script does not build or "
+                     "download modules: no profile, VM size or restart adds a feature the engine VM does not ship. "
+                     "Run the scenario on a Linux engine whose kernel has it, such as a managed Linux VM or a "
+                     "remote engine." % ", ".join(absent))
     return steps
 
 
@@ -440,9 +522,10 @@ def render_text(report):
                         engine["os_type"], engine["architecture"], engine["kernel"], engine["cpus"],
                         gib(engine["memory_bytes"])))
     lines.append("Backend: %s (%s)" % (engine["backend"], BACKENDS[engine["backend"]]))
-    lines.append("Profile: %s (cpus=%s memory=%sGiB swap=%sGiB disk-free=%sGiB kernel=%s)"
+    lines.append("Profile: %s (cpus=%s memory=%sGiB swap=%sGiB disk-free=%sGiB kernel=%s sysctl=%s)"
                  % (profile["name"], profile["cpus"], profile["memory_gib"], profile["swap_gib"],
-                    profile["disk_free_gib"], ",".join(profile["kernel_features"]) or "-"))
+                    profile["disk_free_gib"], ",".join(profile["kernel_features"]) or "-",
+                    ",".join("%s=%s" % pair for pair in sorted(profile["kernel_parameters"].items())) or "-"))
     config = report["config"]
     lines.append("Config writes: %s" % ("%UserProfile%\\.wslconfig [wsl2]" if config["route"] == "wslconfig"
                                         else "none (%s)" % config["reason"]))
@@ -453,12 +536,15 @@ def render_text(report):
     lines.append("Managed settings file: " + report["managed_settings"])
     lines.append("Settings:")
     for item in report["settings"]:
-        lines.append("  %-16s requested %-10s effective %-32s %s"
-                     % (item["name"], item["requested"], item["effective"], item["outcome"]))
+        lines.append("  %-22s requested %-10s effective %-32s %s%s"
+                     % (item["name"], item["requested"], item["effective"], item["outcome"],
+                        {True: " (persists)", False: " (until the engine VM restarts)"}.get(item.get("persists"), "")))
     if report["planned_changes"]:
         lines.append("Planned [wsl2] changes (written only by `apply --confirm-wsl-global`): "
                      + ", ".join(report["planned_changes"]))
     lines.append("Written: " + (", ".join(report["writes"]) or "nothing"))
+    lines.append("Kernel step: " + ("; ".join("%s %s" % (action["item"], action["result"])
+                                              for action in report["kernel"]["actions"]) or "nothing done"))
     lines.append("Restart pending: " + ("yes" if report["restart"]["pending"] else "no"))
     if report["manual_steps"]:
         lines.append("Manual steps:")
@@ -478,7 +564,8 @@ def parse_arguments(argv):
     parser = argparse.ArgumentParser(
         description="Plan, apply, verify or undo Docker Desktop resource settings for a Ceph fixture workload. "
                     "Without a command it plans and writes nothing.")
-    parser.add_argument("command", nargs="?", default="plan", choices=("plan", "apply", "verify", "restore"))
+    parser.add_argument("command", nargs="?", default="plan",
+                        choices=("plan", "apply", "verify", "restore", "apply-kernel", "restore-kernel"))
     parser.add_argument("--profile", default="single-cluster", help="workload profile (default: %(default)s)")
     parser.add_argument("--profile-file", default=os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                                                "profiles.json"),
@@ -487,8 +574,18 @@ def parse_arguments(argv):
     parser.add_argument("--memory-gib", type=float, help="override the profile's memory")
     parser.add_argument("--swap-gib", type=float, help="override the profile's swap; 0 requests none")
     parser.add_argument("--disk-free-gib", type=float, help="override the profile's free disk; 0 requests none")
-    parser.add_argument("--kernel-feature", action="append", choices=sorted(KERNEL_FEATURES),
+    parser.add_argument("--kernel-feature", action="append", choices=sorted(kernel.FEATURES),
                         help="also require this engine kernel feature (repeatable)")
+    parser.add_argument("--kernel-parameter", action="append", metavar="NAME=VALUE",
+                        help="also require this kernel parameter to be at least VALUE, a whole number (repeatable)")
+    parser.add_argument("--kernel-helper-image",
+                        help="image already on the engine, such as busybox, for the privileged one-shot containers "
+                             "that read, and with apply-kernel change, the engine VM's kernel")
+    parser.add_argument("--confirm-engine-kernel", action="store_true",
+                        help="apply-kernel only: confirm that the engine VM's kernel is changed for every container")
+    parser.add_argument("--persist-kernel-modules", action="store_true",
+                        help="apply only, WSL 2 backend: also list the loadable modules of the profile in the "
+                             "loadKernelModules key of .wslconfig")
     parser.add_argument("--probe-image", help="image already on the engine, with cat and df, to read swap, free "
                                               "disk and the kernel configuration from one-shot containers")
     parser.add_argument("--confirm-wsl-global", action="store_true",
@@ -506,6 +603,12 @@ def resolve_profile(arguments):
         if getattr(arguments, field) is not None:
             profile[field] = getattr(arguments, field)
     profile["kernel_features"] = sorted(set(profile.get("kernel_features", ())) | set(arguments.kernel_feature or ()))
+    profile["kernel_parameters"] = dict(profile.get("kernel_parameters", {}))
+    for pair in arguments.kernel_parameter or ():
+        name, _, value = pair.partition("=")
+        if not value.isdigit():
+            raise ValueError("--kernel-parameter %s: expected NAME=VALUE with a whole number" % pair)
+        profile["kernel_parameters"][name] = int(value)
     check_profile(arguments.profile, profile)
     return profile
 
@@ -519,26 +622,95 @@ def main(argv=None, system=None, out=None):
     except (OSError, ValueError, KeyError) as error:
         print("desktop_setup: %s" % error, file=sys.stderr)
         return EXIT_REFUSED
-    report, path = build_report(system, arguments.command, arguments.profile, profile, arguments.probe_image)
+    report, route = build_report(system, arguments, profile)
     status = EXIT_OK
     if arguments.command == "verify":
         status = EXIT_OK if report["satisfied"] else EXIT_UNMET
     elif arguments.command == "apply":
-        report, status = run_apply(system, arguments, profile, report, path)
+        report, status = run_apply(system, arguments, profile, report, route)
     elif arguments.command == "restore":
         report, status = run_restore(system, arguments, profile, report)
+    elif arguments.command == "apply-kernel":
+        report, status = run_apply_kernel(system, arguments, profile, report, route["helper"])
+    elif arguments.command == "restore-kernel":
+        report, status = run_restore_kernel(system, arguments, profile, report, route["helper"])
     emit(report, arguments.format, out)
     return status
 
 
 def rebuild(system, arguments, profile, extra):
-    report, _ = build_report(system, arguments.command, arguments.profile, profile, arguments.probe_image)
+    report, _ = build_report(system, arguments, profile)
     report.update(extra)
     return report
 
 
-def run_apply(system, arguments, profile, report, path):
-    planned = {item["config_key"]: item["config_value"] for item in report["settings"] if item["outcome"] == "planned"}
+def kernel_refusal(report, helper, action):
+    """Why the kernel step may not run on the selected engine, or None."""
+    backend = report["engine"]["backend"]
+    if backend not in kernel.PREPARABLE_BACKENDS:
+        return ("no kernel change was %s: the kernel of %s is not this script's to change; it is prepared on the "
+                "machine that runs the engine" % (action, BACKENDS[backend]))
+    if helper is None:
+        return "no kernel change was %s: name an image already on the engine with --kernel-helper-image" % action
+    if not report["kernel"]["helper"]["entered_engine_vm"]:
+        return "no kernel change was %s: the helper image did not enter the engine VM" % action
+    if report["kernel"]["problem"]:
+        return "no kernel change was %s: %s" % (action, report["kernel"]["problem"])
+    return None
+
+
+def run_apply_kernel(system, arguments, profile, report, helper):
+    planned = [item for item in report["settings"] if item["kind"].startswith("kernel") and item["outcome"] == "planned"]
+    refusal = kernel_refusal(report, helper, "made")
+    if refusal:
+        open_items = [item for item in report["settings"] if item["kind"].startswith("kernel")
+                      and item["outcome"] not in ("applied", "available")]
+        if not open_items:
+            return report, EXIT_OK
+        report["refusal"] = refusal
+        return report, EXIT_REFUSED
+    if not planned:
+        return report, EXIT_OK
+    if not arguments.confirm_engine_kernel:
+        report["refusal"] = ("no kernel change was made. %s. Run apply-kernel again with --confirm-engine-kernel to "
+                             "accept that scope" % (KERNEL_SCOPE[0].upper() + KERNEL_SCOPE[1:]))
+        return report, EXIT_REFUSED
+    actions, error = kernel.apply(helper, [item["feature"] for item in planned if "feature" in item],
+                                  {item["parameter"]: item["value"] for item in planned if "parameter" in item})
+    report = rebuild(system, arguments, profile, {})
+    report["kernel"]["actions"] = actions
+    failed = {action["item"] for action in actions if action["result"] == "failed"}
+    for item in report["settings"]:
+        if item["name"] in failed:
+            item["outcome"] = "failed"
+    if error:
+        report["failure"] = error
+    return report, EXIT_FAILED if error or failed else EXIT_OK
+
+
+def run_restore_kernel(system, arguments, profile, report, helper):
+    refusal = kernel_refusal(report, helper, "undone")
+    if refusal:
+        report["refusal"] = refusal
+        return report, EXIT_REFUSED
+    actions, error = kernel.restore(helper)
+    if error and not actions:
+        report["refusal"] = "no kernel change was undone: " + error
+        return report, EXIT_REFUSED
+    report = rebuild(system, arguments, profile, {})
+    report["kernel"]["actions"] = actions
+    if error:
+        report["failure"] = error
+        return report, EXIT_FAILED
+    return report, EXIT_UNMET if any(action["result"].startswith("kept") for action in actions) else EXIT_OK
+
+
+def run_apply(system, arguments, profile, report, route):
+    path = route["path"]
+    planned = {item["config_key"]: item["config_value"] for item in report["settings"]
+               if item["outcome"] == "planned" and "config_key" in item}
+    if route["persisted"]:
+        planned["loadkernelmodules"] = [item["module"] for item in report["settings"] if item.get("loadable")]
     if not path:
         open_items = [item for item in report["settings"] if item["kind"] == "limit" and item["outcome"] != "applied"]
         if not open_items:
