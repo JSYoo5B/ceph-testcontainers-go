@@ -20,6 +20,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 import registry_pull
@@ -1329,19 +1330,32 @@ def compile_workers():
     return max(1, min(4, (os.cpu_count() or 2) // 2))
 
 
-def compile_each(jobs, root=ROOT, progress=sys.stderr):
+def compile_each(jobs, root=ROOT, progress=None):
     """Compile every (package, tags) of jobs, a few at once, and yield the
     inventories one by one in the order of jobs, each as soon as it and all
     before it are compiled. A failed compilation is raised at its position.
-    Each finished compilation writes one progress line with its position,
-    package, tags and seconds, so a run that is cut off shows how far it came
-    and whether every compilation was slow. A caller that stops early must
-    close the generator: that drops the compilations not yet started."""
+
+    Every job is queued at once and at most compile_workers() of them run at
+    a time, so jobs after the one being yielded may already be running. When
+    the generator ends, is closed or raises, the jobs not yet started are
+    cancelled and the running ones are waited for: no compilation of this
+    call is running once control is back with the caller. A caller that
+    stops early must close the generator to get that.
+
+    Each finished compilation writes one whole progress line (position,
+    package, tags, seconds) to progress, standard error by default, so a run
+    that is cut off shows how far it came and whether every compilation was
+    slow. Lines of concurrent compilations never mix."""
+    writing = threading.Lock()
+
     def one(index, package, tags):
         started = time.monotonic()
         tests = compile_inventory(package, tags, root)
-        print("compiled %d/%d %s tags=%s %.1fs" % (index + 1, len(jobs), package, tags, time.monotonic() - started),
-              file=progress, flush=True)
+        line = "compiled %d/%d %s tags=%s %.1fs\n" % (index + 1, len(jobs), package, tags, time.monotonic() - started)
+        with writing:
+            stream = sys.stderr if progress is None else progress
+            stream.write(line)
+            stream.flush()
         return tests
     pool = ThreadPoolExecutor(max_workers=compile_workers())
     try:
@@ -1349,7 +1363,7 @@ def compile_each(jobs, root=ROOT, progress=sys.stderr):
         for future in futures:
             yield future.result()
     finally:
-        pool.shutdown(wait=False, cancel_futures=True)
+        pool.shutdown(wait=True, cancel_futures=True)
 
 
 def verify(catalog, plan, root=ROOT, optional=None):
@@ -1357,8 +1371,9 @@ def verify(catalog, plan, root=ROOT, optional=None):
     is given, and require each compiled test inventory to match its AST
     source. An optional batch compiles only with its own batch tag, so no
     other check builds it. The checks are judged in their order, so the
-    first one that does not compile or differs is the one reported, and
-    nothing after it is started."""
+    first one that does not compile or differs is the one reported. The
+    builds that had not started by then are dropped, and those already
+    running have ended when this returns or raises."""
     packages = sorted({profile["package"] for profile in plan["include"]})
     bugs = tuple(plan.get("bug_compatibility", ()))
     all_tags = ",".join(("all", *bugs))
