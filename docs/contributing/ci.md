@@ -238,7 +238,9 @@ Nothing in the workflows names a test.
    It compiles up to four builds at once (half the cores) and writes one
    line per finished build to standard error, `compiled <n>/<total> <package>
    tags=<tags> <seconds>s`, so a job that its time limit cuts off shows how
-   far it came and whether every build was slow.
+   far it came and whether every build was slow. The builds are judged in
+   their order: the first one that does not compile or differs is reported,
+   and the builds that had not started are dropped.
 
 Each profile has a stable ID, `<category>-<batch>-<8 hex digits>`, such as
 `short-default-a488da21`, used in artifact names, summaries and annotations.

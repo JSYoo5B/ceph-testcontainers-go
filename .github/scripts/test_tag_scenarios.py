@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 import subprocess
 import tempfile
+import threading
 import unittest
 from unittest.mock import call, patch
 
@@ -642,32 +643,69 @@ class TagPlannerTests(unittest.TestCase):
             engine.verify([file], plan)
 
     def test_compilations_keep_job_order_and_report_each_one(self):
-        # The first job finishes last; its inventory must still come first.
-        release = engine.time.monotonic() + 0.2
+        # The first job is held until both others have reported, so it
+        # finishes last; its inventory must still come first.
+        others_reported = threading.Event()
+
+        class Progress(io.StringIO):
+            def write(self, text):
+                written = super().write(text)
+                if self.getvalue().count("compiled ") == 2:
+                    others_reported.set()
+                return written
 
         def compiled(package, tags, root):
-            if tags == "first":
-                while engine.time.monotonic() < release:
-                    engine.time.sleep(0.01)
+            if tags == "first" and not others_reported.wait(30):
+                raise AssertionError("the other compilations never reported")
             return ["Test" + tags.title()]
         jobs = [("./a", "first"), ("./b", "second"), ("./c", "third")]
-        progress = io.StringIO()
+        progress = Progress()
         with patch.object(engine, "compile_inventory", side_effect=compiled), patch.object(engine, "compile_workers", return_value=3):
-            inventories = engine.compile_all(jobs, engine.ROOT, progress)
+            inventories = list(engine.compile_each(jobs, engine.ROOT, progress))
         self.assertEqual(inventories, [["TestFirst"], ["TestSecond"], ["TestThird"]])
         lines = progress.getvalue().splitlines()
         self.assertEqual(len(lines), 3)
         self.assertRegex(lines[-1], r"^compiled 1/3 \./a tags=first \d+\.\ds$")
         self.assertEqual(sorted(line.split()[1] for line in lines), ["1/3", "2/3", "3/3"])
 
-    def test_a_failed_compilation_fails_the_whole_set(self):
+    def test_a_failed_compilation_is_raised_at_its_position(self):
         def compiled(package, tags, root):
             if tags == "second":
                 raise ValueError("tag profile did not compile: second")
-            return ["TestOne"]
+            return ["Test" + tags.title()]
+        seen = []
         with patch.object(engine, "compile_inventory", side_effect=compiled), patch.object(engine, "compile_workers", return_value=2), \
                 self.assertRaisesRegex(ValueError, "did not compile: second"):
-            engine.compile_all([("./a", "first"), ("./b", "second"), ("./c", "third")], engine.ROOT, io.StringIO())
+            for inventory in engine.compile_each([("./a", "first"), ("./b", "second"), ("./c", "third")], engine.ROOT, io.StringIO()):
+                seen.append(inventory)
+        self.assertEqual(seen, [["TestFirst"]])
+
+    def test_the_first_check_in_order_is_reported_and_stops_the_rest(self):
+        # An inventory that differs comes before a build that does not
+        # compile: the difference is reported, as when the builds ran one by
+        # one, and the builds that had not started are never started.
+        file = fixture()
+        plan = engine.discover([file])
+        release = threading.Event()
+        calls = []
+
+        def compiled(package, tags, root):
+            calls.append(tags)
+            if tags == "all":
+                return ["TestDifferent"]
+            if not release.wait(30):
+                raise AssertionError("the held compilation was never released")
+            raise ValueError("later compile failed")
+        try:
+            with patch.object(engine, "compile_inventory", side_effect=compiled), patch.object(engine, "compile_workers", return_value=1), \
+                    self.assertRaisesRegex(ValueError, "all-tag compiled inventory differs"):
+                engine.verify([file], plan)
+            # One worker: the second build may have started before the first
+            # was judged; the third never does.
+            self.assertLessEqual(len(calls), 2)
+            self.assertEqual(calls[0], "all")
+        finally:
+            release.set()
 
     def test_compile_workers_stay_between_one_and_four(self):
         for cores, workers in ((None, 1), (1, 1), (2, 1), (4, 2), (8, 4), (64, 4)):

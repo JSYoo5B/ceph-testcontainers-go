@@ -9,6 +9,7 @@ compiled inventory, records its partial scope and may lower the time bound.
 import argparse
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
+import contextlib
 import hashlib
 import importlib
 import json
@@ -1328,27 +1329,36 @@ def compile_workers():
     return max(1, min(4, (os.cpu_count() or 2) // 2))
 
 
-def compile_all(jobs, root=ROOT, progress=sys.stderr):
-    """Compile every (package, tags) of jobs and return the inventories in
-    the order of jobs. Each finished compilation writes one progress line
-    with its position, package, tags and seconds, so a run that is cut off
-    shows how far it came and whether every compilation was slow."""
-    def one(indexed):
-        index, (package, tags) = indexed
+def compile_each(jobs, root=ROOT, progress=sys.stderr):
+    """Compile every (package, tags) of jobs, a few at once, and yield the
+    inventories one by one in the order of jobs, each as soon as it and all
+    before it are compiled. A failed compilation is raised at its position.
+    Each finished compilation writes one progress line with its position,
+    package, tags and seconds, so a run that is cut off shows how far it came
+    and whether every compilation was slow. A caller that stops early must
+    close the generator: that drops the compilations not yet started."""
+    def one(index, package, tags):
         started = time.monotonic()
         tests = compile_inventory(package, tags, root)
         print("compiled %d/%d %s tags=%s %.1fs" % (index + 1, len(jobs), package, tags, time.monotonic() - started),
               file=progress, flush=True)
         return tests
-    with ThreadPoolExecutor(max_workers=compile_workers()) as pool:
-        return list(pool.map(one, enumerate(jobs)))
+    pool = ThreadPoolExecutor(max_workers=compile_workers())
+    try:
+        futures = [pool.submit(one, index, package, tags) for index, (package, tags) in enumerate(jobs)]
+        for future in futures:
+            yield future.result()
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 def verify(catalog, plan, root=ROOT, optional=None):
     """Compile every required profile, and every optional one when optional
     is given, and require each compiled test inventory to match its AST
     source. An optional batch compiles only with its own batch tag, so no
-    other check builds it."""
+    other check builds it. The checks are judged in their order, so the
+    first one that does not compile or differs is the one reported, and
+    nothing after it is started."""
     packages = sorted({profile["package"] for profile in plan["include"]})
     bugs = tuple(plan.get("bug_compatibility", ()))
     all_tags = ",".join(("all", *bugs))
@@ -1365,10 +1375,11 @@ def verify(catalog, plan, root=ROOT, optional=None):
         checks.append((profile["package"], profile["tags"],
                        "compiled profile differs from its AST source: " + profile["profile"]))
     observations = []
-    for (package, tags, difference), actual in zip(checks, compile_all([check[:2] for check in checks], root)):
-        if actual != selected_tests(catalog, package, tags):
-            raise ValueError(difference)
-        observations.append({"package": package, "tags": tags, "tests": actual})
+    with contextlib.closing(compile_each([check[:2] for check in checks], root)) as inventories:
+        for (package, tags, difference), actual in zip(checks, inventories):
+            if actual != selected_tests(catalog, package, tags):
+                raise ValueError(difference)
+            observations.append({"package": package, "tags": tags, "tests": actual})
     return {"schema": SCHEMA, "passed": True, "profiles": observations}
 
 
