@@ -69,7 +69,7 @@ func ValidateAdminArgs(args []string) error {
 // including the *ceph.NativeFailure exit code and errno, which its text also
 // names. When the command reported a fatal signal, the text also names the
 // signal, the thread and the first backtrace frames, read from the
-// already redacted and bounded Reason. Other errors are returned unchanged.
+// already redacted and bounded Reason, and the failure has no errno. Other errors are returned unchanged.
 func RedactAdminFailure(err error) error {
 	var failure *ceph.NativeFailure
 	if !errors.As(err, &failure) {
@@ -100,6 +100,12 @@ func adminRunFailure(report supervised.Report) error {
 }
 
 func redactAdminFailure(err error, failure *ceph.NativeFailure, details ...string) error {
+	// A command that died of a signal reported no errno: an "(N) text" in
+	// its output is of an event in its dump, such as the reply to a read of
+	// an object that does not exist, not the reason it ended.
+	if len(details) > 0 && details[0] != "" {
+		failure.Errno = ""
+	}
 	exit := ceph.NativeFailure{Program: "radosgw-admin", ExitCode: failure.ExitCode, Errno: failure.Errno}
 	text := exit.Error()
 	for _, detail := range details {

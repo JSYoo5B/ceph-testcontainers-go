@@ -3,11 +3,13 @@ package gwbase
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 )
 
@@ -210,5 +212,29 @@ func TestAdminRunFailureEndsWithTheObjecterEvents(t *testing.T) {
 	_, dump, _ := strings.Cut(eventsStderr, recentEventsBegin)
 	if err := adminRunFailure(supervised.Report{ExitCode: 22, Stderr: []byte(recentEventsBegin + dump)}); err == nil || strings.Contains(err.Error(), "objecter") {
 		t.Fatalf("a failed radosgw-admin without a signal report: %v", err)
+	}
+}
+
+// A crash is no errno: the dump of a crashed command holds the replies to
+// its reads of objects that do not exist, whose "(2) No such file or
+// directory" would otherwise classify the crash as a missing object.
+func TestAdminCrashHasNoErrno(t *testing.T) {
+	const reply = "   -1> 2026-11-21T23:51:00.294+0000 ffff9a39ac40 10 client.71152.objecter ms_dispatch2 0xaaaaf6aa39b0 osd_op_reply(1 default.realm [read 0~0] v0'0 uv0 ondisk = -2 ((2) No such file or directory))\n"
+	crashed := "*** Caught signal (Segmentation fault) **\n in thread ffff99b8ac40 thread_name:msgr-worker-1\n 1: main()\n" + recentEventsBegin + "\n" + reply
+	for name, err := range map[string]error{
+		"the whole standard error": adminRunFailure(supervised.Report{ExitCode: 139, Stderr: []byte(crashed)}),
+		"the bounded reason":       RedactAdminFailure(servicehook.NativeFailure("radosgw-admin", 139, nil, []byte(crashed))),
+	} {
+		var failure *ceph.NativeFailure
+		if !errors.As(err, &failure) || failure.ExitCode != 139 || failure.Errno != "" || errors.Is(err, fs.ErrNotExist) ||
+			!strings.HasPrefix(err.Error(), "radosgw-admin exited 139; radosgw-admin reported fatal signal Segmentation fault in thread msgr-worker-1") {
+			t.Errorf("%s: a crashed radosgw-admin: %v", name, err)
+		}
+	}
+	// The same line as the last word of a command that exited by itself
+	// stays its errno.
+	err := adminRunFailure(supervised.Report{ExitCode: 2, Stderr: []byte(reply)})
+	if !errors.Is(err, fs.ErrNotExist) || !strings.HasPrefix(err.Error(), "radosgw-admin exited 2 (ENOENT)") {
+		t.Fatalf("a failed radosgw-admin: %v", err)
 	}
 }
