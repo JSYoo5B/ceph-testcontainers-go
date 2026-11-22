@@ -668,6 +668,41 @@ roles). 99 roles list correctly. The fixture never lists roles.
   [#500](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/500); no
   case manual.
 
+### `radosgw-admin` reads of a bucket's index shards
+
+A `radosgw-admin` command that reads the header of every index shard of a
+bucket, such as `bucket stats`, occasionally never returns on a healthy
+cluster that nothing else is changing. Its main thread waits in
+`RGWSI_BucketIndex_RADOS::cls_bucket_head` after it submitted the reads of
+only the first shards (between 10 and 111 of 499 in the six occurrences that
+were recorded, below the default `rgw_bucket_index_max_aio` of 128), and
+every read it submitted has its reply. The next command on the same bucket
+answers. Six workers that ran `bucket stats` in a loop on one bucket with 499
+shards saw it once in about 94,000 commands on Tentacle and once in about
+418,000 on Umbrella on amd64, and once in about 10,000 on either release on
+arm64. A bucket with the default 11 shards was not measured.
+
+On arm64 the same loop also ended a few commands with SIGSEGV or SIGBUS
+(three in 21,860 on Umbrella and five in 21,562 on Tentacle), in the handler
+of a shard's reply (`rgwrados::shard_io`) where a backtrace was printed.
+888,000 commands on amd64 ended none this way.
+
+Both releases read the shards with an implementation that Squid does not
+contain. The module does not repeat the command.
+
+- Affected: Tentacle 20.2.4 and Umbrella 21.2.0.
+- Not affected: Squid 19.2.5 in 23,014 commands on arm64; it was not run on
+  amd64.
+- Guidance: give each `Gateway.Admin` call a context with its own deadline,
+  so that an occurrence costs that deadline and not the test's. The error
+  then names `cls_bucket_head` as the place the command waited and reports
+  `0 without a reply` (see
+  [RGW administration](native-commands.md#rgw-administration)); a failure
+  with that text is this issue and not the state your test built.
+- Evidence: native research in
+  [#909](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/909); no
+  case manual.
+
 ### SSE-S3 key left in Vault
 
 Deleting a bucket with SSE-S3 default encryption marks its Vault Transit key
