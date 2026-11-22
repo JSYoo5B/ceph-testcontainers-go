@@ -680,7 +680,10 @@ every read it submitted has its reply. The next command on the same bucket
 answers. Six workers that ran `bucket stats` in a loop on one bucket with 499
 shards saw it once in about 94,000 commands on Tentacle and once in about
 418,000 on Umbrella on amd64, and once in about 10,000 on either release on
-arm64. A bucket with the default 11 shards was not measured.
+arm64. With the default 11 shards it was seen on Umbrella on arm64 only, in
+runs that also recreated the bucket and its index pool and ran up to 12
+commands at once: once, with two fatal signals, in about 24,000 commands. The
+default shard count was not run on amd64.
 
 On arm64 the same loop also ended a few commands with SIGSEGV or SIGBUS
 (three in 21,860 on Umbrella and five in 21,562 on Tentacle), in the handler
@@ -694,11 +697,17 @@ contain. The module does not repeat the command.
 - Not affected: Squid 19.2.5 in 23,014 commands on arm64; it was not run on
   amd64.
 - Guidance: give each `Gateway.Admin` call a context with its own deadline,
-  so that an occurrence costs that deadline and not the test's. The error
-  then names `cls_bucket_head` as the place the command waited and reports
-  `0 without a reply` (see
-  [RGW administration](native-commands.md#rgw-administration)); a failure
-  with that text is this issue and not the state your test built.
+  so that an occurrence costs that deadline and not the test's. The
+  recorded occurrences reported `cls_bucket_head` as the place the command
+  waited and `0 without a reply` (see
+  [RGW administration](native-commands.md#rgw-administration)). That text
+  matches this issue and does not prove it: the report counts only the
+  requests whose submission is among the retained events, so a request
+  submitted before them, or a smaller `log_max_recent`, gives the same
+  line for a command that waits for an OSD. Attribute a failure to this
+  issue only when the error also shows the thread's submissions with their
+  replies and the cluster was healthy, with every PG `active+clean`, when
+  the command was stopped.
 - Evidence: native research in
   [#909](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/909); no
   case manual.
