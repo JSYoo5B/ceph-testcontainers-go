@@ -705,10 +705,14 @@ stats, err := gateways[0].Admin(ctx, "bucket", "stats", "--bucket", "photos")
   was computed for, and what the other threads logged for these requests
   (the reply with its result, a laggy mark) and the OSD maps received
   since. The latest events alone would be the five-second watch pings. All
-  parts are bounded, and the name of an object in an access key or Swift key
-  namespace is left out: of its request, of every event that holds it, and
-  of a reply whose request is older than the events, since a reply does not
-  name the namespace. To have this, every `radosgw-admin` of the gateway
+  parts are bounded. The name of an object in an access key or Swift key
+  namespace is the key's identifier, and many events name an object without
+  its namespace. So an event's text is shown only when it cannot name a key
+  object: a kind of event without an object name, one that has the locator
+  next to the name, or a reply to a request whose submission is among the
+  events. Any other event reads `an event whose text may name an object`,
+  `an event of a key object` or `an event of request N, which was submitted
+  before these events`. To have this, every `radosgw-admin` of the gateway
   runs with `--debug-objecter=0/20` and `--log-max-recent=10000`: the events
   stay in the command's memory, and a command that ends normally writes none
   of them. An argument of yours for one of these options comes later and

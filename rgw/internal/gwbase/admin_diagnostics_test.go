@@ -208,6 +208,35 @@ func TestEventReportWithholdsAKeyObjectInEveryEvent(t *testing.T) {
 			{"messenger", fmt.Sprintf(reply, 2)[:len("ms_dispatch2 0x123 osd_op_reply(2")] + " other [read 0~0] v0'0 uv0 ondisk = 0)"},
 			{"messenger", strings.Replace(fmt.Sprintf(reply, 1), "(1 ", "(", 1)},
 		},
+		// The objecter's list of its active requests, logged with every OSD
+		// map: a row has no namespace either.
+		"an active request": {
+			{"main", "_op_submit oid PRIVATEACCESSKEY '@5;users.keys' '@5;users.keys' [read 0~0] tid 1 osd.0"},
+			{"main", "dump_active .. 0 homeless"},
+			{"main", "1\t5.1\tosd.0\tPRIVATEACCESSKEY\t[read 0~0]"},
+		},
+		"an active request without its submission": {
+			{"main", "dump_active .. 0 homeless"},
+			{"main", "1\t5.1\tosd.0\tPRIVATEACCESSKEY\t[read 0~0]"},
+		},
+		// Without an event of the signalled thread the events of all
+		// threads are shown.
+		"an active request without its submission, of other threads": {
+			{"messenger", "dump_active .. 0 homeless"},
+			{"messenger", "1\t5.1\tosd.0\tPRIVATEACCESSKEY\t[read 0~0]"},
+			{"messenger", "tick"},
+		},
+		// Shapes that this package does not know: a backoff with its object,
+		// a listing with its entries, a redirect, any other message.
+		"other shapes": {
+			{"main", "_op_submit oid other '@2' '@2' [read 0~0] tid 2 osd.0"},
+			{"main", "_send_op backoff 5.1 id 3 on 5:1:users.key:PRIVATEACCESSKEY:head, queuing 0x tid 2"},
+			{"main", "_nlist_reply response.entries.size 1, response.entries [PRIVATEACCESSKEY], handle 5:1, tentative new pos MIN"},
+			{"main", "handle_osd_op_reply redirect for PRIVATEACCESSKEY previous=1 new=2"},
+			{"messenger", "ms_dispatch2 0x123 watch-notify(notify (1) cookie 2 notify 3 ret 0) PRIVATEACCESSKEY tid 2"},
+			{"messenger", "_send_op 2 to 5.1 on osd.0 PRIVATEACCESSKEY"},
+			{"messenger", " tid 2 on osd.0 is laggy PRIVATEACCESSKEY"},
+		},
 	}
 	for name, events := range cases {
 		got := eventReport(eventDump(events...))
@@ -218,8 +247,19 @@ func TestEventReportWithholdsAKeyObjectInEveryEvent(t *testing.T) {
 	// What is not a key object's stays: the reply to a request whose
 	// submission is among the events.
 	got := eventReport(eventDump(cases["a reply without its submission"]...))
-	for _, want := range []string{"osd_op_reply(2 other [read 0~0]", "a reply to request 1, which was submitted before these events"} {
+	for _, want := range []string{"osd_op_reply(2 other [read 0~0]", "an event of request 1, which was submitted before these events"} {
 		if !strings.Contains(got, want) {
+			t.Errorf("no %q in %q", want, got)
+		}
+	}
+	// An event that is withheld keeps its place.
+	got = eventReport(eventDump(cases["an active request without its submission, of other threads"]...))
+	if want := "the last 3 of 3 different ones: 12:57:00.234 dump_active .. 0 homeless | 12:57:01.234 an event of request 1, which was submitted before these events | 12:57:02.234 tick"; !strings.HasSuffix(got, want) {
+		t.Errorf("no %q in %q", want, got)
+	}
+	got = eventReport(eventDump(cases["other shapes"]...))
+	for _, want := range []string{"an event whose text may name an object (2 times until 12:57:02.234)", "an event whose text may name an object (3 times until 12:57:06.234)"} {
+		if !strings.Contains(got, want) || strings.Contains(got, "laggy") || strings.Contains(got, "_send_op") {
 			t.Errorf("no %q in %q", want, got)
 		}
 	}

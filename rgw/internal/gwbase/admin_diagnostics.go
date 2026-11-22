@@ -92,16 +92,39 @@ var (
 	// the reply's bookkeeping after the line that carries its result.
 	routineEvent = regexp.MustCompile(`^(?:_?get_session |put_session |_session_op_assign |_session_op_remove |_op_submit op |_calc_target target |\d+ in flight$|handle_osd_op_reply |_finish_op )`)
 	// Where an event names a request's transaction ID.
-	requestID   = regexp.MustCompile(`(?:\btid |^_send_op |osd_op_reply\(|\bop )(\d{1,20})\b`)
-	mapEvent    = regexp.MustCompile(`^handle_osd_map got epochs `)
-	pointer     = regexp.MustCompile(`0x[0-9a-f]+`)
+	requestID = regexp.MustCompile(`(?:\btid |^_send_op |osd_op_reply\(|\bop )(\d{1,20})\b`)
+	mapEvent  = regexp.MustCompile(`^handle_osd_map got epochs `)
+	pointer   = regexp.MustCompile(`0x[0-9a-f]+`)
+	// The events whose text is shown, by shape. Pointers are "0x" by then.
+	//
+	// nameless shapes hold numbers, placement groups and fixed words: a
+	// send, a laggy mark, the timer, OSD maps, connections, the mapping of a
+	// placement group and the header of the active requests.
+	nameless = regexp.MustCompile(`^(?:` + strings.Join([]string{
+		`_send_op \d{1,20} to [0-9a-fps.]{1,40} on osd\.-?\d{1,10}`,
+		`tid \d{1,20} on osd\.-?\d{1,10} is laggy`,
+		`tick`,
+		`tick: elapsed since last osdmap request [0-9.]{1,20}s, stale_window [0-9.]{1,20}s, epoch \d{1,10}, monc->get_start\(osdmap\) \d{1,10}`,
+		`handle_osd_map got epochs \[\d{1,10},\d{1,10}\] > \d{1,10}`,
+		`handle_osd_map decoding (?:full|incremental) epoch \d{1,10}`,
+		`ms_dispatch2 0x osd_map\(\d{1,10}\.\.\d{1,10} src has \d{1,10}\.\.\d{1,10}\)`,
+		`ms_handle_(?:connect|reset|remote_reset|refused) 0x(?: session 0x osd\.-?\d{1,10})?`,
+		`resend_mon_ops`,
+		`_maybe_request_map subscribing \((?:onetime|continuous)\) to next osd map`,
+		`_calc_target  raw pgid [0-9a-fps.]{1,40} -> actual [0-9a-fps.]{1,40} acting \[[0-9,]{0,200}\] primary -?\d{1,10}`,
+		`dump_active \.\. \d{1,10} homeless`,
+	}, "|") + `)$`)
+	// located shapes hold an object name and, after it, its locator, which
+	// has the namespace: keyNamespace decides about them.
+	located = regexp.MustCompile(`^(?:_op_submit oid .+ '[^']*' '[^']*' \[.*\] tid \d{1,20} osd\.-?\d{1,10}|_calc_target epoch \d{1,10} base .+ @\S* precalc_pgid .*)$`)
+	// A reply and a row of the active requests hold a transaction ID and an
+	// object name without its locator.
+	replyEvent  = regexp.MustCompile(`^ms_dispatch2 0x osd_op_reply\((\d{1,20}) `)
+	activeEvent = regexp.MustCompile(`^(\d{1,20})\t[0-9a-fps.]{1,40}\tosd\.-?\d{1,10}\t`)
 	elapsedTime = regexp.MustCompile(`\d+\.\d+s`)
 )
 
 const (
-	// replyEvent starts the message of a reply in an event; it names the
-	// request's transaction and object, and no namespace.
-	replyEvent        = "osd_op_reply("
 	recentEventsBegin = "--- begin dump of recent events ---"
 	recentEventsEnd   = "--- logging levels ---"
 )
@@ -127,10 +150,11 @@ const (
 // are pinged every five seconds and OSD maps keep arriving, which pushes the
 // request it waits for out of any short tail. An event that repeats is one
 // entry with its count and last time. Each entry has its time and at most
-// maxEventBytes of its text. An event or request of a key object has its
-// text replaced: one that names a key namespace, the transaction or the
-// object name of a request submitted to one, or a reply whose request is
-// older than the events. Events of other subsystems, whose text this
+// maxEventBytes of its text. An event's text is shown only when its shape
+// is known to hold no object name, or the name of an object that is known
+// not to be a key's; the text of every other event is replaced, since the
+// name of a key object is the key's identifier. Events of other subsystems,
+// whose text this
 // package cannot vouch for, are only counted. Without an event of the
 // signal's thread the last maxThreadEvents events of all threads and clients
 // are shown. It returns "" when stderr holds no dump.
@@ -161,14 +185,18 @@ func eventReport(stderr []byte) string {
 		return fmt.Sprintf("none of its %d recent events is of the objecter", all)
 	}
 	summary := fmt.Sprintf("of its %d recent events, %d of the objecter", all, len(events))
-	// A key object's name is a key's identifier, and only the submission of
-	// a request names the namespace next to it: a reply has the transaction
-	// ID and the object name alone. So the submissions say which
-	// transactions and which names are a key object's, per client. An event
-	// that holds such a name, and a reply to such a transaction, is withheld
-	// like the submission itself.
-	// A reply to a request whose submission is older than the events cannot
-	// be told apart and is withheld too.
+	// A key object's name is a key's identifier, and the objecter prints
+	// object names in many events that have no namespace next to them: a
+	// reply, a row of its active requests, a backoff, a listing. So an
+	// event's text is shown only when its shape is known:
+	//
+	//   - a shape that holds no object name (nameless);
+	//   - a shape that holds the name with its locator (located), unless the
+	//     locator is a key namespace;
+	//   - a reply or an active request's row, when the submission of its
+	//     transaction is among the events and is no key object's.
+	//
+	// Every other event is one entry without its text.
 	submittedIDs, keyIDs := map[string]bool{}, map[string]bool{}
 	var keyNames []string
 	for _, e := range events {
@@ -186,27 +214,29 @@ func eventReport(stderr []byte) string {
 	}
 	// shown is what an entry says of an event.
 	shown := func(e event) string {
-		const withheld = "an event of a key object"
+		const keyObject, unknown = "an event of a key object", "an event whose text may name an object"
 		if keyNamespace(e.text) {
-			return withheld
+			return keyObject
 		}
 		for _, name := range keyNames {
 			if strings.Contains(e.text, name) {
-				return withheld
+				return keyObject
 			}
 		}
-		reply := strings.Contains(e.text, replyEvent)
-		for _, match := range requestID.FindAllStringSubmatch(e.text, -1) {
-			id := e.client + "/" + match[1]
-			if reply && keyIDs[id] {
-				return withheld
-			}
-			if reply && !submittedIDs[id] {
-				return "a reply to request " + match[1] + ", which was submitted before these events"
-			}
+		if nameless.MatchString(e.text) || located.MatchString(e.text) {
+			return e.text
 		}
-		if reply && !requestID.MatchString(e.text) {
-			return "a reply to an unnamed request"
+		match := replyEvent.FindStringSubmatch(e.text)
+		if match == nil {
+			match = activeEvent.FindStringSubmatch(e.text)
+		}
+		switch {
+		case match == nil:
+			return unknown
+		case keyIDs[e.client+"/"+match[1]]:
+			return keyObject
+		case !submittedIDs[e.client+"/"+match[1]]:
+			return "an event of request " + match[1] + ", which was submitted before these events"
 		}
 		return e.text
 	}
