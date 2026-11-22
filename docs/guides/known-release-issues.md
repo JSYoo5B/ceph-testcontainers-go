@@ -673,22 +673,30 @@ roles). 99 roles list correctly. The fixture never lists roles.
 A `radosgw-admin` command that reads the header of every index shard of a
 bucket, such as `bucket stats`, occasionally never returns on a healthy
 cluster that nothing else is changing. Its main thread waits in
-`RGWSI_BucketIndex_RADOS::cls_bucket_head` after it submitted the reads of
-only the first shards (between 10 and 111 of 499 in the six occurrences that
-were recorded, below the default `rgw_bucket_index_max_aio` of 128), and
-every read it submitted has its reply. The next command on the same bucket
-answers. Six workers that ran `bucket stats` in a loop on one bucket with 499
-shards saw it once in about 94,000 commands on Tentacle and once in about
-418,000 on Umbrella on amd64, and once in about 10,000 on either release on
-arm64. With the default 11 shards it was seen on Umbrella on arm64 only, in
-runs that also recreated the bucket and its index pool and ran up to 12
-commands at once: once, with two fatal signals, in about 24,000 commands. The
-default shard count was not run on amd64.
+`RGWSI_BucketIndex_RADOS::cls_bucket_head`, and every read it submitted has
+its reply. On a bucket with 499 shards it had submitted the reads of only the
+first shards (between 10 and 111 in the six occurrences that were recorded,
+below the default `rgw_bucket_index_max_aio` of 128). On a bucket with the
+default 11 shards it had submitted all of them in the one occurrence whose
+submissions were recorded. The next command on the same bucket answers.
 
-On arm64 the same loop also ended a few commands with SIGSEGV or SIGBUS
+Six workers ran `bucket stats` in a loop on one bucket:
+
+| Shards | Platform | Tentacle 20.2.4 | Umbrella 21.2.0 |
+| --- | --- | --- | --- |
+| 499 | amd64 | about 1 in 94,000 commands | about 1 in 418,000 |
+| 499 | arm64 | about 1 in 10,000 | about 1 in 10,000 |
+| 11 | amd64 | none in 147,703 | 1 in 150,662 |
+
+With the default 11 shards it was also seen on Umbrella on arm64, in runs
+that recreated the bucket and its index pool and ran up to 12 commands at
+once: once, with two fatal signals, in about 24,000 commands.
+
+On arm64 the 499-shard loop also ended a few commands with SIGSEGV or SIGBUS
 (three in 21,860 on Umbrella and five in 21,562 on Tentacle), in the handler
 of a shard's reply (`rgwrados::shard_io`) where a backtrace was printed.
-888,000 commands on amd64 ended none this way.
+About 1,187,000 commands on amd64, with either shard count, ended none this
+way.
 
 Both releases read the shards with an implementation that Squid does not
 contain. The module does not repeat the command.
@@ -709,7 +717,8 @@ contain. The module does not repeat the command.
   replies and the cluster was healthy, with every PG `active+clean`, when
   the command was stopped.
 - Evidence: native research in
-  [#909](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/909); no
+  [#909](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/909) and
+  [#469](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/469); no
   case manual.
 
 ### SSE-S3 key left in Vault
