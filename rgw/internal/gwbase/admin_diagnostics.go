@@ -84,7 +84,7 @@ var (
 	// A request with its object, locator, operations, transaction ID and
 	// OSD; where it was sent; and the end of a transaction.
 	submitEvent = regexp.MustCompile(`^_op_submit oid (.+) '([^']*)' '[^']*' \[(.*)\] tid (\d{1,20}) osd\.(-?\d{1,10})$`)
-	sendEvent   = regexp.MustCompile(`^_send_op (\d{1,20}) to (\S+) on osd\.-?\d{1,10}$`)
+	sendEvent   = regexp.MustCompile(`^_send_op (\d{1,20}) to (\S+) on osd\.(-?\d{1,10})$`)
 	finishEvent = regexp.MustCompile(`^_finish_op (\d{1,20})$`)
 	// What the objecter logs for every request besides the lines that name
 	// its object, target and transaction: session reference counting, the
@@ -99,6 +99,9 @@ var (
 )
 
 const (
+	// replyEvent starts the message of a reply in an event; it names the
+	// request's transaction and object, and no namespace.
+	replyEvent        = "osd_op_reply("
 	recentEventsBegin = "--- begin dump of recent events ---"
 	recentEventsEnd   = "--- logging levels ---"
 )
@@ -124,8 +127,10 @@ const (
 // are pinged every five seconds and OSD maps keep arriving, which pushes the
 // request it waits for out of any short tail. An event that repeats is one
 // entry with its count and last time. Each entry has its time and at most
-// maxEventBytes of its text. An event or request that names a key namespace
-// has its text replaced, and events of other subsystems, whose text this
+// maxEventBytes of its text. An event or request of a key object has its
+// text replaced: one that names a key namespace, the transaction or the
+// object name of a request submitted to one, or a reply whose request is
+// older than the events. Events of other subsystems, whose text this
 // package cannot vouch for, are only counted. Without an event of the
 // signal's thread the last maxThreadEvents events of all threads and clients
 // are shown. It returns "" when stderr holds no dump.
@@ -156,10 +161,52 @@ func eventReport(stderr []byte) string {
 		return fmt.Sprintf("none of its %d recent events is of the objecter", all)
 	}
 	summary := fmt.Sprintf("of its %d recent events, %d of the objecter", all, len(events))
+	// A key object's name is a key's identifier, and only the submission of
+	// a request names the namespace next to it: a reply has the transaction
+	// ID and the object name alone. So the submissions say which
+	// transactions and which names are a key object's, per client. An event
+	// that holds such a name, and a reply to such a transaction, is withheld
+	// like the submission itself.
+	// A reply to a request whose submission is older than the events cannot
+	// be told apart and is withheld too.
+	submittedIDs, keyIDs := map[string]bool{}, map[string]bool{}
+	var keyNames []string
+	for _, e := range events {
+		match := submitEvent.FindStringSubmatch(e.text)
+		if match == nil {
+			continue
+		}
+		submittedIDs[e.client+"/"+match[4]] = true
+		if keyNamespace(e.text) {
+			keyIDs[e.client+"/"+match[4]] = true
+			if !slices.Contains(keyNames, match[1]) {
+				keyNames = append(keyNames, match[1])
+			}
+		}
+	}
 	// shown is what an entry says of an event.
 	shown := func(e event) string {
+		const withheld = "an event of a key object"
 		if keyNamespace(e.text) {
-			return "an event of a key object"
+			return withheld
+		}
+		for _, name := range keyNames {
+			if strings.Contains(e.text, name) {
+				return withheld
+			}
+		}
+		reply := strings.Contains(e.text, replyEvent)
+		for _, match := range requestID.FindAllStringSubmatch(e.text, -1) {
+			id := e.client + "/" + match[1]
+			if reply && keyIDs[id] {
+				return withheld
+			}
+			if reply && !submittedIDs[id] {
+				return "a reply to request " + match[1] + ", which was submitted before these events"
+			}
+		}
+		if reply && !requestID.MatchString(e.text) {
+			return "a reply to an unnamed request"
 		}
 		return e.text
 	}
@@ -231,7 +278,9 @@ func eventReport(stderr []byte) string {
 			r := &request{id: match[4], time: e.time, object: match[1], locator: match[2], operations: match[3], osd: match[5], own: e.thread == thread}
 			requests, byID[r.id] = append(requests, r), r
 		} else if match := sendEvent.FindStringSubmatch(e.text); match != nil && byID[match[1]] != nil {
-			byID[match[1]].group = match[2]
+			// A resend after an OSD map change goes elsewhere; the placement
+			// group and the OSD are those of the same, latest send.
+			byID[match[1]].group, byID[match[1]].osd = match[2], match[3]
 		} else if match := finishEvent.FindStringSubmatch(e.text); match != nil {
 			delete(byID, match[1])
 		}

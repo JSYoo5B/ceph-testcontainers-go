@@ -698,14 +698,17 @@ stats, err := gateways[0].Admin(ctx, "bucket", "stats", "--bucket", "photos")
   signal. `through client.4440 the signalled thread submitted 12 requests in
   them, 1 without a reply: tid 12 [call rgw.bucket_list] of .dir.<id>.3 in
   @6 to pg 6.2 on osd.0 at 04:33:24.801` names each request that has no
-  reply (`to no OSD` is one without a target in the command's OSD map);
+  reply (`to no OSD` is one without a target in the command's OSD map; after a
+  resend the placement group and OSD are those of the latest send);
   `0 without a reply` means that the thread waits for something else. Then
   come the thread's last events, which give the OSD map epoch each request
   was computed for, and what the other threads logged for these requests
   (the reply with its result, a laggy mark) and the OSD maps received
   since. The latest events alone would be the five-second watch pings. All
   parts are bounded, and the name of an object in an access key or Swift key
-  namespace is left out. To have this, every `radosgw-admin` of the gateway
+  namespace is left out: of its request, of every event that holds it, and
+  of a reply whose request is older than the events, since a reply does not
+  name the namespace. To have this, every `radosgw-admin` of the gateway
   runs with `--debug-objecter=0/20` and `--log-max-recent=10000`: the events
   stay in the command's memory, and a command that ends normally writes none
   of them. An argument of yours for one of these options comes later and

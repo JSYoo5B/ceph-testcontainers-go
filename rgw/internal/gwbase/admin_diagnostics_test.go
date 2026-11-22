@@ -171,6 +171,92 @@ func TestEventReportFindsTheRequestsWithoutAReply(t *testing.T) {
 	}
 }
 
+// eventDump returns standard error with a dump of the objecter events of
+// client.4440, each given as its thread and message. "main" took the signal.
+func eventDump(events ...[2]string) []byte {
+	threads := map[string]string{"main": "ffff91307040", "messenger": "ffff6d7a8c40"}
+	var dump strings.Builder
+	dump.WriteString(" in thread " + threads["main"] + " thread_name:radosgw-admin\n" + recentEventsBegin + "\n")
+	for i, e := range events {
+		fmt.Fprintf(&dump, "  -1> 2026-11-21T12:57:%02d.234+0000 %s 10 client.4440.objecter %s\n", i, threads[e[0]], e[1])
+	}
+	return []byte(dump.String())
+}
+
+func TestEventReportWithholdsAKeyObjectInEveryEvent(t *testing.T) {
+	const reply = "ms_dispatch2 0x123 osd_op_reply(%d PRIVATEACCESSKEY [read 0~0] v0'0 uv0 ondisk = 0)"
+	cases := map[string][][2]string{
+		// The reply names the object without its namespace.
+		"a completed request": {
+			{"main", "_op_submit oid PRIVATEACCESSKEY '@5;users.keys' '@5;users.keys' [read 0~0] tid 1 osd.0"},
+			{"main", "_send_op 1 to 5.1 on osd.0"},
+			{"messenger", fmt.Sprintf(reply, 1)},
+			{"messenger", "_finish_op 1"},
+		},
+		// Another request of the same object, whose reply names another
+		// transaction than the one the thread submitted.
+		"the same name under another transaction": {
+			{"main", "_op_submit oid PRIVATEACCESSKEY '@5;users.swift' '@5;users.swift' [read 0~0] tid 1 osd.0"},
+			{"main", "_op_submit oid other '@2' '@2' [read 0~0] tid 2 osd.0"},
+			{"main", "laggy tid 2 for PRIVATEACCESSKEY"},
+			{"messenger", "tid 2 moved, formerly PRIVATEACCESSKEY"},
+		},
+		// The submission is older than the events.
+		"a reply without its submission": {
+			{"main", "_op_submit oid other '@2' '@2' [read 0~0] tid 2 osd.0"},
+			{"main", fmt.Sprintf(reply, 1)},
+			{"messenger", fmt.Sprintf(reply, 2)[:len("ms_dispatch2 0x123 osd_op_reply(2")] + " other [read 0~0] v0'0 uv0 ondisk = 0)"},
+			{"messenger", strings.Replace(fmt.Sprintf(reply, 1), "(1 ", "(", 1)},
+		},
+	}
+	for name, events := range cases {
+		got := eventReport(eventDump(events...))
+		if got == "" || strings.Contains(got, "PRIVATE") {
+			t.Errorf("%s: %q", name, got)
+		}
+	}
+	// What is not a key object's stays: the reply to a request whose
+	// submission is among the events.
+	got := eventReport(eventDump(cases["a reply without its submission"]...))
+	for _, want := range []string{"osd_op_reply(2 other [read 0~0]", "a reply to request 1, which was submitted before these events"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("no %q in %q", want, got)
+		}
+	}
+}
+
+func TestEventReportNamesTheLatestDestination(t *testing.T) {
+	cases := map[string]struct {
+		events [][2]string
+		want   string
+	}{
+		"a resend to another OSD": {
+			events: [][2]string{
+				{"main", "_op_submit oid object '@5' '@5' [read 0~0] tid 1 osd.0"},
+				{"main", "_send_op 1 to 5.1 on osd.0"},
+				{"messenger", "_send_op 1 to 5.1 on osd.2"},
+			},
+			want: " in @5 to pg 5.1 on osd.2 at ",
+		},
+		"a request that had no OSD at first": {
+			events: [][2]string{
+				{"main", "_op_submit oid object '@5' '@5' [read 0~0] tid 1 osd.-1"},
+				{"messenger", "_send_op 1 to 5.3 on osd.4"},
+			},
+			want: " in @5 to pg 5.3 on osd.4 at ",
+		},
+		"a request that has no OSD yet": {
+			events: [][2]string{{"main", "_op_submit oid object '@5' '@5' [read 0~0] tid 1 osd.-1"}},
+			want:   " in @5 to no OSD at ",
+		},
+	}
+	for name, c := range cases {
+		if got := eventReport(eventDump(c.events...)); !strings.Contains(got, c.want) {
+			t.Errorf("%s: no %q in %q", name, c.want, got)
+		}
+	}
+}
+
 func TestEventReportWithoutTheStoppedThread(t *testing.T) {
 	for name, c := range map[string]struct{ stderr, want string }{
 		"no dump":           {"ERROR: could not init bucket\n   -1> 2026-11-21T12:57:48.234+0000 ffff 10 client.1.objecter tick\n", ""},
