@@ -67,6 +67,25 @@ func TestRGWAdminReportsAStoppedCommand(t *testing.T) {
 	if len(ctr.signals) != 1 || ctr.signals[0] != "6" {
 		t.Fatalf("deadline signals: %v", ctr.signals)
 	}
+	// A command that also dumped its recent events: after the frames the
+	// error says which request of the stopped thread has no reply, what the
+	// thread's objecter did last and what the other threads logged for that
+	// request, without the other events.
+	const events = "--- begin dump of recent events ---\n" +
+		"   -4> 2026-11-21T12:57:48.233+0000 7f0e5c0d5980 20 rgw: signing with secret PRIVATE\n" +
+		"   -3> 2026-11-21T12:57:48.234+0000 7f0e5c0d5980 10 client.4440.objecter _op_submit oid .dir.b.1 '@6' '@6' [call rgw.bucket_list] tid 7 osd.0\n" +
+		"   -2> 2026-11-21T12:57:48.234+0000 7f0e5c0d5980 15 client.4440.objecter _send_op 7 to 6.2 on osd.0\n" +
+		"   -1> 2026-11-21T12:57:58.269+0000 ffff6dfb8c40  2 client.4440.objecter  tid 7 on osd.0 is laggy\n--- logging levels ---\n"
+	gateway, _ = newRGWAdminTestGateway(Config{}, rgwAdminResponse{code: 134, stopped: true, data: stopped + events})
+	_, err = gateway.Admin(ctx, "bucket", "stats", "--bucket", "b")
+	if !errors.Is(err, ceph.ErrNativeFailure) || !strings.HasSuffix(err.Error(), "RGWSI_BucketIndex_RADOS::cls_bucket_head+0x2e1 < main; "+
+		"of its 4 recent events, 3 of the objecter; through client.4440 the signalled thread submitted 1 requests in them, 1 without a reply: "+
+		"tid 7 [call rgw.bucket_list] of .dir.b.1 in @6 to pg 6.2 on osd.0 at 12:57:48.234; "+
+		"its last 2 events: 12:57:48.234 _op_submit oid .dir.b.1 '@6' '@6' [call rgw.bucket_list] tid 7 osd.0 | 12:57:48.234 _send_op 7 to 6.2 on osd.0; "+
+		"then of other threads, for these requests and OSD maps, the first 1 of 1: 12:57:58.269 tid 7 on osd.0 is laggy") ||
+		strings.Contains(err.Error(), "PRIVATE") {
+		t.Fatalf("a stopped radosgw-admin with events: %v", err)
+	}
 	// Another failure stays redacted.
 	gateway, _ = newRGWAdminTestGateway(Config{}, rgwAdminResponse{code: 22, data: "Error: invalid secret PRIVATE"})
 	if _, err := gateway.Admin(ctx, "user", "list"); err == nil || strings.Contains(err.Error(), "still ran after") || strings.Contains(err.Error(), "PRIVATE") {

@@ -69,7 +69,7 @@ func ValidateAdminArgs(args []string) error {
 // including the *ceph.NativeFailure exit code and errno, which its text also
 // names. When the command reported a fatal signal, the text also names the
 // signal, the thread and the first backtrace frames, read from the
-// already redacted and bounded Reason. Other errors are returned unchanged.
+// already redacted and bounded Reason, and the failure has no errno. Other errors are returned unchanged.
 func RedactAdminFailure(err error) error {
 	var failure *ceph.NativeFailure
 	if !errors.As(err, &failure) {
@@ -83,7 +83,8 @@ func RedactAdminFailure(err error) error {
 // RedactAdminFailure does, reading a fatal signal report from its whole
 // standard error. With such a report it also describes the shape of its
 // standard output, but never its content, which tells a command that crashed
-// after it wrote its result from one that crashed before.
+// after it wrote its result from one that crashed before, and what the
+// crashed thread had asked of RADOS (eventReport).
 func adminRunFailure(report supervised.Report) error {
 	err := servicehook.NativeFailure("radosgw-admin", report.ExitCode, report.Stdout, report.Stderr)
 	var failure *ceph.NativeFailure
@@ -91,14 +92,20 @@ func adminRunFailure(report supervised.Report) error {
 		return err
 	}
 	crash := fatalSignalReport(strings.Split(string(report.Stderr), "\n"), false)
-	output := ""
+	output, events := "", ""
 	if crash != "" {
-		output = adminOutputShape(report.Stdout, report.StdoutTruncated)
+		output, events = adminOutputShape(report.Stdout, report.StdoutTruncated), eventReport(report.Stderr)
 	}
-	return redactAdminFailure(err, failure, crash, output)
+	return redactAdminFailure(err, failure, crash, output, events)
 }
 
 func redactAdminFailure(err error, failure *ceph.NativeFailure, details ...string) error {
+	// A command that died of a signal reported no errno: an "(N) text" in
+	// its output is of an event in its dump, such as the reply to a read of
+	// an object that does not exist, not the reason it ended.
+	if len(details) > 0 && details[0] != "" {
+		failure.Errno = ""
+	}
 	exit := ceph.NativeFailure{Program: "radosgw-admin", ExitCode: failure.ExitCode, Errno: failure.Errno}
 	text := exit.Error()
 	for _, detail := range details {
@@ -372,7 +379,7 @@ func (c *Core) supervisedPrefix(ctx context.Context, target testcontainers.Conta
 		return nil, false, servicehook.Invalid(errors.New("RGW gateway is no longer owned by this cluster"))
 	}
 	limit := adminLimit(ctx)
-	report, err := servicehook.RunOwnedRoleCommand(supervised.WithDeadlineSignal(ctx, stopSignal), c.cluster, target, "radosgw-admin", limit, maxBytes, argv...)
+	report, err := servicehook.RunOwnedRoleCommand(supervised.WithDeadlineSignal(ctx, stopSignal), c.cluster, target, "radosgw-admin", limit, maxBytes, diagnosticArgv(argv)...)
 	var unstopped *ceph.NativeCommandUnstoppedError
 	switch {
 	case errors.As(err, &unstopped):
@@ -392,8 +399,10 @@ func (c *Core) supervisedPrefix(ctx context.Context, target testcontainers.Conta
 		return nil, false, servicehook.ClassifyExec(ctx, err)
 	case report.TimedOut:
 		text := fmt.Sprintf("radosgw-admin still ran after %ds and was stopped", limit)
-		if where := stopReport(report.Stderr); where != "" {
-			text += "; " + where
+		for _, detail := range []string{stopReport(report.Stderr), eventReport(report.Stderr)} {
+			if detail != "" {
+				text += "; " + detail
+			}
 		}
 		return nil, false, &ceph.OperationError{Kind: ceph.ErrNativeFailure, Op: "radosgw-admin", Err: errors.New(text)}
 	case report.ExitCode != 0:

@@ -143,7 +143,7 @@ func TestRGWAdminPreservesDeclaredScopeAndConnection(t *testing.T) {
 	if _, err := gateway.Admin(t.Context(), "zone", "get"); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"radosgw-admin", "--conf", "/etc/ceph/ceph.conf", "--keyring", "/etc/ceph/ceph.client.admin.keyring",
+	want := []string{"radosgw-admin", "--debug-objecter=0/20", "--log-max-recent=10000", "--conf", "/etc/ceph/ceph.conf", "--keyring", "/etc/ceph/ceph.client.admin.keyring",
 		"--rgw-realm", "realm-a", "--rgw-zonegroup", "group-a", "--rgw-zone", "zone-a", "--osd-pool-default-pg-num", "1", "--osd-pool-default-pgp-num", "0",
 		"--format", "json", "zone", "get"}
 	if !slices.Equal(ctr.calls[0], want) {

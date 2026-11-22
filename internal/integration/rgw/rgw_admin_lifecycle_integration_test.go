@@ -226,8 +226,11 @@ func TestRGWAdminCommandLifetime(t *testing.T) {
 // that a command which hangs ends at its caller's bound with an error that
 // says where it waited. The cluster's only OSD is paused, so the command's
 // first RADOS read never completes; the gateway's supervisor stops it at its
-// own limit, and the error names frames of the command's main thread. After
-// the OSD resumes, the next command completes.
+// own limit, and the error names frames of the command's main thread, the
+// read that had no reply, and the events of the command's RADOS client for
+// that read: its submission by the stopped thread, then the OSD map and the
+// laggy mark from the other threads. After the OSD resumes, the next command
+// completes.
 func TestRGWAdminStoppedCommandSaysWhereItWas(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
@@ -274,6 +277,16 @@ func TestRGWAdminStoppedCommandSaysWhereItWas(t *testing.T) {
 		t.Fatalf("a radosgw-admin that waits for a paused OSD returned after %s: %v", took, err)
 	}
 	_, frames, _ := strings.Cut(err.Error(), where)
+	frames, waited, _ := strings.Cut(frames, "; of its ")
+	for _, part := range []string{" the signalled thread submitted 1 requests in them, 1 without a reply: tid 1 [read 0~0] of default.realm in ", " on osd.0 at ",
+		"; its last ", "; then of other threads, for these requests and OSD maps, ", " handle_osd_map got epochs ", " _op_submit oid default.realm ", " _send_op 1 to ", " tid 1 on osd.0 is laggy"} {
+		if !strings.Contains(waited, part) {
+			t.Fatalf("the stopped command does not say what it waited for (%q): %v", part, err)
+		}
+	}
+	if len(waited) > 16384 {
+		t.Fatalf("what the stopped command waited for takes %d bytes: %v", len(waited), err)
+	}
 	if len(strings.Split(frames, " < ")) < 4 || strings.Contains(frames, "[0x") || strings.Contains(frames, "/") {
 		t.Fatalf("the stop report is not a bounded list of frames: %q", frames)
 	}
