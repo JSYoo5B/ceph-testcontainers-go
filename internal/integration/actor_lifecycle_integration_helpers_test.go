@@ -92,21 +92,51 @@ func startFixtureProcess(t *testing.T, cmd *exec.Cmd) *integrationActor[error] {
 	return a
 }
 
+// waitFixtureReady waits for the readiness mark a fixture child creates at
+// path, and fails the test when the child ends without it or the bound passes.
 func waitFixtureReady(t *testing.T, a *integrationActor[error], path string) {
 	t.Helper()
-	deadline := time.NewTimer(10 * time.Second)
+	exists := func() bool {
+		_, err := os.Stat(path)
+		return err == nil
+	}
+	switch fixtureReadiness(a.done, exists, 10*time.Second) {
+	case fixtureEnded:
+		t.Fatalf("fixture child ended before readiness: %v", a.result)
+	case fixtureSilent:
+		t.Fatal("fixture child did not report readiness")
+	}
+}
+
+type fixtureReadinessOutcome int
+
+const (
+	fixtureReady fixtureReadinessOutcome = iota
+	fixtureEnded
+	fixtureSilent
+)
+
+// fixtureReadiness polls exists until it reports the child's readiness mark.
+// A child may create its mark and end right away, between one look at the
+// mark and the next look at done, so the mark is read once more after done
+// closes: a child that ended is unready only when its mark is still missing.
+func fixtureReadiness(done <-chan struct{}, exists func() bool, bound time.Duration) fixtureReadinessOutcome {
+	deadline := time.NewTimer(bound)
 	defer deadline.Stop()
 	tick := time.NewTicker(10 * time.Millisecond)
 	defer tick.Stop()
 	for {
-		if _, err := os.Stat(path); err == nil {
-			return
+		if exists() {
+			return fixtureReady
 		}
 		select {
-		case <-a.done:
-			t.Fatalf("fixture child ended before readiness: %v", a.result)
+		case <-done:
+			if exists() {
+				return fixtureReady
+			}
+			return fixtureEnded
 		case <-deadline.C:
-			t.Fatal("fixture child did not report readiness")
+			return fixtureSilent
 		case <-tick.C:
 		}
 	}

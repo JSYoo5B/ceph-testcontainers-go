@@ -189,3 +189,21 @@ func TestFixtureProcessFailureCleanup(t *testing.T) {
 		})
 	}
 }
+
+// A child that creates its readiness mark and ends at once is ready: the
+// mark appears between the first look at it and the look at done.
+func TestFixtureReadinessOfAChildThatAlreadyEnded(t *testing.T) {
+	ended := make(chan struct{})
+	close(ended)
+	looks := 0
+	markAfterFirstLook := func() bool { looks++; return looks > 1 }
+	if got := fixtureReadiness(ended, markAfterFirstLook, time.Minute); got != fixtureReady || looks != 2 {
+		t.Fatalf("a child that marked readiness and ended: outcome %d after %d looks, want ready after 2", got, looks)
+	}
+	if got := fixtureReadiness(ended, func() bool { return false }, time.Minute); got != fixtureEnded {
+		t.Fatalf("a child that ended without its mark: outcome %d, want ended", got)
+	}
+	if got := fixtureReadiness(make(chan struct{}), func() bool { return false }, 30*time.Millisecond); got != fixtureSilent {
+		t.Fatalf("a running child without its mark: outcome %d, want silent", got)
+	}
+}
