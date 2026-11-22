@@ -8,6 +8,7 @@ compiled inventory, records its partial scope and may lower the time bound.
 
 import argparse
 from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import importlib
 import json
@@ -1320,37 +1321,54 @@ def compile_inventory(package, tags, root=ROOT):
     return sorted(tests)
 
 
+def compile_workers():
+    """Compilations to run at once. Each go test already uses several cores
+    for a package's dependencies, so half the cores keeps them busy through
+    the single-threaded links without starving a call of its 180 s bound."""
+    return max(1, min(4, (os.cpu_count() or 2) // 2))
+
+
+def compile_all(jobs, root=ROOT, progress=sys.stderr):
+    """Compile every (package, tags) of jobs and return the inventories in
+    the order of jobs. Each finished compilation writes one progress line
+    with its position, package, tags and seconds, so a run that is cut off
+    shows how far it came and whether every compilation was slow."""
+    def one(indexed):
+        index, (package, tags) = indexed
+        started = time.monotonic()
+        tests = compile_inventory(package, tags, root)
+        print("compiled %d/%d %s tags=%s %.1fs" % (index + 1, len(jobs), package, tags, time.monotonic() - started),
+              file=progress, flush=True)
+        return tests
+    with ThreadPoolExecutor(max_workers=compile_workers()) as pool:
+        return list(pool.map(one, enumerate(jobs)))
+
+
 def verify(catalog, plan, root=ROOT, optional=None):
     """Compile every required profile, and every optional one when optional
     is given, and require each compiled test inventory to match its AST
     source. An optional batch compiles only with its own batch tag, so no
     other check builds it."""
-    observations = []
     packages = sorted({profile["package"] for profile in plan["include"]})
     bugs = tuple(plan.get("bug_compatibility", ()))
     all_tags = ",".join(("all", *bugs))
-    for package in packages:
-        actual = compile_inventory(package, all_tags, root)
-        expected = selected_tests(catalog, package, all_tags)
-        if actual != expected:
-            raise ValueError("all-tag compiled inventory differs from its AST source: " + package)
-        observations.append({"package": package, "tags": all_tags, "tests": actual})
+    # (package, tags, what differs when the inventory is not its AST source)
+    checks = [(package, all_tags, "all-tag compiled inventory differs from its AST source: " + package)
+              for package in packages]
     for category in CATEGORIES:
         for package in packages:
             if not any(profile["category"] == category and profile["package"] == package for profile in plan["include"]):
                 continue
             tags = ",".join((*plan["capability_tags"], "ci", "ci_" + category, *bugs))
-            actual = compile_inventory(package, tags, root)
-            expected = selected_tests(catalog, package, tags)
-            if actual != expected:
-                raise ValueError("category compiled inventory differs from its AST source: " + category)
-            observations.append({"package": package, "tags": tags, "tests": actual})
+            checks.append((package, tags, "category compiled inventory differs from its AST source: " + category))
     for profile in plan["include"] + (optional["include"] if optional else []):
-        actual = compile_inventory(profile["package"], profile["tags"], root)
-        expected = selected_tests(catalog, profile["package"], profile["tags"])
-        if actual != expected:
-            raise ValueError("compiled profile differs from its AST source: " + profile["profile"])
-        observations.append({"package": profile["package"], "tags": profile["tags"], "tests": actual})
+        checks.append((profile["package"], profile["tags"],
+                       "compiled profile differs from its AST source: " + profile["profile"]))
+    observations = []
+    for (package, tags, difference), actual in zip(checks, compile_all([check[:2] for check in checks], root)):
+        if actual != selected_tests(catalog, package, tags):
+            raise ValueError(difference)
+        observations.append({"package": package, "tags": tags, "tests": actual})
     return {"schema": SCHEMA, "passed": True, "profiles": observations}
 
 

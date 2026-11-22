@@ -641,6 +641,39 @@ class TagPlannerTests(unittest.TestCase):
         with patch.object(engine, "compile_inventory", return_value=["TestDifferent"]), self.assertRaisesRegex(ValueError, "all-tag"):
             engine.verify([file], plan)
 
+    def test_compilations_keep_job_order_and_report_each_one(self):
+        # The first job finishes last; its inventory must still come first.
+        release = engine.time.monotonic() + 0.2
+
+        def compiled(package, tags, root):
+            if tags == "first":
+                while engine.time.monotonic() < release:
+                    engine.time.sleep(0.01)
+            return ["Test" + tags.title()]
+        jobs = [("./a", "first"), ("./b", "second"), ("./c", "third")]
+        progress = io.StringIO()
+        with patch.object(engine, "compile_inventory", side_effect=compiled), patch.object(engine, "compile_workers", return_value=3):
+            inventories = engine.compile_all(jobs, engine.ROOT, progress)
+        self.assertEqual(inventories, [["TestFirst"], ["TestSecond"], ["TestThird"]])
+        lines = progress.getvalue().splitlines()
+        self.assertEqual(len(lines), 3)
+        self.assertRegex(lines[-1], r"^compiled 1/3 \./a tags=first \d+\.\ds$")
+        self.assertEqual(sorted(line.split()[1] for line in lines), ["1/3", "2/3", "3/3"])
+
+    def test_a_failed_compilation_fails_the_whole_set(self):
+        def compiled(package, tags, root):
+            if tags == "second":
+                raise ValueError("tag profile did not compile: second")
+            return ["TestOne"]
+        with patch.object(engine, "compile_inventory", side_effect=compiled), patch.object(engine, "compile_workers", return_value=2), \
+                self.assertRaisesRegex(ValueError, "did not compile: second"):
+            engine.compile_all([("./a", "first"), ("./b", "second"), ("./c", "third")], engine.ROOT, io.StringIO())
+
+    def test_compile_workers_stay_between_one_and_four(self):
+        for cores, workers in ((None, 1), (1, 1), (2, 1), (4, 2), (8, 4), (64, 4)):
+            with patch.object(engine.os, "cpu_count", return_value=cores):
+                self.assertEqual(engine.compile_workers(), workers)
+
     def test_verification_also_compiles_every_optional_profile(self):
         file = fixture()
         plan = engine.discover([file])
