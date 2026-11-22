@@ -8,6 +8,8 @@ compiled inventory, records its partial scope and may lower the time bound.
 
 import argparse
 from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor
+import contextlib
 import hashlib
 import importlib
 import json
@@ -18,6 +20,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 import registry_pull
@@ -1320,37 +1323,78 @@ def compile_inventory(package, tags, root=ROOT):
     return sorted(tests)
 
 
+def compile_workers():
+    """Compilations to run at once. Each go test already uses several cores
+    for a package's dependencies, so half the cores keeps them busy through
+    the single-threaded links without starving a call of its 180 s bound."""
+    return max(1, min(4, (os.cpu_count() or 2) // 2))
+
+
+def compile_each(jobs, root=ROOT, progress=None):
+    """Compile every (package, tags) of jobs, a few at once, and yield the
+    inventories one by one in the order of jobs, each as soon as it and all
+    before it are compiled. A failed compilation is raised at its position.
+
+    Every job is queued at once and at most compile_workers() of them run at
+    a time, so jobs after the one being yielded may already be running. When
+    the generator ends, is closed or raises, the jobs not yet started are
+    cancelled and the running ones are waited for: no compilation of this
+    call is running once control is back with the caller. A caller that
+    stops early must close the generator to get that.
+
+    Each finished compilation writes one whole progress line (position,
+    package, tags, seconds) to progress, standard error by default, so a run
+    that is cut off shows how far it came and whether every compilation was
+    slow. Lines of concurrent compilations never mix."""
+    writing = threading.Lock()
+
+    def one(index, package, tags):
+        started = time.monotonic()
+        tests = compile_inventory(package, tags, root)
+        line = "compiled %d/%d %s tags=%s %.1fs\n" % (index + 1, len(jobs), package, tags, time.monotonic() - started)
+        with writing:
+            stream = sys.stderr if progress is None else progress
+            stream.write(line)
+            stream.flush()
+        return tests
+    pool = ThreadPoolExecutor(max_workers=compile_workers())
+    try:
+        futures = [pool.submit(one, index, package, tags) for index, (package, tags) in enumerate(jobs)]
+        for future in futures:
+            yield future.result()
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
+
+
 def verify(catalog, plan, root=ROOT, optional=None):
     """Compile every required profile, and every optional one when optional
     is given, and require each compiled test inventory to match its AST
     source. An optional batch compiles only with its own batch tag, so no
-    other check builds it."""
-    observations = []
+    other check builds it. The checks are judged in their order, so the
+    first one that does not compile or differs is the one reported. The
+    builds that had not started by then are dropped, and those already
+    running have ended when this returns or raises."""
     packages = sorted({profile["package"] for profile in plan["include"]})
     bugs = tuple(plan.get("bug_compatibility", ()))
     all_tags = ",".join(("all", *bugs))
-    for package in packages:
-        actual = compile_inventory(package, all_tags, root)
-        expected = selected_tests(catalog, package, all_tags)
-        if actual != expected:
-            raise ValueError("all-tag compiled inventory differs from its AST source: " + package)
-        observations.append({"package": package, "tags": all_tags, "tests": actual})
+    # (package, tags, what differs when the inventory is not its AST source)
+    checks = [(package, all_tags, "all-tag compiled inventory differs from its AST source: " + package)
+              for package in packages]
     for category in CATEGORIES:
         for package in packages:
             if not any(profile["category"] == category and profile["package"] == package for profile in plan["include"]):
                 continue
             tags = ",".join((*plan["capability_tags"], "ci", "ci_" + category, *bugs))
-            actual = compile_inventory(package, tags, root)
-            expected = selected_tests(catalog, package, tags)
-            if actual != expected:
-                raise ValueError("category compiled inventory differs from its AST source: " + category)
-            observations.append({"package": package, "tags": tags, "tests": actual})
+            checks.append((package, tags, "category compiled inventory differs from its AST source: " + category))
     for profile in plan["include"] + (optional["include"] if optional else []):
-        actual = compile_inventory(profile["package"], profile["tags"], root)
-        expected = selected_tests(catalog, profile["package"], profile["tags"])
-        if actual != expected:
-            raise ValueError("compiled profile differs from its AST source: " + profile["profile"])
-        observations.append({"package": profile["package"], "tags": profile["tags"], "tests": actual})
+        checks.append((profile["package"], profile["tags"],
+                       "compiled profile differs from its AST source: " + profile["profile"]))
+    observations = []
+    with contextlib.closing(compile_each([check[:2] for check in checks], root)) as inventories:
+        for (package, tags, difference), actual in zip(checks, inventories):
+            if actual != selected_tests(catalog, package, tags):
+                raise ValueError(difference)
+            observations.append({"package": package, "tags": tags, "tests": actual})
     return {"schema": SCHEMA, "passed": True, "profiles": observations}
 
 

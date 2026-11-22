@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 import subprocess
 import tempfile
+import threading
 import unittest
 from unittest.mock import call, patch
 
@@ -640,6 +641,135 @@ class TagPlannerTests(unittest.TestCase):
         self.assertEqual(compiled.call_count, 3)
         with patch.object(engine, "compile_inventory", return_value=["TestDifferent"]), self.assertRaisesRegex(ValueError, "all-tag"):
             engine.verify([file], plan)
+
+    def test_compilations_keep_job_order_and_report_each_one(self):
+        # The first job is held until both others have written their whole
+        # progress line, so it finishes last; its inventory must still come
+        # first. A line is one write, so the signal cannot fire inside one.
+        others_reported = threading.Event()
+
+        class Progress(io.StringIO):
+            def write(self, text):
+                written = super().write(text)
+                if self.getvalue().count("\n") == 2:
+                    others_reported.set()
+                return written
+
+        def compiled(package, tags, root):
+            if tags == "first" and not others_reported.wait(30):
+                raise AssertionError("the other compilations never reported")
+            return ["Test" + tags.title()]
+        jobs = [("./a", "first"), ("./b", "second"), ("./c", "third")]
+        progress = Progress()
+        with patch.object(engine, "compile_inventory", side_effect=compiled), patch.object(engine, "compile_workers", return_value=3):
+            inventories = list(engine.compile_each(jobs, engine.ROOT, progress))
+        self.assertEqual(inventories, [["TestFirst"], ["TestSecond"], ["TestThird"]])
+        lines = progress.getvalue().splitlines()
+        self.assertEqual(len(lines), 3)
+        self.assertRegex(lines[-1], r"^compiled 1/3 \./a tags=first \d+\.\ds$")
+        self.assertEqual(sorted(line.split()[1] for line in lines), ["1/3", "2/3", "3/3"])
+
+    def test_a_progress_line_is_one_write(self):
+        writes = []
+
+        class Progress:
+            def write(self, text):
+                writes.append(text)
+
+            def flush(self):
+                pass
+        with patch.object(engine, "compile_inventory", return_value=["TestOne"]), patch.object(engine, "compile_workers", return_value=4):
+            list(engine.compile_each([("./a", str(index)) for index in range(12)], engine.ROOT, Progress()))
+        self.assertEqual(len(writes), 12)
+        for text in writes:
+            self.assertRegex(text, r"^compiled \d+/12 \./a tags=\d+ \d+\.\ds\n$")
+
+    def test_a_failed_compilation_is_raised_at_its_position(self):
+        def compiled(package, tags, root):
+            if tags == "second":
+                raise ValueError("tag profile did not compile: second")
+            return ["Test" + tags.title()]
+        seen = []
+        with patch.object(engine, "compile_inventory", side_effect=compiled), patch.object(engine, "compile_workers", return_value=2), \
+                self.assertRaisesRegex(ValueError, "did not compile: second"):
+            for inventory in engine.compile_each([("./a", "first"), ("./b", "second"), ("./c", "third")], engine.ROOT, io.StringIO()):
+                seen.append(inventory)
+        self.assertEqual(seen, [["TestFirst"]])
+
+    def held_pool(self):
+        """A pool class for compile_each whose shutdown first cancels the
+        queue, then sets cancelled, then does what compile_each asked. A
+        build held on cancelled is thus released after the queue is dropped
+        and before a waiting shutdown needs it, and waits holds the wait
+        argument compile_each passed."""
+        cancelled, waits = threading.Event(), []
+
+        class Pool(engine.ThreadPoolExecutor):
+            def shutdown(self, wait=True, *, cancel_futures=False):
+                waits.append(wait)
+                super().shutdown(wait=False, cancel_futures=cancel_futures)
+                cancelled.set()
+                super().shutdown(wait=wait)
+        return Pool, cancelled, waits
+
+    def test_the_first_check_in_order_is_reported_and_stops_the_rest(self):
+        # An inventory that differs comes before a build that does not
+        # compile: the difference is reported, as when the builds ran one by
+        # one. The build after it may have started and is held until the
+        # queue is dropped; the third never starts, and none is running when
+        # verify has raised.
+        file = fixture()
+        plan = engine.discover([file])
+        pool, cancelled, waits = self.held_pool()
+        calls, running = [], []
+
+        def compiled(package, tags, root):
+            calls.append(tags)
+            if tags == "all":
+                return ["TestDifferent"]
+            running.append(tags)
+            try:
+                if not cancelled.wait(30):
+                    raise AssertionError("the queue was never dropped")
+                raise ValueError("later compile failed")
+            finally:
+                running.remove(tags)
+        with patch.object(engine, "compile_inventory", side_effect=compiled), patch.object(engine, "compile_workers", return_value=1), \
+                patch.object(engine, "ThreadPoolExecutor", pool), self.assertRaisesRegex(ValueError, "all-tag compiled inventory differs"):
+            engine.verify([file], plan)
+        self.assertEqual(running, [])
+        self.assertEqual(waits, [True])
+        self.assertEqual(calls[0], "all")
+        self.assertLessEqual(len(calls), 2)
+
+    def test_no_compilation_outlives_a_closed_generator(self):
+        pool, cancelled, waits = self.held_pool()
+        calls, running = [], []
+
+        def compiled(package, tags, root):
+            calls.append(tags)
+            if tags != "0":
+                running.append(tags)
+                try:
+                    if not cancelled.wait(30):
+                        raise AssertionError("the queue was never dropped")
+                finally:
+                    running.remove(tags)
+            return ["TestOne"]
+        with patch.object(engine, "compile_inventory", side_effect=compiled), patch.object(engine, "compile_workers", return_value=2), \
+                patch.object(engine, "ThreadPoolExecutor", pool):
+            inventories = engine.compile_each([("./a", str(index)) for index in range(10)], engine.ROOT, io.StringIO())
+            self.assertEqual(next(inventories), ["TestOne"])
+            inventories.close()
+            self.assertEqual(running, [])
+        self.assertEqual(waits, [True])
+        # Two workers: at most the first job and two held ones ever started.
+        self.assertLessEqual(len(calls), 3)
+
+    def test_compile_workers_stay_between_one_and_four(self):
+        for cores, workers in ((None, 1), (1, 1), (2, 1), (4, 2), (8, 4), (64, 4)):
+            with patch.object(engine.os, "cpu_count", return_value=cores):
+                self.assertEqual(engine.compile_workers(), workers)
 
     def test_verification_also_compiles_every_optional_profile(self):
         file = fixture()
