@@ -1,159 +1,55 @@
 package gwbase
 
 import (
-	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
-
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 )
 
 // What a radosgw-admin run by the gateway's supervisor keeps about itself,
 // so that one that is stopped at the supervisor's limit, or that crashes,
 // says what it waited for:
 //
-//   - Its admin socket, in the supervisor's directory under the command's
-//     process ID. The supervisor asks it for the command's outstanding RADOS
-//     requests right before it stops the command (waitReport).
 //   - The objecter's events at level 20, in memory only. Ceph's handler of a
 //     fatal signal, the stop's SIGABRT included, writes its recent events to
 //     standard error, and eventReport reads the objecter's from there. The
 //     other subsystems keep their default memory levels.
 //   - recentEvents events instead of 500: a command that waits for two
-//     minutes logs about a thousand at these levels, and the events of the
-//     request it waits for are the oldest of them.
+//     minutes logs thousands at these levels while OSD maps change, and the
+//     events of the request it waits for are the oldest of them.
 //
 // Nothing of this is written while a command runs normally.
-const (
-	adminSocketPath = supervised.MarkerDir + "/radosgw-admin." + supervised.DeadlineQueryPID + ".asok"
-	// waitRequest asks an admin socket for the objecter's requests.
-	waitRequest  = `{"prefix":"objecter_requests"}`
-	recentEvents = 10000
-)
+//
+// The command's admin socket is no source for this. A radosgw-admin has
+// several RADOS clients (one reads the configuration, another the buckets),
+// and its objecter_requests command answers for the first one only.
+const recentEvents = 10000
 
 // diagnosticArgv returns the radosgw-admin command line argv with the
-// options above. Ceph replaces $pid itself. Options that the caller gave
-// come later and win.
+// options above. Options that the caller gave come later and win.
 func diagnosticArgv(argv []string) []string {
 	if len(argv) == 0 || argv[0] != "radosgw-admin" {
 		return argv
 	}
-	out := make([]string, 0, len(argv)+3)
-	out = append(out, argv[0],
-		"--admin-socket="+strings.ReplaceAll(adminSocketPath, supervised.DeadlineQueryPID, "$pid"),
-		"--debug-objecter=0/20", fmt.Sprintf("--log-max-recent=%d", recentEvents))
+	out := make([]string, 0, len(argv)+2)
+	out = append(out, argv[0], "--debug-objecter=0/20", fmt.Sprintf("--log-max-recent=%d", recentEvents))
 	return append(out, argv[1:]...)
 }
 
 const (
-	// maxWaitRequests bounds the RADOS requests that waitReport describes.
-	maxWaitRequests = 4
-	// maxWaitNameBytes bounds an object name, an operation or a pool name.
-	maxWaitNameBytes = 64
-	// maxEvents and maxEventBytes bound the events of eventReport.
-	maxEvents     = 32
-	maxEventBytes = 160
+	// maxOpenRequests bounds the requests without a reply that eventReport
+	// describes. A bucket index read has one for each of the bucket's
+	// shards, eleven by default.
+	maxOpenRequests = 12
+	// maxThreadEvents, maxOtherEvents and maxEventBytes bound the events of
+	// eventReport.
+	maxThreadEvents = 24
+	maxOtherEvents  = 16
+	maxEventBytes   = 160
+	// maxNameBytes bounds an object name, a locator or an operation list.
+	maxNameBytes = 80
 )
-
-// objecterRequests is the answer of a Ceph client's admin socket to
-// waitRequest, as far as waitReport reads it.
-type objecterRequests struct {
-	Ops []struct {
-		Tid      uint64          `json:"tid"`
-		PG       string          `json:"pg"`
-		OSD      int             `json:"osd"`
-		Object   string          `json:"object_id"`
-		Locator  string          `json:"object_locator"`
-		Paused   json.RawMessage `json:"paused"`
-		Age      float64         `json:"age"`
-		Attempts int             `json:"attempts"`
-		OSDOps   []string        `json:"osd_ops"`
-	} `json:"ops"`
-	LingerOps []json.RawMessage `json:"linger_ops"`
-	PoolOps   []struct {
-		Tid  uint64 `json:"tid"`
-		Pool int64  `json:"pool"`
-		Type string `json:"operation_type"`
-	} `json:"pool_ops"`
-	PoolStatOps []json.RawMessage `json:"pool_stat_ops"`
-	StatfsOps   []json.RawMessage `json:"statfs_ops"`
-	CommandOps  []json.RawMessage `json:"command_ops"`
-}
-
-// waitReport says which RADOS requests a command had outstanding when the
-// supervisor asked it, from the answer to waitRequest: for at most
-// maxWaitRequests object requests the operations, the object, its pool and
-// placement group, the OSD they were sent to, how often and how long ago;
-// then pool operations and the numbers of the other kinds. A watch is no
-// request that a command waits for, and is only counted. It returns "" for
-// no answer. Object names are names of RGW metadata and data objects; the
-// name of an object in a key namespace is an access key or a Swift user,
-// and is left out.
-func waitReport(reply []byte, cut bool) string {
-	if len(reply) == 0 {
-		return ""
-	}
-	var requests objecterRequests
-	if cut || json.Unmarshal(reply, &requests) != nil {
-		return "its answer about its RADOS requests could not be read"
-	}
-	var parts []string
-	for i, op := range requests.Ops {
-		if i == maxWaitRequests {
-			parts = append(parts, fmt.Sprintf("%d more", len(requests.Ops)-i))
-			break
-		}
-		object := printable(op.Object, maxWaitNameBytes)
-		if keyNamespace(op.Locator) {
-			object = "a key object"
-		}
-		target := fmt.Sprintf("osd.%d", op.OSD)
-		if op.OSD < 0 {
-			target = "no OSD"
-		}
-		paused := ""
-		if state := strings.TrimSpace(string(op.Paused)); state != "" && state != "0" && state != "false" {
-			paused = ", paused"
-		}
-		operations := make([]string, 0, len(op.OSDOps))
-		for j, name := range op.OSDOps {
-			if j == maxWaitRequests {
-				operations = append(operations, "...")
-				break
-			}
-			operations = append(operations, printable(name, maxWaitNameBytes))
-		}
-		parts = append(parts, fmt.Sprintf("tid %d [%s] of %s in %s, pg %s, on %s%s, sent %d times, %.1fs old", op.Tid, strings.Join(operations, ","),
-			object, printable(op.Locator, maxWaitNameBytes), printable(op.PG, maxWaitNameBytes), target, paused, op.Attempts, op.Age))
-	}
-	text := "it had no RADOS object request outstanding"
-	if len(requests.Ops) > 0 {
-		text = fmt.Sprintf("it waited for %d RADOS object requests: %s", len(requests.Ops), strings.Join(parts, "; "))
-	}
-	var others []string
-	for i, op := range requests.PoolOps {
-		if i == maxWaitRequests {
-			break
-		}
-		others = append(others, fmt.Sprintf("pool operation tid %d %s of pool %d", op.Tid, printable(op.Type, maxWaitNameBytes), op.Pool))
-	}
-	for _, kind := range []struct {
-		name  string
-		count int
-	}{
-		{"pool operations", max(0, len(requests.PoolOps)-maxWaitRequests)}, {"pool statistics requests", len(requests.PoolStatOps)},
-		{"statfs requests", len(requests.StatfsOps)}, {"commands", len(requests.CommandOps)}, {"watches", len(requests.LingerOps)},
-	} {
-		if kind.count > 0 {
-			others = append(others, fmt.Sprintf("%d %s", kind.count, kind.name))
-		}
-	}
-	if len(others) > 0 {
-		text += ", and had " + strings.Join(others, ", ")
-	}
-	return text
-}
 
 // keyNamespace reports whether text names the RGW namespace of access keys
 // or of Swift keys, whose object names are the keys' identifiers.
@@ -178,15 +74,28 @@ func printable(text string, limit int) string {
 }
 
 // The dump of recent events that Ceph's fatal signal handler writes to
-// standard error: numbered lines, each with its time, thread and level, and
-// the message, which for the objecter starts with the client's name.
+// standard error after its report: numbered lines, each with its time,
+// thread and level, and the message, which for an objecter starts with its
+// client's name. The report names the thread that took the signal.
 var (
-	recentEvent   = regexp.MustCompile(`^ *-?\d{1,6}> \d{4}-\d\d-\d\dT(\d\d:\d\d:\d\d\.\d{3})\S* [0-9a-f]{1,16} +-?\d{1,2} (.*)$`)
-	objecterEvent = regexp.MustCompile(`^client\.[0-9?]{1,20}\.objecter (.*)$`)
-	// Session reference counting, logged several times for each request.
-	sessionEvent = regexp.MustCompile(`^(?:_?get_session|put_session|_session_op_assign|_session_op_remove) `)
-	pointer      = regexp.MustCompile(`0x[0-9a-f]+`)
-	elapsed      = regexp.MustCompile(`\d+\.\d+s`)
+	signalThread  = regexp.MustCompile(`(?m)^ *in thread ([0-9a-f]{1,16}) thread_name:`)
+	recentEvent   = regexp.MustCompile(`^ *-?\d{1,6}> \d{4}-\d\d-\d\dT(\d\d:\d\d:\d\d\.\d{3})\S* ([0-9a-f]{1,16}) +-?\d{1,2} (.*)$`)
+	objecterEvent = regexp.MustCompile(`^client\.([0-9?]{1,20})\.objecter (.*)$`)
+	// A request with its object, locator, operations, transaction ID and
+	// OSD; where it was sent; and the end of a transaction.
+	submitEvent = regexp.MustCompile(`^_op_submit oid (.+) '([^']*)' '[^']*' \[(.*)\] tid (\d{1,20}) osd\.(-?\d{1,10})$`)
+	sendEvent   = regexp.MustCompile(`^_send_op (\d{1,20}) to (\S+) on osd\.-?\d{1,10}$`)
+	finishEvent = regexp.MustCompile(`^_finish_op (\d{1,20})$`)
+	// What the objecter logs for every request besides the lines that name
+	// its object, target and transaction: session reference counting, the
+	// request's address, the hashed placement group, the request count and
+	// the reply's bookkeeping after the line that carries its result.
+	routineEvent = regexp.MustCompile(`^(?:_?get_session |put_session |_session_op_assign |_session_op_remove |_op_submit op |_calc_target target |\d+ in flight$|handle_osd_op_reply |_finish_op )`)
+	// Where an event names a request's transaction ID.
+	requestID   = regexp.MustCompile(`(?:\btid |^_send_op |osd_op_reply\(|\bop )(\d{1,20})\b`)
+	mapEvent    = regexp.MustCompile(`^handle_osd_map got epochs `)
+	pointer     = regexp.MustCompile(`0x[0-9a-f]+`)
+	elapsedTime = regexp.MustCompile(`\d+\.\d+s`)
 )
 
 const (
@@ -194,70 +103,212 @@ const (
 	recentEventsEnd   = "--- logging levels ---"
 )
 
-// eventReport summarizes the objecter's events in the first dump of recent
-// events in stderr: the last maxEvents different ones in the order of their
-// first occurrence, each with its time and at most maxEventBytes of its
-// text. An event that repeats, as the objecter's tick does every five
-// seconds of a wait, is one entry with its count and its last time, so the
-// entries before it are the requests that preceded the wait. The events name
-// what the objecter did: the OSD map epochs it received, each request with
-// its object, pool, placement group and OSD, and each reply. An event that
-// names a key namespace is replaced, session reference counting is left
-// out, and events of other subsystems, whose text this package cannot
-// vouch for, are only counted. It returns "" when stderr holds no dump.
+// eventReport says what the thread that took the signal, which for a stopped
+// command is the thread that waited, asked of RADOS and did not get, from
+// the objecter's events in the first dump of recent events in stderr. A
+// command has several RADOS clients, each with its own transaction IDs; the
+// report is about the one that the thread used last:
+//
+//   - how many requests the thread submitted in these events and which have
+//     no reply, at most maxOpenRequests: the transaction ID, operations,
+//     object, locator, placement group and OSD, and when it was submitted.
+//     None without a reply means that the thread waits for something else,
+//     or for a request older than the events;
+//   - the thread's last maxThreadEvents events, which give the OSD map
+//     epoch each request was computed for;
+//   - of the other threads' events of that client from then on, at most
+//     maxOtherEvents: those that name one of these transactions (a reply
+//     with its result, a resend, a laggy mark) and the OSD maps received.
+//
+// The latest events alone would not do: while a command waits, its watches
+// are pinged every five seconds and OSD maps keep arriving, which pushes the
+// request it waits for out of any short tail. An event that repeats is one
+// entry with its count and last time. Each entry has its time and at most
+// maxEventBytes of its text. An event or request that names a key namespace
+// has its text replaced, and events of other subsystems, whose text this
+// package cannot vouch for, are only counted. Without an event of the
+// signal's thread the last maxThreadEvents events of all threads and clients
+// are shown. It returns "" when stderr holds no dump.
 func eventReport(stderr []byte) string {
-	_, dump, found := strings.Cut(string(stderr), recentEventsBegin)
+	head, dump, found := strings.Cut(string(stderr), recentEventsBegin)
 	if !found {
 		return ""
 	}
 	dump, _, _ = strings.Cut(dump, recentEventsEnd)
-	type entry struct {
-		first, last, text string
-		count             int
+	thread := ""
+	if match := signalThread.FindStringSubmatch(head); match != nil {
+		thread = match[1]
 	}
-	var entries []*entry
-	seen := map[string]*entry{}
-	all, objecter := 0, 0
+	type event struct{ time, thread, client, text string }
+	var events []event
+	all := 0
 	for line := range strings.SplitSeq(dump, "\n") {
-		event := recentEvent.FindStringSubmatch(line)
-		if event == nil {
+		match := recentEvent.FindStringSubmatch(line)
+		if match == nil {
 			continue
 		}
 		all++
-		message := objecterEvent.FindStringSubmatch(event[2])
-		if message == nil {
-			continue
+		if message := objecterEvent.FindStringSubmatch(match[3]); message != nil {
+			events = append(events, event{time: match[1], thread: match[2], client: message[1], text: strings.TrimSpace(pointer.ReplaceAllString(message[2], "0x"))})
 		}
-		objecter++
-		text := strings.TrimSpace(pointer.ReplaceAllString(message[1], "0x"))
-		switch {
-		case sessionEvent.MatchString(text):
-			continue
-		case keyNamespace(text):
-			text = "an event of a key object"
-		}
-		key := elapsed.ReplaceAllString(text, "#s")
-		if known := seen[key]; known != nil {
-			known.count++
-			known.last, known.text = event[1], text
-			continue
-		}
-		added := &entry{first: event[1], last: event[1], text: text, count: 1}
-		seen[key] = added
-		entries = append(entries, added)
 	}
-	if objecter == 0 {
+	if len(events) == 0 {
 		return fmt.Sprintf("none of its %d recent events is of the objecter", all)
 	}
-	shown := entries[max(0, len(entries)-maxEvents):]
-	parts := make([]string, 0, len(shown))
-	for _, e := range shown {
-		part := e.first + " " + printable(e.text, maxEventBytes)
-		if e.count > 1 {
-			part += fmt.Sprintf(" (%d times until %s)", e.count, e.last)
+	summary := fmt.Sprintf("of its %d recent events, %d of the objecter", all, len(events))
+	// shown is what an entry says of an event.
+	shown := func(e event) string {
+		if keyNamespace(e.text) {
+			return "an event of a key object"
 		}
-		parts = append(parts, part)
+		return e.text
 	}
-	return fmt.Sprintf("the last %d of the %d different objecter events among its %d recent events (%d of the objecter): %s",
-		len(shown), len(entries), all, objecter, strings.Join(parts, " | "))
+	// collect lists events in order, a repeated one once.
+	collect := func(selected []event, limit int, fromEnd bool) (parts []string, total int) {
+		type entry struct {
+			first, last, text string
+			count             int
+		}
+		var entries []*entry
+		seen := map[string]*entry{}
+		for _, e := range selected {
+			text := shown(e)
+			key := elapsedTime.ReplaceAllString(text, "#s")
+			if known := seen[key]; known != nil {
+				known.count++
+				known.last, known.text = e.time, text
+				continue
+			}
+			added := &entry{first: e.time, last: e.time, text: text, count: 1}
+			seen[key] = added
+			entries = append(entries, added)
+		}
+		total = len(entries)
+		if fromEnd {
+			entries = entries[max(0, total-limit):]
+		} else {
+			entries = entries[:min(total, limit)]
+		}
+		for _, e := range entries {
+			part := e.first + " " + printable(e.text, maxEventBytes)
+			if e.count > 1 {
+				part += fmt.Sprintf(" (%d times until %s)", e.count, e.last)
+			}
+			parts = append(parts, part)
+		}
+		return parts, total
+	}
+	notRoutine := func(e event) bool { return !routineEvent.MatchString(e.text) }
+	client := ""
+	for _, e := range events {
+		if e.thread == thread {
+			client = e.client
+		}
+	}
+	if client == "" {
+		var rest []event
+		for _, e := range events {
+			if notRoutine(e) {
+				rest = append(rest, e)
+			}
+		}
+		parts, total := collect(rest, maxThreadEvents, true)
+		return fmt.Sprintf("%s, none of the signalled thread, the last %d of %d different ones: %s", summary, len(parts), total, strings.Join(parts, " | "))
+	}
+	// The requests of that client: the thread's own, where each was sent,
+	// and which ended.
+	type request struct {
+		id, time, object, locator, operations, osd, group string
+		own                                               bool
+	}
+	var requests []*request
+	byID := map[string]*request{}
+	for _, e := range events {
+		if e.client != client {
+			continue
+		}
+		if match := submitEvent.FindStringSubmatch(e.text); match != nil {
+			r := &request{id: match[4], time: e.time, object: match[1], locator: match[2], operations: match[3], osd: match[5], own: e.thread == thread}
+			requests, byID[r.id] = append(requests, r), r
+		} else if match := sendEvent.FindStringSubmatch(e.text); match != nil && byID[match[1]] != nil {
+			byID[match[1]].group = match[2]
+		} else if match := finishEvent.FindStringSubmatch(e.text); match != nil {
+			delete(byID, match[1])
+		}
+	}
+	submitted, othersOpen := 0, 0
+	named := map[string]bool{}
+	var open []string
+	for _, r := range requests {
+		if r.own {
+			submitted++
+		}
+		switch {
+		case byID[r.id] != r:
+		case !r.own:
+			othersOpen++
+		default:
+			named[r.id] = true
+			if len(open) == maxOpenRequests {
+				continue
+			}
+			object, target := printable(r.object, maxNameBytes), "osd."+r.osd
+			if keyNamespace(r.locator) {
+				object = "a key object"
+			}
+			if strings.HasPrefix(r.osd, "-") {
+				target = "no OSD"
+			}
+			if r.group != "" {
+				target = "pg " + printable(r.group, maxNameBytes) + " on " + target
+			}
+			open = append(open, fmt.Sprintf("tid %s [%s] of %s in %s to %s at %s", r.id, printable(r.operations, maxNameBytes), object, printable(r.locator, maxNameBytes), target, r.time))
+		}
+	}
+	text := fmt.Sprintf("%s; through client.%s the signalled thread submitted %d requests in them, %d without a reply", summary, client, submitted, len(named))
+	if len(open) > 0 {
+		text += ": " + strings.Join(open, "; ")
+		if len(named) > len(open) {
+			text += fmt.Sprintf("; %d more", len(named)-len(open))
+		}
+	}
+	if othersOpen > 0 {
+		text += fmt.Sprintf(" (other threads: %d without a reply)", othersOpen)
+	}
+	// The thread's last events of that client, and where they start.
+	var last []event
+	start := 0
+	for i := len(events) - 1; i >= 0 && len(last) < maxThreadEvents; i-- {
+		if e := events[i]; e.thread == thread && e.client == client && notRoutine(e) {
+			last = append(last, e)
+			start = i
+		}
+	}
+	slices.Reverse(last)
+	for _, e := range last {
+		for _, match := range requestID.FindAllStringSubmatch(e.text, -1) {
+			named[match[1]] = true
+		}
+	}
+	var others []event
+	for _, e := range events[start:] {
+		if e.thread == thread || e.client != client || !notRoutine(e) {
+			continue
+		}
+		about := mapEvent.MatchString(e.text)
+		for _, match := range requestID.FindAllStringSubmatch(e.text, -1) {
+			about = about || named[match[1]]
+		}
+		if about {
+			others = append(others, e)
+		}
+	}
+	parts, _ := collect(last, maxThreadEvents, true)
+	text += fmt.Sprintf("; its last %d events: %s", len(parts), strings.Join(parts, " | "))
+	if parts, total := collect(others, maxOtherEvents, false); total > 0 {
+		text += fmt.Sprintf("; then of other threads, for these requests and OSD maps, the first %d of %d: %s", len(parts), total, strings.Join(parts, " | "))
+	} else {
+		text += "; then no event of another thread for these requests, and no OSD map"
+	}
+	return text
 }

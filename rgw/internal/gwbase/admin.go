@@ -83,8 +83,8 @@ func RedactAdminFailure(err error) error {
 // RedactAdminFailure does, reading a fatal signal report from its whole
 // standard error. With such a report it also describes the shape of its
 // standard output, but never its content, which tells a command that crashed
-// after it wrote its result from one that crashed before, and the objecter's
-// last events (eventReport).
+// after it wrote its result from one that crashed before, and what the
+// crashed thread had asked of RADOS (eventReport).
 func adminRunFailure(report supervised.Report) error {
 	err := servicehook.NativeFailure("radosgw-admin", report.ExitCode, report.Stdout, report.Stderr)
 	var failure *ceph.NativeFailure
@@ -373,8 +373,7 @@ func (c *Core) supervisedPrefix(ctx context.Context, target testcontainers.Conta
 		return nil, false, servicehook.Invalid(errors.New("RGW gateway is no longer owned by this cluster"))
 	}
 	limit := adminLimit(ctx)
-	stopped := supervised.WithDeadlineQuery(supervised.WithDeadlineSignal(ctx, stopSignal), adminSocketPath, waitRequest)
-	report, err := servicehook.RunOwnedRoleCommand(stopped, c.cluster, target, "radosgw-admin", limit, maxBytes, diagnosticArgv(argv)...)
+	report, err := servicehook.RunOwnedRoleCommand(supervised.WithDeadlineSignal(ctx, stopSignal), c.cluster, target, "radosgw-admin", limit, maxBytes, diagnosticArgv(argv)...)
 	var unstopped *ceph.NativeCommandUnstoppedError
 	switch {
 	case errors.As(err, &unstopped):
@@ -394,7 +393,7 @@ func (c *Core) supervisedPrefix(ctx context.Context, target testcontainers.Conta
 		return nil, false, servicehook.ClassifyExec(ctx, err)
 	case report.TimedOut:
 		text := fmt.Sprintf("radosgw-admin still ran after %ds and was stopped", limit)
-		for _, detail := range []string{stopReport(report.Stderr), waitReport(report.DeadlineReply, report.DeadlineReplyCut), eventReport(report.Stderr)} {
+		for _, detail := range []string{stopReport(report.Stderr), eventReport(report.Stderr)} {
 			if detail != "" {
 				text += "; " + detail
 			}
@@ -410,8 +409,7 @@ func (c *Core) supervisedPrefix(ctx context.Context, target testcontainers.Conta
 // supervisor stops it on its own: the call's bound less a margin for stopping
 // it and returning, so that a command that runs too long is reported as such,
 // with where it was (stopReport), within the bound. Without a bound, it is 0. A call whose context ends first
-// stops the command itself. The stop takes at most the supervisor's question
-// (one second), the signal's grace (two) and its bounded reads.
+// stops the command itself.
 func adminLimit(ctx context.Context) int {
 	deadline, ok := ctx.Deadline()
 	if !ok {

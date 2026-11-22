@@ -150,17 +150,19 @@ type UserInfo struct {
 // thread's backtrace; the error text then also says "when it was stopped,
 // thread radosgw-admin was in" and names the first frames, functions of the
 // binary without arguments or addresses, so that a command that hung says
-// where. It then also says what the command waited for: the RADOS requests
-// it had outstanding, which the supervisor asks the command's admin socket
-// for within one second before the signal ("it waited for N RADOS object
-// requests", each with its operations, object, pool, placement group and
-// OSD), and the last events of its RADOS client (the OSD map epochs it
-// received, the requests it sent and their replies), bounded in number and
-// length. For that every radosgw-admin of the gateway runs with an admin
-// socket below /tmp/tc-supervised, with its RADOS client's events kept in
-// memory at level 20 and with room for 10000 recent events; a command that
-// ends normally writes none of it. The name of an object in an access key or
-// Swift key namespace is left out. Give a command whose normal duration is
+// where. It then also says what that thread had asked of RADOS, from the
+// events of the command's RADOS client that Ceph dumps on the signal: how
+// many requests the thread submitted and which have no reply ("through
+// client.N the signalled thread submitted S requests in them, U without a
+// reply: tid T [operations] of OBJECT in LOCATOR to pg PG on osd.M at
+// TIME"), the thread's last events, which give the OSD map epoch of each
+// request, and what the other threads logged for those requests (a reply
+// with its result, a laggy mark) and the OSD maps received since, all
+// bounded in number and length. For that every radosgw-admin of the gateway
+// runs with its RADOS client's events kept in memory at level 20 and with
+// room for 10000 recent events; a command that ends normally writes none of
+// it. The name of an object in an access key or Swift key namespace is left
+// out. Give a command whose normal duration is
 // known a ctx of its own with that bound, not the whole test's. When Admin
 // cannot confirm the stop, for example because the gateway is paused or the
 // engine is unreachable, it returns a *ceph.NativeCommandUnstoppedError whose
