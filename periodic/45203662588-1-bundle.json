@@ -1,0 +1,233 @@
+{
+  "classification": "passed",
+  "complete": true,
+  "elapsed_seconds": 631.455,
+  "execution": "45203662588-1",
+  "plan": {
+    "budget_seconds": 6600,
+    "maximum_runner_minutes": 150,
+    "mode": "rotate",
+    "plan_sha256": "ab6113c067a8b517de15415d781852b02429acb8afc802198780bd8932b23423",
+    "runs": [
+      {
+        "budget_seconds": 6600,
+        "catalogue_sha256": "a554c29dd86e46e285eda14deff27e6b89ce99bd1a97ae69b387c7e6cc591dd8",
+        "cell": "20.2.4/e30ae90bf563",
+        "entries": [
+          {
+            "core": false,
+            "id": "topology-messenger_client_cohorts-35379b66-89f5454adf",
+            "native_seconds": 1200,
+            "network": "host",
+            "profile": {
+              "architecture": "",
+              "batch": "messenger_client_cohorts",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "topology",
+              "checker": "none",
+              "id": "topology-messenger_client_cohorts-35379b66",
+              "image_roles": "essential,client,cephfs,rgw",
+              "job_timeout": 60,
+              "network_tests": [
+                "TestMessengerClientProfileCRC"
+              ],
+              "networks": [
+                "host",
+                "bridge"
+              ],
+              "package": "./internal/integration",
+              "profile": "topology/messenger_client_cohorts/internal-integration",
+              "representative": "",
+              "requires_ceph": true,
+              "retry_job_timeout": 120,
+              "sources": [
+                "internal/integration/messenger_client_cohorts_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_topology,ci_batch,ci_batch_messenger_client_cohorts",
+              "timeout": "50m"
+            },
+            "tests": [
+              "TestMessengerClientProfileAddressFamilies",
+              "TestMessengerClientProfileCRC",
+              "TestMessengerClientProfileWithoutKeyTypes"
+            ]
+          },
+          {
+            "core": false,
+            "id": "topology-bootstrap_combinations-04c41d18-f039894c4e",
+            "native_seconds": 1200,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "bootstrap_combinations",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "topology",
+              "checker": "none",
+              "id": "topology-bootstrap_combinations-04c41d18",
+              "image_roles": "essential,client,cephfs,rgw",
+              "job_timeout": 40,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration",
+              "profile": "topology/bootstrap_combinations/internal-integration",
+              "representative": "",
+              "requires_ceph": true,
+              "retry_job_timeout": 80,
+              "sources": [
+                "internal/integration/bootstrap_combinations_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_topology,ci_batch,ci_batch_bootstrap_combinations",
+              "timeout": "30m"
+            },
+            "tests": [
+              "TestBootstrapOptionCombinations"
+            ]
+          }
+        ],
+        "images": {
+          "cpu_baseline": {},
+          "eligibility": "available",
+          "layout": "roles",
+          "references": {
+            "cephfs": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-cephfs",
+            "client": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-client",
+            "essential": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-essential",
+            "rgw": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-rgw"
+          }
+        },
+        "maximum_runner_minutes": 150,
+        "mode": "rotate",
+        "plan_sha256": "f5b7023b86f732047c69397f54135f4d1fece37959d876979fee3c3ee7cd9937",
+        "platform": "linux/amd64",
+        "reason": "random_sample",
+        "release": "20.2.4",
+        "schema": "ceph-periodic-sample/v1",
+        "scope": "flaky_discovery_sample_not_support",
+        "selected_at": "2026-11-23T15:18:36.155442+00:00",
+        "source_sha": "3dbc6603d99048f2fa030fa905bcdb4f4a6687fc"
+      },
+      {
+        "budget_seconds": 6600,
+        "catalogue_sha256": "a554c29dd86e46e285eda14deff27e6b89ce99bd1a97ae69b387c7e6cc591dd8",
+        "cell": "19.2.5/e30ae90bf563",
+        "entries": [
+          {
+            "core": false,
+            "id": "topology-messenger_client_cohorts-35379b66-89f5454adf",
+            "native_seconds": 1200,
+            "network": "host",
+            "profile": {
+              "architecture": "",
+              "batch": "messenger_client_cohorts",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "topology",
+              "checker": "none",
+              "id": "topology-messenger_client_cohorts-35379b66",
+              "image_roles": "essential,client,cephfs,rgw",
+              "job_timeout": 60,
+              "network_tests": [
+                "TestMessengerClientProfileCRC"
+              ],
+              "networks": [
+                "host",
+                "bridge"
+              ],
+              "package": "./internal/integration",
+              "profile": "topology/messenger_client_cohorts/internal-integration",
+              "representative": "",
+              "requires_ceph": true,
+              "retry_job_timeout": 120,
+              "sources": [
+                "internal/integration/messenger_client_cohorts_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_topology,ci_batch,ci_batch_messenger_client_cohorts",
+              "timeout": "50m"
+            },
+            "tests": [
+              "TestMessengerClientProfileAddressFamilies",
+              "TestMessengerClientProfileCRC",
+              "TestMessengerClientProfileWithoutKeyTypes"
+            ]
+          },
+          {
+            "core": false,
+            "id": "topology-bootstrap_combinations-04c41d18-f039894c4e",
+            "native_seconds": 1200,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "bootstrap_combinations",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "topology",
+              "checker": "none",
+              "id": "topology-bootstrap_combinations-04c41d18",
+              "image_roles": "essential,client,cephfs,rgw",
+              "job_timeout": 40,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration",
+              "profile": "topology/bootstrap_combinations/internal-integration",
+              "representative": "",
+              "requires_ceph": true,
+              "retry_job_timeout": 80,
+              "sources": [
+                "internal/integration/bootstrap_combinations_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_topology,ci_batch,ci_batch_bootstrap_combinations",
+              "timeout": "30m"
+            },
+            "tests": [
+              "TestBootstrapOptionCombinations"
+            ]
+          }
+        ],
+        "images": {
+          "cpu_baseline": {},
+          "eligibility": "available",
+          "layout": "roles",
+          "references": {
+            "cephfs": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.5-cephfs",
+            "client": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.5-client",
+            "essential": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.5-essential",
+            "rgw": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.5-rgw"
+          }
+        },
+        "maximum_runner_minutes": 150,
+        "mode": "rotate",
+        "plan_sha256": "112d959c3edb4d6e24e2b5007454d131742b18ba23ea2eca0350254b472f3698",
+        "platform": "linux/amd64",
+        "reason": "random_sample",
+        "release": "19.2.5",
+        "schema": "ceph-periodic-sample/v1",
+        "scope": "flaky_discovery_sample_not_support",
+        "selected_at": "2026-11-23T15:18:36.155442+00:00",
+        "source_sha": "3dbc6603d99048f2fa030fa905bcdb4f4a6687fc"
+      }
+    ],
+    "schema": "ceph-periodic-sample/v1/bundle",
+    "scope": "flaky_discovery_sample_not_support",
+    "seed": "3dbc6603d99048f2fa030fa905bcdb4f4a6687fc:45203662588:1",
+    "selected_at": "2026-11-23T15:18:36.155442+00:00",
+    "source_sha": "3dbc6603d99048f2fa030fa905bcdb4f4a6687fc"
+  },
+  "receipt_sha256": "e52d251ebb238b14bd9c16ed94134483d5ac81979c08983414fea952f11a7eb1",
+  "schema": "ceph-periodic-sample/v1/bundle",
+  "source_sha": "3dbc6603d99048f2fa030fa905bcdb4f4a6687fc",
+  "unstarted_versions": [],
+  "versions": [
+    {
+      "classification": "passed",
+      "complete": true,
+      "release": "20.2.4"
+    },
+    {
+      "classification": "passed",
+      "complete": true,
+      "release": "19.2.5"
+    }
+  ]
+}
