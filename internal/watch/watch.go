@@ -193,6 +193,9 @@ func Start[S, E any](ctx context.Context, spec Spec[S, E]) (*Stream[E], error) {
 		}
 		return nil, err
 	}
+	if ctx.Err() != nil {
+		return nil, context.Cause(ctx)
+	}
 	r.last = sample
 	watchCtx, cancel := context.WithCancelCause(ctx)
 	r.stream = &Stream[E]{events: make(chan E, spec.Settings.Buffer), cancel: cancel, done: make(chan struct{})}
@@ -210,7 +213,19 @@ func Start[S, E any](ctx context.Context, spec Spec[S, E]) (*Stream[E], error) {
 func (r *run[S, E]) read(ctx context.Context) (S, error) {
 	ctx, cancel := context.WithTimeout(ctx, r.spec.Settings.Timeout)
 	defer cancel()
-	return r.spec.Read(ctx)
+	sample, err := r.spec.Read(ctx)
+	if err != nil {
+		return sample, err
+	}
+	var zero S
+	if ctx.Err() != nil {
+		return zero, context.Cause(ctx)
+	}
+	// The callback can return after its deadline before the timer runs.
+	if deadline, _ := ctx.Deadline(); !time.Now().Before(deadline) {
+		return zero, context.DeadlineExceeded
+	}
+	return sample, nil
 }
 
 func (r *run[S, E]) event(kind Kind, started, finished time.Time, sample S, err error) E {

@@ -47,6 +47,8 @@ type finishedContainer struct {
 	code      int
 	unknown   bool
 	exitCode  func(context.Context) (int, error)
+	output    io.Reader
+	cancelRun func(context.Context) error
 	cancelErr error
 	mu        sync.Mutex
 	cancels   int
@@ -60,9 +62,13 @@ func (c *finishedContainer) AttachExec(context.Context, []string, []string) (Att
 	if c.noReport {
 		output = nil
 	}
+	var reportStream io.Reader = bytes.NewReader(output)
+	if c.output != nil {
+		reportStream = c.output
+	}
 	return Attachment{
 		Input:  &finishedAttachment{onClose: c.onClose},
-		Output: bytes.NewReader(output),
+		Output: reportStream,
 		ExitCode: func(ctx context.Context) (int, error) {
 			if err := ctx.Err(); err != nil {
 				return 0, err
@@ -79,10 +85,13 @@ func (c *finishedContainer) AttachExec(context.Context, []string, []string) (Att
 	}, nil
 }
 
-func (c *finishedContainer) Exec(context.Context, []string, ...tcexec.ProcessOption) (int, io.Reader, error) {
+func (c *finishedContainer) Exec(ctx context.Context, _ []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
 	c.mu.Lock()
 	c.cancels++
 	c.mu.Unlock()
+	if c.cancelRun != nil {
+		return 0, nil, c.cancelRun(ctx)
+	}
 	return 0, bytes.NewReader(nil), c.cancelErr
 }
 
@@ -115,6 +124,71 @@ func TestRunInputCancellationAfterTheOutput(t *testing.T) {
 	}
 	if ctr.cancels != 0 {
 		t.Fatalf("a supervisor that had ended was canceled %d times", ctr.cancels)
+	}
+}
+
+func TestRunInputEOFCancellationBudgets(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		outputOpen      bool
+		terminalInspect bool
+		elapsed         time.Duration
+	}{
+		{name: "output still open", outputOpen: true, elapsed: 10 * time.Second},
+		{name: "inspection times out first", elapsed: 20 * time.Second},
+		{name: "terminal inspection after cancellation", terminalInspect: true, elapsed: time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				ctr := &finishedContainer{
+					onClose: func() {},
+					exitCode: func(inspectCtx context.Context) (int, error) {
+						if tc.outputOpen {
+							t.Error("cancellation with input still attached inspected an exit")
+						}
+						cancel()
+						if tc.terminalInspect {
+							time.Sleep(time.Second)
+							return 0, nil
+						}
+						<-inspectCtx.Done()
+						return 0, inspectCtx.Err()
+					},
+					cancelRun: func(ctx context.Context) error {
+						<-ctx.Done()
+						return ctx.Err()
+					},
+				}
+				cancelAt := time.Now()
+				if tc.outputOpen {
+					reader, writer := io.Pipe()
+					defer func() { _ = reader.Close() }()
+					ctr.output = reader
+					ctr.onClose = func() { _ = writer.Close() }
+					cancelAt = cancelAt.Add(time.Second)
+					go func() {
+						time.Sleep(time.Second)
+						cancel()
+					}()
+				}
+				report, err := RunInput(ctx, ctr, "probe", time.Minute, 1024, 1024, Input{
+					Limit: 8, Writes: make(chan InputWrite), Closed: make(chan struct{}), Finished: make(chan struct{}),
+				}, "true")
+				if !errors.Is(err, context.Canceled) || len(report.Stdout) != 0 || time.Since(cancelAt) != tc.elapsed {
+					t.Fatalf("RunInput after %v returned %+v, %v; want canceled after %s", time.Since(cancelAt), report, err, tc.elapsed)
+				}
+				marker, unconfirmed := Unconfirmed(err)
+				if tc.terminalInspect {
+					if ctr.cancels != 0 || unconfirmed {
+						t.Fatalf("terminal exit used the canceler or retained a marker: %d, %q", ctr.cancels, marker)
+					}
+				} else if ctr.cancels != 1 || !unconfirmed || marker == "" {
+					t.Fatalf("failed canceler lost its marker: %d, %q", ctr.cancels, marker)
+				}
+			})
+		})
 	}
 }
 

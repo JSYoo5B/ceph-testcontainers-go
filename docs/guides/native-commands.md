@@ -168,6 +168,10 @@ if err != nil || result.ExitCode != 0 {
   before returning, within `ceph.NativeCommandStopTimeout` (15 seconds)
   independent of `ctx`. A start that Docker delivers after the stop runs
   nothing.
+- If an attached command's output closes first, Docker exit inspection has
+  a separate budget of up to 10 seconds before any stop attempt. Inspection
+  can continue after the caller's context ends. A confirmed terminal exit
+  can settle the command without a separate stop.
 - When the stop cannot be confirmed (container paused or stopped, Docker not
   answering, supervisor killed, for example by the OOM killer), the error is a
   `*ceph.NativeCommandUnstoppedError` and the command may still run. Keep it

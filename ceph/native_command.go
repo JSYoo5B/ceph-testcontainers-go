@@ -392,8 +392,10 @@ func validateNativeCommand(command NativeCommand) (string, error) {
 // NativeInput. The call stops taking writes when the command ends, and
 // returns only after its input and output work ended. Its deadline and
 // cancellation stop the command as without Input, and a write in progress
-// then fails. A malformed limit or an Input that served another command fails
-// before anything runs or any input is taken.
+// then fails. If the attached output closes first, inspecting the supervisor's
+// exit has a separate budget of up to 10 seconds before any stop attempt.
+// That inspection can continue after ctx ends. A malformed limit or an Input
+// that served another command fails before anything runs or any input is taken.
 //
 // Failures before the command runs are classified: a malformed command, or a
 // target that the cluster neither owns nor has attached, or that is stopped or
