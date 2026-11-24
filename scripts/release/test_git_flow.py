@@ -236,6 +236,15 @@ class RequestedCITests(unittest.TestCase):
                          sorted(["develop", "main", "release/**", "support/**"]))
         self.assertIn("workflows: [Code checks]", (root / ".github/workflows/requested-ci-gate.yml").read_text())
 
+    def test_required_short_rule_checks_only_develop(self):
+        policy = flow.required_short()
+        self.assertEqual(policy["conditions"]["ref_name"]["include"], ["refs/heads/develop"])
+        self.assertEqual(policy["bypass_actors"], [])
+        self.repo.api("rulesets", method="POST", body=policy)
+        flow.main(["verify"])
+        self.assertEqual(flow.optional({flow.REQUIRED_SHORT_RULE: policy}, "main"), [])
+        self.assertEqual(flow.optional({flow.REQUIRED_SHORT_RULE: policy}, "develop"), [policy])
+
     def test_without_the_option_nothing_installs_or_expects_the_rule(self):
         flow.main(["verify"])
         flow.main(["plan", "--line", "release/1.2", "--from", "develop"])

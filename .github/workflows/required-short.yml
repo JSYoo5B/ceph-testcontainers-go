@@ -1,0 +1,63 @@
+name: Required Short
+
+on:
+  pull_request:
+    branches: [develop]
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: required-short-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: Classify required Short changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Detect documentation-only changes
+        id: classify
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE" || true
+          python3 .github/scripts/docs_only.py --event pull_request --base "$BASE" --fork "$FORK"
+
+  scenarios:
+    name: Required scenarios
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    uses: ./.github/workflows/tagged-runtime.yml
+    with:
+      category: short
+      check_name: Short
+      include_batches: daemon_basics
+
+  required:
+    name: Required Short checks
+    needs: [changes, scenarios]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require the critical Short batch
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+          BATCH_RESULT: ${{ needs.scenarios.result }}
+        run: |
+          test "$CHANGES_RESULT" = success
+          if [ "$DOCS_ONLY" = true ]; then
+            test "$BATCH_RESULT" = skipped
+          else
+            test "$BATCH_RESULT" = success
+          fi
