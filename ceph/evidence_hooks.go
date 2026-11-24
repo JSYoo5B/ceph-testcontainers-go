@@ -64,7 +64,7 @@ func (c *Container) evidenceInventory(ctx context.Context) (evidence.Inventory, 
 		inv.Networks = append(inv.Networks, evidence.Network{ID: nw.ID, Name: nw.Name})
 	}
 	c.mu.Unlock()
-	control, err := c.controlPlane.diagnosticHandle(ctx)
+	control, pendingControl, err := c.controlPlane.diagnosticHandles(ctx)
 	if err != nil {
 		return inv, err
 	}
@@ -72,6 +72,9 @@ func (c *Container) evidenceInventory(ctx context.Context) (evidence.Inventory, 
 		inv.Control = evidence.Handle(control)
 		inv.ControlPlane = inv.Control
 		add("control", "cli", inv.Control)
+	}
+	if pendingControl != nil {
+		add("control", "cli-incomplete", pendingControl)
 	}
 	client, err := c.toolkit.diagnosticSnapshot(ctx)
 	if err != nil {

@@ -61,17 +61,16 @@ func daemonName(index int) string {
 // ensureControlPlane is called while topology holds c.mu. Separating CLI from
 // MON a keeps topology operations available when that quorum member is stopped.
 func (c *Container) ensureControlPlane(ctx context.Context) error {
-	if c.controlPlane.current() != nil {
-		return nil
-	}
-	ctr, err := testcontainers.Run(ctx, c.settings.essentialImage, append([]testcontainers.ContainerCustomizer{c.adminClient(), c.quorumMember("control"), c.startup.ownedLabel(),
-		WithIdleEntrypoint(),
-		testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"}))},
-		c.runDir.mounts()...)...)
-	if ctr != nil {
-		c.controlPlane.publish(ctr)
-	}
-	return err
+	return c.controlPlane.ensure(ctx, func() (testcontainers.Container, error) {
+		ctr, err := testcontainers.Run(ctx, c.settings.essentialImage, append([]testcontainers.ContainerCustomizer{c.adminClient(), c.quorumMember("control"), c.startup.ownedLabel(),
+			WithIdleEntrypoint(),
+			testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"}))},
+			c.runDir.mounts()...)...)
+		if ctr == nil {
+			return nil, err
+		}
+		return ctr, err
+	})
 }
 
 // monitorsLocked lists the owned MONs. The caller holds c.mu.
