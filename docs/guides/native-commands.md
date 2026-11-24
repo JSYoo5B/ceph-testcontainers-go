@@ -412,7 +412,10 @@ with `override.SetOSDFlag` meanwhile. `TestRADOSErasureCodedOutcomes` in
 
 - `override.SetConfig` writes a central entry with a `Section` and optional
   `Mask` (such as `class:ssd`), including MGR module options such as
-  `mgr/volumes/max_concurrent_clones`.
+  `mgr/volumes/max_concurrent_clones`. For a write, success means Ceph
+  acknowledged it and the exact entry was found at readback. Ceph does not
+  include the normalized request in its acknowledgement. To verify a known
+  native spelling, check the stored value with `Observer.Configuration`.
 - A running MGR keeps a module option whose entry is removed with
   `config rm` until it restarts; only a set, including an empty value, reaches
   its modules. `Restore` of a `mgr/` option that was absent therefore stores
