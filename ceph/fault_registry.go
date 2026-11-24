@@ -123,7 +123,7 @@ type faultEntry struct {
 	id faultID
 	// network is the network that an endpoint fault needs back.
 	network string
-	// handle is the public handle; nil while the fault is reserved.
+	// handle is the owned handle; nil while the fault is reserved.
 	handle any
 	// undo is what terminate calls in the kind's phase; nil for tracked
 	// kinds.

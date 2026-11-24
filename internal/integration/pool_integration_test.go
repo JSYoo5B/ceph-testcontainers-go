@@ -148,8 +148,20 @@ func checkPoolRemoval(t *testing.T, ctx context.Context, cluster *ceph.Container
 	if err != nil {
 		t.Fatalf("recreate removed pool %s: %v", pools[0].Name, err)
 	}
+	if _, err := cluster.Ceph(ctx, "config", "set", "mon", "mon_allow_pool_delete", "false"); err != nil {
+		t.Fatalf("set an explicit false pool deletion baseline: %v", err)
+	}
 	if err := recreated.Remove(ctx); err != nil {
 		t.Fatal(err)
+	}
+	entries, err = harness.ObserveCluster(cluster).Configuration(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(entries, func(entry ceph.ConfigEntry) bool {
+		return entry.Section == "mon" && entry.Mask == "" && entry.Name == "mon_allow_pool_delete" && entry.Value == "false"
+	}) {
+		t.Fatal("pool removal did not restore the explicit false permission")
 	}
 	t.Logf("RemovePool removed %d pools with their CRUSH rules and EC profile, refused .mgr and repeats, restored mon_allow_pool_delete and allowed name reuse", len(pools))
 }

@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/mutation"
 )
 
 var allowPoolDeleteSetting = ConfigSetting{Section: "mon", Name: "mon_allow_pool_delete"}
@@ -19,6 +21,9 @@ var errPoolMissing = errors.New("pool does not exist")
 // removePool is called with c.mu held. With skipForeign, a pool that the
 // fixture did not create is left alone instead of being reported.
 func (c *Container) removePool(ctx context.Context, name string, skipForeign bool, handle *Pool) error {
+	if err := c.restorePoolDeletePermission(ctx); err != nil {
+		return err
+	}
 	rules, err := poolCatalog{c.conn()}.crushRuleNames(ctx)
 	if err != nil {
 		return err
@@ -86,17 +91,79 @@ func (c *Container) removePool(ctx context.Context, name string, skipForeign boo
 	return nil
 }
 
-// poolDeleteOverrideHeld reports whether an override.SetConfig of mon_allow_pool_delete
-// is held and not restored. The caller holds c.mu.
-func (r *faultRegistry) poolDeleteOverrideHeld() bool {
-	return r.holds(faultConfigOverride, configOverrideKey(allowPoolDeleteSetting))
+// poolDeleteOverride returns the reservation for mon_allow_pool_delete.
+// The caller holds c.mu.
+func (r *faultRegistry) poolDeleteOverride() *faultEntry {
+	return r.entries[faultID{kind: faultConfigOverride, key: configOverrideKey(allowPoolDeleteSetting)}]
+}
+
+// poolDeletePermission retains the prior entry and an unfinished write while
+// the cluster holds the temporary configuration override.
+type poolDeletePermission struct {
+	previous *ConfigEntry
+	command  mutation.Fence
+}
+
+// restorePoolDeletePermission settles an earlier write and restores the exact
+// previous value or absence. The caller holds c.mu.
+func (c *Container) restorePoolDeletePermission(ctx context.Context) error {
+	token := c.faults.poolDeleteOverride()
+	if token == nil {
+		return nil
+	}
+	permission, ok := token.handle.(*poolDeletePermission)
+	if !ok {
+		return nil
+	}
+	if err := permission.restore(ctx, c); err != nil {
+		return fmt.Errorf("restore mon_allow_pool_delete: %w", err)
+	}
+	c.faults.release(token)
+	return nil
+}
+
+func (p *poolDeletePermission) restore(ctx context.Context, c *Container) error {
+	if err := p.command.Wait(ctx); err != nil {
+		return err
+	}
+	setting := allowPoolDeleteSetting
+	read := func() (*ConfigEntry, error) {
+		entries, err := readConfiguration(ctx, c.conn().ceph)
+		return findConfigEntry(entries, setting), err
+	}
+	matchesPrevious := func(current *ConfigEntry) bool {
+		if p.previous == nil {
+			return current == nil
+		}
+		return current != nil && current.Value == p.previous.Value
+	}
+	current, err := read()
+	if err != nil || matchesPrevious(current) {
+		return err
+	}
+	if current == nil || current.Value != "true" {
+		return errors.New("configuration entry changed outside the temporary pool removal override")
+	}
+	args := []string{"config", "rm", configWho(setting), setting.Name}
+	if p.previous != nil {
+		// The saved value was already stored. Preserve its exact spelling.
+		args = []string{"config", "set", configWho(setting), setting.Name, p.previous.Value, "--force"}
+	}
+	if err := p.command.Record(c.overrideCommand(ctx, args...)); err != nil {
+		return err
+	}
+	current, err = read()
+	if err == nil && !matchesPrevious(current) {
+		return errors.New("configuration restoration readback differs from previous entry")
+	}
+	return err
 }
 
 // deletePool is called with c.mu held (the caller holds it). It enables pool deletion in the
 // central database only for this command and restores the previous entry
 // even when deletion fails.
 func (c *Container) deletePool(ctx context.Context, pool PoolState) (err error) {
-	if c.faults.poolDeleteOverrideHeld() {
+	if c.faults.poolDeleteOverride() != nil {
 		return errors.New("restore the override.SetConfig override of mon_allow_pool_delete before Pool.Remove")
 	}
 	entries, err := readConfiguration(ctx, c.conn().ceph)
@@ -105,21 +172,21 @@ func (c *Container) deletePool(ctx context.Context, pool PoolState) (err error) 
 	}
 	previous := findConfigEntry(entries, allowPoolDeleteSetting)
 	if previous == nil || previous.Value != "true" {
-		_, setErr := runConfigCommand(ctx, c.conn().ceph, "set", configWho(allowPoolDeleteSetting), allowPoolDeleteSetting.Name, "true")
+		setting := allowPoolDeleteSetting
+		token, _, reserveErr := c.faults.reserve(ctx, faultConfigOverride, configOverrideKey(setting))
+		if reserveErr != nil {
+			return reserveErr
+		}
+		permission := &poolDeletePermission{previous: previous}
+		c.faults.settle(token, "", permission, nil, nil)
 		defer func() {
 			restoreCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			defer cancel()
-			var restoreErr error
-			if previous == nil {
-				_, restoreErr = runConfigCommand(restoreCtx, c.conn().ceph, "rm", configWho(allowPoolDeleteSetting), allowPoolDeleteSetting.Name)
-			} else {
-				_, restoreErr = runConfigCommand(restoreCtx, c.conn().ceph, "set", configWho(allowPoolDeleteSetting), allowPoolDeleteSetting.Name, previous.Value)
-			}
-			if restoreErr != nil {
-				err = errors.Join(err, fmt.Errorf("restore mon_allow_pool_delete: %w", restoreErr))
+			if restoreErr := c.restorePoolDeletePermission(restoreCtx); restoreErr != nil {
+				err = errors.Join(err, restoreErr)
 			}
 		}()
-		if setErr != nil {
+		if setErr := permission.command.Record(c.overrideCommand(ctx, "config", "set", configWho(setting), setting.Name, "true")); setErr != nil {
 			return fmt.Errorf("allow pool deletion: %w", setErr)
 		}
 	}
