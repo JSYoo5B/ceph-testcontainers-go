@@ -266,10 +266,14 @@ func TestRGWAdminStoppedCommandSaysWhereItWas(t *testing.T) {
 
 	// A 30 s bound leaves the supervisor about 15 s, in whole seconds of
 	// what remains at the call, before it stops the command.
+	// The Objecter checks only on ticks. With the native defaults of a 10 s
+	// timeout and 5 s ticks, a request sent after startup can miss the last
+	// tick before the stop. Give this command short intervals so the report
+	// must still include a real laggy event within the same stop budget.
 	const bound = 30 * time.Second
 	step, stop := context.WithTimeout(ctx, bound)
 	started := time.Now()
-	_, err = gateway.Admin(step, "user", "list")
+	_, err = gateway.Admin(step, "--objecter-timeout", "2", "--objecter-tick-interval", "1", "user", "list")
 	took := time.Since(started)
 	stop()
 	const stopped, where = "radosgw-admin still ran after 1", "s and was stopped; when it was stopped, thread radosgw-admin was in "
