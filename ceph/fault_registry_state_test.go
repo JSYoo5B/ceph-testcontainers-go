@@ -23,8 +23,8 @@ var faultRegistryMethods = map[string][]string{
 	"held":              {"append"},
 	"undo":              {"r.held", "mu.Unlock", "entry.undo(ctx)", "mu.Lock", "entry.undo(ctx)", "append", "fmt.Errorf", "make"},
 	// The two checks that need only the registry; the caller holds Container.mu.
-	"refuseInstanceFaults":   {"r.openInstanceFault", "fmt.Errorf"},
-	"poolDeleteOverrideHeld": {"r.holds", "configOverrideKey"},
+	"refuseInstanceFaults": {"r.openInstanceFault", "fmt.Errorf"},
+	"poolDeleteOverride":   {"configOverrideKey"},
 }
 
 func isFaultRegistryReceiver(fn *ast.FuncDecl) bool { return receiverTypeName(fn) == "faultRegistry" }
@@ -91,7 +91,7 @@ func TestFaultRegistryMethodsMakeOnlyTheirPinnedCalls(t *testing.T) {
 var faultRegistryCallers = map[string]stateCaller{
 	"Container.terminate":             {"takes", []string{"undo"}},
 	"Container.detachOSD":             {"takes", []string{"refuseInstanceFaults"}},
-	"Container.deletePool":            {"hook", []string{"poolDeleteOverrideHeld"}},
+	"Container.deletePool":            {"hook", []string{"poolDeleteOverride", "reserve", "settle"}},
 	"faultHooks.Reserve":              {"hook", []string{"reserve"}},
 	"faultHooks.Settle":               {"hook", []string{"settle"}},
 	"faultHooks.Release":              {"hook", []string{"release"}},
@@ -106,6 +106,8 @@ var faultRegistryCallers = map[string]stateCaller{
 	"Container.minCompatLease":        {"holds", []string{"handles"}},
 	"Container.raiseMinCompat":        {"holds", []string{"reserve", "settle"}},
 	"Container.leaveMinCompatLease":   {"holds", []string{"release"}},
+
+	"Container.restorePoolDeletePermission": {"hook", []string{"poolDeleteOverride", "release"}},
 }
 
 // TestFaultRegistryCallersAreAudited guards the callers: the set of functions

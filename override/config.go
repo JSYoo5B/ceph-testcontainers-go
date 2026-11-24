@@ -63,8 +63,8 @@ func notAppliedConfig(setting ceph.ConfigSetting, cause error) (*ConfigHandle, e
 	return &ConfigHandle{setting: setting, state: &configState{refused: cause}}, cause
 }
 
-// SetConfig sets one central database entry and records its native
-// normalized value. It preserves absence separately from inherited defaults,
+// SetConfig writes one central database entry and records the value read back
+// from Ceph for restoration. It preserves absence separately from inherited defaults,
 // and rejects overlapping handles for the same section/mask/name. On command
 // or readback failure, the handle remains tracked for Restore. Never race
 // external writes to this key with application/restoration; Ceph has no
@@ -82,18 +82,22 @@ func notAppliedConfig(setting ceph.ConfigSetting, cause error) (*ConfigHandle, e
 // the real handle with the error.
 //
 // Name may identify a daemon option or an MGR module key such as
-// mgr/volumes/max_concurrent_clones. SetConfig verifies the stored value, not
-// its effect: local ceph.conf entries (including ceph.WithConfigFile),
-// command-line arguments and runtime overrides take precedence over the
-// database, and some options, such as osd_op_queue, apply only when a daemon
-// starts. Check a running daemon's effective value with
+// mgr/volumes/max_concurrent_clones. Ceph acknowledges the write without
+// returning the normalized request. SetConfig confirms that the exact entry
+// exists after the write; the readback alone cannot establish that its value
+// matches the normalized request. Use ceph.Observer.Configuration to check
+// the stored value when its native spelling is known. Local ceph.conf
+// entries (including ceph.WithConfigFile), command-line arguments and
+// runtime overrides take precedence over the database. Some options,
+// such as osd_op_queue, apply only when a daemon starts. Check a running
+// daemon's effective value with
 // ceph.Container.Ceph(ctx, "config", "show", "osd.0", name). Configuration
 // output can contain secrets; log only selected fields. Restore of an
 // originally absent MGR module key publishes an empty value before removal
 // (see ConfigHandle.Restore for the delivery limitation).
 //
 // Outcomes, as the handle it returns and the error:
-//   - Entry written and read back: real handle; nil.
+//   - Write acknowledged and the exact entry found at readback: real handle; nil.
 //   - The stored value already equals the request: real handle (a lease with
 //     no write); nil.
 //   - Nil cluster: not applied handle; ceph.ErrInvalidRequest, Op

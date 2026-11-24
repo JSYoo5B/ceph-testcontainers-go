@@ -66,6 +66,25 @@ func TestObserverLockedQueriesReadActualStateOnEveryQuery(t *testing.T) {
 	}
 }
 
+func TestObserverConfigurationRequiresAStoredString(t *testing.T) {
+	cluster, ctr := newLockedObserverCluster()
+	observer, err := Observe(cluster)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const prefix = `[{"section":"mon","name":"mon_allow_pool_delete"`
+	for _, value := range []string{"", `,"value":null`, `,"value":false`} {
+		ctr.set(configDumpCmd, prefix+value+` }]`)
+		if entries, err := observer.Configuration(t.Context()); err == nil || entries != nil {
+			t.Errorf("invalid stored value %q: entries %v, error %v", value, entries, err)
+		}
+	}
+	ctr.set(configDumpCmd, prefix+`,"value":""}]`)
+	if entries, err := observer.Configuration(t.Context()); err != nil || len(entries) != 1 || entries[0].Value != "" {
+		t.Fatalf("explicitly empty value: entries %v, error %v", entries, err)
+	}
+}
+
 func TestObserverLockedQueriesRefuseATerminatedClusterBeforeAnyCommand(t *testing.T) {
 	cluster, ctr := newLockedObserverCluster()
 	observer, _ := Observe(cluster)

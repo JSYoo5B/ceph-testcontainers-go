@@ -1,8 +1,13 @@
 package ceph
 
 import (
+	"context"
+	"io"
 	"strings"
 	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
+	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
 func removalCluster(f *cephStateFake) *Container {
@@ -63,6 +68,56 @@ func TestRemovePoolRestoresPermissionWhenDeletionFails(t *testing.T) {
 	}
 	if f.HasPool("data") || f.HasRule("tc-data-replicated") || *f.AllowDelete != "false" {
 		t.Fatalf("retry left %s", f)
+	}
+}
+
+type poolPermissionRestoreFailure struct {
+	*cephStateFake
+	restoreCommand string
+}
+
+func (f *poolPermissionRestoreFailure) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if strings.Join(clustertest.ModuleArgs(args), " ") == f.restoreCommand {
+		f.restoreCommand = ""
+		return clustertest.Reply(args, 1, []byte("Error EPERM: injected configuration restore failure\n"))
+	}
+	return f.cephStateFake.Exec(ctx, args, opts...)
+}
+
+func TestRemovePoolRetriesPermissionRestoration(t *testing.T) {
+	for _, previous := range []string{"absent", "false", "0"} {
+		for _, outcome := range []string{"deleted", "still present"} {
+			t.Run(previous+"/"+outcome, func(t *testing.T) {
+				f := &poolPermissionRestoreFailure{cephStateFake: newCephStateFake()}
+				f.AddFixturePool("data", false)
+				f.restoreCommand = "config rm mon mon_allow_pool_delete"
+				if previous != "absent" {
+					value := previous
+					f.AllowDelete = &value
+					f.restoreCommand = "config set mon mon_allow_pool_delete " + value + " --force"
+				}
+				if outcome == "still present" {
+					f.FailNext("osd pool rm data data --yes-i-really-really-mean-it", 1)
+				}
+				pool := poolHandle(t, t.Context(), poolFixtureCluster(f, 3), "data")
+				if err := pool.Remove(t.Context()); err == nil || !strings.Contains(err.Error(), "restore mon_allow_pool_delete") {
+					t.Fatalf("failed restoration = %v", err)
+				}
+				if f.HasPool("data") != (outcome == "still present") || f.AllowDelete == nil || *f.AllowDelete != "true" {
+					t.Fatalf("did not reach the intended partial state: %s", f.Snapshot())
+				}
+				if err := pool.Remove(t.Context()); err != nil {
+					t.Fatal("retry:", err)
+				}
+				restored := "absent"
+				if f.AllowDelete != nil {
+					restored = *f.AllowDelete
+				}
+				if restored != previous || f.HasPool("data") || f.HasRule("tc-data-replicated") {
+					t.Fatalf("retry did not remove the fixture and restore %s: %s", previous, f.Snapshot())
+				}
+			})
+		}
 	}
 }
 

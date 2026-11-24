@@ -65,15 +65,15 @@ func TestTerminateLeavesTrackedOverrideKinds(t *testing.T) {
 func TestAllowPoolDeleteHeldFollowsTheRegistry(t *testing.T) {
 	c := &Container{}
 	var log []string
-	if c.faults.poolDeleteOverrideHeld() {
+	if c.faults.poolDeleteOverride() != nil {
 		t.Fatal("an empty registry holds the key")
 	}
 	hold(t, c, faultConfigOverride, configOverrideKey(ConfigSetting{Section: "osd", Name: "osd_max_backfills"}), "", &log)
-	if c.faults.poolDeleteOverrideHeld() {
+	if c.faults.poolDeleteOverride() != nil {
 		t.Fatal("an unrelated key counted as held")
 	}
 	hold(t, c, faultConfigOverride, configOverrideKey(allowPoolDeleteSetting), "", &log)
-	if !c.faults.poolDeleteOverrideHeld() {
+	if c.faults.poolDeleteOverride() == nil {
 		t.Fatal("the held key was not seen")
 	}
 	c.mu.Lock()
@@ -83,7 +83,7 @@ func TestAllowPoolDeleteHeldFollowsTheRegistry(t *testing.T) {
 		}
 	}
 	c.mu.Unlock()
-	if c.faults.poolDeleteOverrideHeld() {
+	if c.faults.poolDeleteOverride() != nil {
 		t.Fatal("a released key stayed held")
 	}
 }
