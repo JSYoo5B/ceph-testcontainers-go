@@ -23,6 +23,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/strictjson"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/moby/moby/api/types/network"
 )
@@ -756,9 +757,10 @@ func presentsCertificate(ctx context.Context, target, want string) error {
 
 // Restore removes the gateway link of AddGateway, if any, deletes the owned
 // account, puts the certificate and key that were stored before Start back
-// (or removes them), removes the module's multi-cluster record when only the
-// owned account wrote it, restores the module's enabled state and the
-// listener options.
+// (or removes them), and restores the module's enabled state and listener
+// options. It removes the module's multi-cluster record only if it was absent
+// at Start and now identifies the owned account in the current user and every
+// cluster row.
 //
 // Restore waits for admitted observations and refuses new observations after
 // successful restoration. It also stops an unconfirmed native probe before
@@ -1013,9 +1015,8 @@ func (k *configKey) restore(ctx context.Context, c *ceph.Container) error {
 }
 
 // multiclusterState is the module's multi-cluster record before Start. The
-// module writes it, with the session token, at every login; Restore removes a
-// record that did not exist before Start and that names no account but the
-// owned one.
+// module can write it with the session token at login. Restore removes a new
+// record with positive evidence that it belongs to the owned account.
 type multiclusterState struct {
 	existed bool
 }
@@ -1034,27 +1035,34 @@ func multiclusterValue(ctx context.Context, c *ceph.Container) (string, bool, er
 	return managerOption(ctx, c, multiclusterOption)
 }
 
-// managerOption reads one option of the mgr section from the central
-// configuration, and whether it is stored.
+// managerOption reads the unmasked mgr entry that the module commands write.
 func managerOption(ctx context.Context, c *ceph.Container, name string) (string, bool, error) {
 	data, err := c.Ceph(ctx, "config", "dump", "--format", "json")
 	if err != nil {
 		return "", false, err
 	}
 	var entries []struct {
-		Section string `json:"section"`
-		Name    string `json:"name"`
-		Value   string `json:"value"`
+		Section string  `json:"section"`
+		Mask    string  `json:"mask"`
+		Name    string  `json:"name"`
+		Value   *string `json:"value"`
 	}
-	if err := json.Unmarshal(data, &entries); err != nil {
+	if err := strictjson.Decode(data, &entries, strictjson.Options{RejectNull: true}); err != nil || entries == nil {
 		return "", false, errors.New("decode config dump")
 	}
+	var value *string
 	for _, entry := range entries {
-		if entry.Section == "mgr" && entry.Name == name {
-			return entry.Value, true, nil
+		if entry.Section == "mgr" && entry.Mask == "" && entry.Name == name {
+			if value != nil || entry.Value == nil {
+				return "", false, errors.New("invalid stored manager configuration entry")
+			}
+			value = entry.Value
 		}
 	}
-	return "", false, nil
+	if value == nil {
+		return "", false, nil
+	}
+	return *value, true, nil
 }
 
 func (m *multiclusterState) restore(ctx context.Context, c *ceph.Container, username string) error {
@@ -1074,24 +1082,25 @@ func (m *multiclusterState) restore(ctx context.Context, c *ceph.Container, user
 	return nil
 }
 
-// onlyUser reports whether every account that the multi-cluster record names
-// is username.
+// onlyUser requires the owned account in the current user and in every row
+// of a nonempty cluster configuration.
 func onlyUser(value, username string) bool {
 	var record struct {
-		CurrentUser *string `json:"current_user"`
+		CurrentUser string `json:"current_user"`
 		Config      map[string][]struct {
-			User *string `json:"user"`
+			User string `json:"user"`
 		} `json:"config"`
 	}
-	if json.Unmarshal([]byte(value), &record) != nil {
-		return false
-	}
-	if record.CurrentUser != nil && *record.CurrentUser != username {
+	if strictjson.Decode([]byte(value), &record, strictjson.Options{RejectNull: true}) != nil ||
+		username == "" || record.CurrentUser != username || len(record.Config) == 0 {
 		return false
 	}
 	for _, clusters := range record.Config {
+		if len(clusters) == 0 {
+			return false
+		}
 		for _, cluster := range clusters {
-			if cluster.User != nil && *cluster.User != username {
+			if cluster.User != username {
 				return false
 			}
 		}

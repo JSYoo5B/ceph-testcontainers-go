@@ -392,7 +392,8 @@ func backendError(result probeResult) error {
 // Remove restores the Dashboard's RGW API keys to what they were before
 // AddGateway and removes the link's RGW user. A key that was changed or
 // removed after AddGateway is refused with ceph.ErrInvalidRequest and left as
-// it is; the user is still removed. Remove is idempotent and Dashboard.Restore calls it.
+// it is; the user is still removed. Remove is idempotent, including through a
+// copy of the link. Dashboard.Restore also removes the active link.
 //
 //purpose:construction,condition,lifetime
 func (l *GatewayLink) Remove(ctx context.Context) error {
@@ -402,6 +403,9 @@ func (l *GatewayLink) Remove(ctx context.Context) error {
 	s := l.dashboard
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.link == nil || s.link.linkState != l.linkState {
+		return nil
+	}
 	ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(s.cluster))
 	defer cancel()
 	if err := s.settleProbes(ctx); err != nil {
@@ -410,9 +414,7 @@ func (l *GatewayLink) Remove(ctx context.Context) error {
 	if err := l.remove(ctx); err != nil {
 		return err
 	}
-	if s.link == l {
-		s.link = nil
-	}
+	s.link = nil
 	return nil
 }
 
