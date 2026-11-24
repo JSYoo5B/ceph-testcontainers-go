@@ -703,7 +703,8 @@ func testDashboardRGWGateway(t *testing.T) {
 		t.Fatal("the refused Remove changed the outside access key")
 	}
 	runDashboardCommand(t, ctx, cluster, []byte(linkAccess), "dashboard", "set-rgw-api-access-key", "-i", "-")
-	if err := link.Remove(ctx); err != nil {
+	copied := *link
+	if err := copied.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if err := link.Check(ctx); !errors.Is(err, ceph.ErrInvalidRequest) {
@@ -721,6 +722,22 @@ func testDashboardRGWGateway(t *testing.T) {
 	}
 	if got := s3.Request(t, ctx, "GET", "/"+bucket+"/object", nil, 200); !bytes.Equal(got, payload) {
 		t.Fatalf("S3 read back after Remove %q", got)
+	}
+	successor, err := d.AddGateway(ctx, gateway)
+	if err != nil {
+		t.Fatalf("add a successor after removing through a copy: %v", err)
+	}
+	if err := copied.Remove(ctx); err != nil {
+		t.Fatalf("repeat removal through the old copy: %v", err)
+	}
+	if duplicate, err := d.AddGateway(ctx, gateway); duplicate != nil || !errors.Is(err, ceph.ErrInvalidRequest) {
+		t.Fatalf("the old copy released the successor's slot: %v", err)
+	}
+	if err := successor.Check(ctx); err != nil {
+		t.Fatalf("successor after stale removal: %v", err)
+	}
+	if err := successor.Remove(ctx); err != nil {
+		t.Fatal(err)
 	}
 	t.Run("unconfirmed-user", func(t *testing.T) {
 		testDashboardUnconfirmedGatewayUser(t, ctx, d, gateway)

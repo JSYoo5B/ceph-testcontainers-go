@@ -183,6 +183,23 @@ func TestGatewayLinkIdentityReadersJoinRemoval(t *testing.T) {
 	<-done
 }
 
+func TestGatewayLinkCopyRetiresOnlyItsOwnLink(t *testing.T) {
+	s := dashboardRestoreState(&restoreCLI{})
+	link := &GatewayLink{&linkState{dashboard: s}}
+	s.link = link
+	copied := *link
+	if err := copied.Remove(t.Context()); err != nil || !link.removed || s.link != nil {
+		t.Fatalf("remove through copy: retired=%t slot held=%t error=%v", link.removed, s.link != nil, err)
+	}
+	successor := &GatewayLink{&linkState{dashboard: s}}
+	s.link = successor
+	// A stale link cannot settle probe work admitted under a successor.
+	s.loginUncertain = true
+	if err := copied.Remove(t.Context()); err != nil || s.link != successor || successor.removed {
+		t.Fatalf("stale removal: successor held=%t retired=%t error=%v", s.link == successor, successor.removed, err)
+	}
+}
+
 func TestUnstoppedProbeCannotDeclareServerCompletion(t *testing.T) {
 	s := &state{}
 	command := &ceph.NativeCommandUnstoppedError{}
