@@ -454,6 +454,8 @@ func testDashboardOwnedHTTPS(t *testing.T, opts ...testcontainers.ContainerCusto
 	t.Logf("DASHBOARD host-side failover mgr.%s -> mgr.%s: %s -> %s, login and summary from the test process", active, promoted, hostEndpoint, hostFailover)
 
 	// An outside edit of the certificate is refused and left as it is.
+	const multiclusterEntry = "mgr mgr/dashboard/MULTICLUSTER_CONFIG"
+	hadLoginRecord := slices.Contains(readDashboardState(t, ctx, cluster).Options, multiclusterEntry)
 	other := ca.leaf(t, 3)
 	runDashboardCommand(t, ctx, cluster, other.CertificatePEM, "dashboard", "set-ssl-certificate", "-i", "-")
 	if err := d.Restore(ctx); !errors.Is(err, ceph.ErrInvalidRequest) {
@@ -462,8 +464,15 @@ func testDashboardOwnedHTTPS(t *testing.T, opts ...testcontainers.ContainerCusto
 	if current := harness.MustCeph(t, ctx, cluster, "config-key", "get", "mgr/dashboard/crt"); !bytes.Equal(bytes.TrimSpace(current), bytes.TrimSpace(other.CertificatePEM)) {
 		t.Fatal("the refused Restore changed the outside certificate")
 	}
-	if !readDashboardState(t, ctx, cluster).Enabled {
+	afterRefusal := readDashboardState(t, ctx, cluster)
+	if !afterRefusal.Enabled {
 		t.Fatal("the refused Restore disabled the module")
+	}
+	if hadLoginRecord {
+		if slices.Contains(afterRefusal.Options, multiclusterEntry) {
+			t.Fatal("Restore left the fixture account's multi-cluster login record")
+		}
+		t.Log("DASHBOARD restored the observed owned multi-cluster login record to absence")
 	}
 	// The outside TLS edit keeps the module available after its account
 	// cleanup, so the original username can be queried directly.

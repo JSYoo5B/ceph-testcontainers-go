@@ -40,6 +40,9 @@ func (f *restoreCLI) Exec(_ context.Context, args []string, _ ...tcexec.ProcessO
 		}
 		data, _ := json.Marshal(entries)
 		return clustertest.Reply(args, 0, data)
+	case slices.Equal(command, []string{"config", "rm", "mgr", multiclusterOption}):
+		delete(f.keys, multiclusterOption)
+		return clustertest.Reply(args, 0, nil)
 	case slices.Equal(command, []string{"dashboard", "reset-rgw-api-access-key"}):
 		delete(f.keys, "mgr/dashboard/RGW_API_ACCESS_KEY")
 		return clustertest.Reply(args, 0, nil)
@@ -78,6 +81,73 @@ func dashboardRestoreState(f *restoreCLI) *state {
 		username: "tester", role: "read-only", password: "fixture-password", cert: []byte("new-cert"), key: []byte("new-key")}
 	s.registry.active = s
 	return s
+}
+
+func fixtureMulticlusterRecord(token string) string {
+	return fmt.Sprintf(`{"current_user":"tester","config":{"fixture-cluster":[{"user":"tester","token":%q}]}}`, token)
+}
+
+func TestRestoreMulticlusterRequiresOwnershipEvidence(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		value   string
+		existed bool
+		remove  bool
+	}{
+		{name: "owned", value: fixtureMulticlusterRecord("session"), remove: true},
+		{name: "owned but preexisting", value: fixtureMulticlusterRecord("session"), existed: true},
+		{name: "null", value: `null`},
+		{name: "empty object", value: `{}`},
+		{name: "current user only", value: `{"current_user":"tester","config":{}}`},
+		{name: "no current user", value: `{"config":{"one":[{"user":"tester"}]}}`},
+		{name: "missing row user", value: `{"current_user":"tester","config":{"one":[{"user":"tester"},{}]}}`},
+		{name: "null row user", value: `{"current_user":"tester","config":{"one":[{"user":null}]}}`},
+		{name: "empty cluster", value: `{"current_user":"tester","config":{"one":[{"user":"tester"}],"two":[]}}`},
+		{name: "foreign row", value: `{"current_user":"tester","config":{"one":[{"user":"tester"},{"user":"foreign"}]}}`},
+		{name: "ambiguous row", value: `{"current_user":"tester","config":{"one":[{"user":"foreign","user":"tester"}]}}`},
+		{name: "noncanonical row", value: `{"current_user":"tester","config":{"one":[{"User":"tester"}]}}`},
+		{name: "invalid JSON", value: "not json"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := &restoreCLI{keys: map[string]string{multiclusterOption: test.value}}
+			s := dashboardRestoreState(f)
+			s.multicluster = &multiclusterState{existed: test.existed}
+			if err := (&Dashboard{s}).Restore(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			got, found := f.keys[multiclusterOption]
+			if found == test.remove || found && got != test.value {
+				t.Fatalf("after Restore found=%t unchanged=%t, want removal=%t", found, got == test.value, test.remove)
+			}
+		})
+	}
+}
+
+func TestManagerOptionReadsTheExactUnmaskedEntry(t *testing.T) {
+	const masked = `{"section":"mgr","mask":"class:ssd","name":"` + multiclusterOption + `","value":"masked"}`
+	const exact = `{"section":"mgr","mask":"","name":"` + multiclusterOption + `","value":"exact"}`
+	for _, test := range []struct {
+		name  string
+		dump  string
+		want  string
+		found bool
+		err   bool
+	}{
+		{name: "masked only", dump: "[" + masked + "]"},
+		{name: "masked before exact", dump: "[" + masked + "," + exact + "]", want: "exact", found: true},
+		{name: "duplicate exact", dump: "[" + exact + "," + exact + "]", err: true},
+		{name: "missing exact value", dump: `[{"section":"mgr","name":"` + multiclusterOption + `"}]`, err: true},
+		{name: "null exact mask", dump: `[{"section":"mgr","mask":null,"name":"` + multiclusterOption + `","value":"unknown scope"}]`, err: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := &clustertest.CannedCommandContainer{Output: map[string]string{"config dump --format json": test.dump}}
+			s := testhelper.TestCluster(f, testhelper.TestConfig{StartupTimeout: time.Second})
+			got, found, err := managerOption(t.Context(), s, multiclusterOption)
+			if got != test.want || found != test.found || (err != nil) != test.err {
+				t.Fatalf("managerOption = %q, %t, %v", got, found, err)
+			}
+		})
+	}
 }
 
 func TestRestoreVerifiesAccountAfterCompetingCreateOrReplacement(t *testing.T) {

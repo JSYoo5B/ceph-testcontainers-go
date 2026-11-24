@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"github.com/moby/moby/api/types/container"
@@ -46,10 +45,10 @@ func (f *probeSettlementCLI) AttachExec(_ context.Context, args, _ []string) (su
 		Close() error
 	}
 	if f.definitive {
-		input = &settledProbeInput{inputLifetimeStream: inputLifetimeStream{output: writer}, complete: func() { f.keys[multiclusterOption] = `{"current_user":"tester","token":"fixture-session"}` }}
+		input = &settledProbeInput{inputLifetimeStream: inputLifetimeStream{output: writer}, complete: func() { f.keys[multiclusterOption] = fixtureMulticlusterRecord("fixture-session") }}
 	} else {
 		input = &lateCommandInput{output: writer, accepted: func(string) {
-			f.serverWrite = func() { f.keys[multiclusterOption] = `{"current_user":"tester","token":"late-session"}` }
+			f.serverWrite = func() { f.keys[multiclusterOption] = fixtureMulticlusterRecord("late-session") }
 		}}
 	}
 	return supervised.Attachment{Input: input, Output: reader, ExitCode: func(context.Context) (int, error) {
@@ -76,10 +75,6 @@ func (f *probeSettlementCLI) Exec(ctx context.Context, args []string, opts ...tc
 		return f.lateWriteCLI.Exec(ctx, args, opts...)
 	}
 	f.cleanupCalls++
-	if slices.Equal(clustertest.ModuleArgs(args), []string{"config", "rm", "mgr", multiclusterOption}) {
-		delete(f.keys, multiclusterOption)
-		return clustertest.Reply(args, 0, nil)
-	}
 	return f.restoreCLI.Exec(ctx, args, opts...)
 }
 
@@ -88,7 +83,7 @@ func probeSettlementState(f *probeSettlementCLI) *state {
 	s.cluster = testhelper.TestCluster(f, testhelper.TestConfig{StartupTimeout: time.Second})
 	s.accountMarker = "fixture-owned-account"
 	f.accountName = s.accountMarker
-	f.keys = map[string]string{"mgr/dashboard/crt": string(s.cert), "mgr/dashboard/key": string(s.key), multiclusterOption: `{"current_user":"tester","token":"initial-session"}`}
+	f.keys = map[string]string{"mgr/dashboard/crt": string(s.cert), "mgr/dashboard/key": string(s.key), multiclusterOption: fixtureMulticlusterRecord("initial-session")}
 	s.certificate = &configKey{name: "mgr/dashboard/crt", installed: s.cert}
 	s.privateKey = &configKey{name: "mgr/dashboard/key", installed: s.key}
 	s.multicluster = &multiclusterState{}

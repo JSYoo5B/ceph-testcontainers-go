@@ -42,9 +42,6 @@ func (f *observationCLI) Exec(ctx context.Context, args []string, opts ...tcexec
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	switch command := clustertest.ModuleArgs(args); {
-	case slices.Equal(command, []string{"config", "rm", "mgr", multiclusterOption}):
-		delete(f.keys, multiclusterOption)
-		return clustertest.Reply(args, 0, nil)
 	case slices.Equal(command, []string{"mgr", "dump", "--format", "json"}):
 		return clustertest.Reply(args, 0, []byte(`{"available":true,"active_name":"a","active_gid":1}`))
 	case slices.Equal(command, []string{"mgr", "services", "--format", "json"}):
@@ -68,7 +65,7 @@ func (f *observationCLI) AttachExec(ctx context.Context, _ []string, _ []string)
 			return ctx.Err()
 		}
 		f.mu.Lock()
-		f.keys[multiclusterOption] = `{"current_user":"tester","config":{}}`
+		f.keys[multiclusterOption] = fixtureMulticlusterRecord("observer-session")
 		f.mu.Unlock()
 		report := readyReport()
 		report.Finished = true
