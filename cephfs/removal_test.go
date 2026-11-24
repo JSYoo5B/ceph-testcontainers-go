@@ -63,6 +63,7 @@ func cephFSRemovalClusterWithControl(t *testing.T, present bool, wrap func(*ceph
 // implementation controls ordering and the existing model owns pool cleanup.
 type shutdownSequenceCLI struct {
 	*cephStateFake
+	fsList string
 	maps   []string
 	reads  int
 	onRead func(int)
@@ -71,6 +72,10 @@ type shutdownSequenceCLI struct {
 
 func (f *shutdownSequenceCLI) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
 	command := strings.Join(clustertest.ModuleArgs(args), " ")
+	if command == "fs ls --format json" && f.fsList != "" {
+		f.Output[command] = f.fsList
+		return f.CannedCommandContainer.Exec(ctx, args, opts...)
+	}
 	if command == "fs get app --format json" && len(f.maps) != 0 {
 		index := min(f.reads, len(f.maps)-1)
 		f.Output[command] = f.maps[index]
@@ -147,11 +152,63 @@ func TestRemoveRetryContinuesAfterNativeRemoval(t *testing.T) {
 	}
 	f.AddFixturePool("app-metadata", false) // Reuses the name cleaned by the first call.
 	f.Pools[len(f.Pools)-1].ID = 100
+	beforeRetry := len(f.Calls)
 	if err := app.Remove(t.Context()); err != nil {
 		t.Fatal("retry:", err)
 	}
+	for _, call := range f.Calls[beforeRetry:] {
+		if len(call) >= 2 && call[0] == "fs" && (call[1] == "rm" || call[1] == "set") {
+			t.Fatalf("retry after an empty inventory repeated native removal: %v", call)
+		}
+	}
 	if !f.HasPool("app-metadata") || f.HasPool("app-data") || !f.HasPool("attached") || filesystems(cluster).byName["app"] != nil {
 		t.Fatalf("retry left %s", f)
+	}
+}
+
+func TestRemoveRequiresCompleteFilesystemInventory(t *testing.T) {
+	for _, test := range []struct{ name, inventory string }{
+		{"null inventory", `null`},
+		{"null row", `[null]`},
+		{"missing name", `[{"metadata_pool":"app-metadata"}]`},
+		{"null name", `[{"name":null}]`},
+		{"blank name", `[{"name":" "}]`},
+		{"malformed sibling", `[{"name":"app"},{}]`},
+		{"duplicate name field", `[{"name":"app","name":"other"}]`},
+		{"duplicate row name", `[{"name":"other"},{"name":"other"}]`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var cli *shutdownSequenceCLI
+			cluster, f := cephFSRemovalClusterWithControl(t, true, func(f *cephStateFake) *shutdownSequenceCLI {
+				cli = &shutdownSequenceCLI{cephStateFake: f, fsList: test.inventory}
+				return cli
+			})
+			app := ownedFilesystem(t, cluster, "app")
+			daemon := &mdsScaleFixtureContainer{id: "active"}
+			app.Container = daemon
+			app.mds.roster.daemons = []*MDS{{Container: daemon, ID: "app-0", FilesystemName: "app"}}
+
+			if err := app.Remove(t.Context()); err == nil || !strings.Contains(err.Error(), "decode CephFS filesystems") {
+				t.Errorf("Remove error = %v, want an inventory error", err)
+			}
+			assertRemovalNotCommitted(t, cluster, f)
+			if !app.fsNewAttempted || app.Container != daemon || daemon.removes != 0 {
+				t.Fatal("invalid inventory lost filesystem creation state or removed its MDS")
+			}
+			for _, call := range f.Calls {
+				if slices.Equal(call, []string{"fs", "set", "app", "down", "true"}) {
+					t.Fatal("invalid inventory authorized filesystem shutdown")
+				}
+			}
+
+			cli.fsList = "" // The native model now emits a complete inventory.
+			if err := app.Remove(t.Context()); err != nil {
+				t.Fatal("retry with a complete inventory:", err)
+			}
+			if fs := filesystems(cluster).byName["app"]; fs != nil || len(f.Filesystems) != 0 || daemon.removes != 1 || f.HasPool("app-metadata") || f.HasPool("app-data") || !f.HasPool("attached") {
+				t.Fatalf("retry did not remove only the owned filesystem resources: %s", f)
+			}
+		})
 	}
 }
 
