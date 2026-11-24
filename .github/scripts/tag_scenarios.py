@@ -704,6 +704,16 @@ def select_required_plan(plan, category=None):
             "selected_category": category, "selected_profiles": len(selected)}
 
 
+def partition_runtime_batches(report, available, include, exclude):
+    """Split a category's dispatched batches while retaining its source inventory."""
+    batches = set((include or exclude).split(","))
+    unknown = batches - {profile["batch"] for profile in available}
+    if unknown:
+        raise ValueError("unknown runtime batch(es): " + ", ".join(sorted(unknown)))
+    selection = [profile for profile in report["include"] if (profile["batch"] in batches) == bool(include)]
+    return {**report, "include": selection, "selected_profiles": len(selection)}
+
+
 def select_representative_plan(plan):
     """The batches that declare a representative theme, across categories.
 
@@ -2060,6 +2070,8 @@ def main(argv=None):
             command.add_argument("--repetitions", type=int, default=1,
                                  help="Run each matrix entry this many times (representative only)")
             command.add_argument("--batch")
+            command.add_argument("--include-batches", default="")
+            command.add_argument("--exclude-batches", default="")
             command.add_argument("--profiles", default="", metavar="IDS",
                                  help="Comma-separated runtime profile IDs of any category or optional batch")
             command.add_argument("--changed-files", type=Path,
@@ -2127,6 +2139,12 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.command == "plan":
+            if args.include_batches and args.exclude_batches:
+                raise ValueError("runtime batch inclusion and exclusion cannot be combined")
+            if (args.include_batches or args.exclude_batches) and (
+                    args.category is None or args.verify or args.optional or args.profiles
+                    or args.representative or args.architecture_cohort):
+                raise ValueError("runtime batch partition requires an ordinary category plan")
             if args.optional and (not args.batch or args.category is not None or args.verify):
                 raise ValueError("optional plan requires --batch and excludes --category and --verify")
             if args.representative and (args.optional or args.category is not None or args.verify
@@ -2231,6 +2249,7 @@ def main(argv=None):
                     report = select_architecture_plan(plan, args.goarch)
                 else:
                     report = select_required_plan(plan, args.category)
+                    available = report["include"]
                     if args.select_declarations:
                         # Advisory unless applied: recorded, the matrix stays as is.
                         selection = declaration_selection(report["include"], args.select_declarations,
@@ -2247,6 +2266,8 @@ def main(argv=None):
                         changed, comparison = changed_comparison(args.changed_since, requested_head=args.changed_head)
                         report = select_changed_plan(report, changed)
                         report["changed_selection"] = comparison
+                    if args.include_batches or args.exclude_batches:
+                        report = partition_runtime_batches(report, available, args.include_batches, args.exclude_batches)
                     if args.verify:
                         # The source filter affects workflow execution only;
                         # verification always proves the whole required suite.

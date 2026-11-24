@@ -28,6 +28,8 @@ GUARD = PREFIX + "reserve line names"
 # is installed.
 REQUESTED = "Required requested CI"
 REQUESTED_RULE = PREFIX + "requested CI"
+REQUIRED_SHORT = "Required Short checks"
+REQUIRED_SHORT_RULE = PREFIX + "required Short"
 MAINTAINED = ["refs/heads/main", "refs/heads/develop", "refs/heads/release/**/*", "refs/heads/support/**/*"]
 
 
@@ -86,10 +88,16 @@ def requested():
     return ruleset(REQUESTED_RULE, "branch", MAINTAINED, [checks([REQUESTED])])
 
 
-def optional(managed):
-    """The optional rulesets that are installed."""
-    return [requested()] if REQUESTED_RULE in managed else []
+def required_short():
+    return ruleset(REQUIRED_SHORT_RULE, "branch", ["refs/heads/develop"], [checks([REQUIRED_SHORT])])
 
+
+def optional(managed, branch=None):
+    """The optional rulesets that are installed and apply to this branch."""
+    policies = [requested()] if REQUESTED_RULE in managed else []
+    if REQUIRED_SHORT_RULE in managed and branch in (None, "develop"):
+        policies.append(required_short())
+    return policies
 
 def reserved(lines):
     return ruleset(GUARD, "branch", ["refs/heads/release/**/*", "refs/heads/support/**/*"],
@@ -160,12 +168,14 @@ def effective(branch):
 
 def verify_branch(managed, branch, expected):
     active = effective(branch)
-    expected = [*expected, *optional(managed)]
+    expected = [*expected, *optional(managed, branch)]
     contexts = set(CODE)
     if any(policy["name"] == PREFIX + branch for policy in expected):
         contexts.add(gate(branch))
     if any(policy["name"] == REQUESTED_RULE for policy in expected):
         contexts.add(REQUESTED)
+    if any(policy["name"] == REQUIRED_SHORT_RULE for policy in expected):
+        contexts.add(REQUIRED_SHORT)
     for item in active:
         params = item.get("parameters", {})
         if item["type"] == "pull_request":
@@ -431,7 +441,7 @@ def main(argv=None):
             print("Preview only. The merged policy SHA and its checks are required by apply.")
         policies = [reserved(lines), *baseline()]
         require(set(managed) <= {p["name"] for p in policies} | {candidate(line)["name"] for line in lines}
-                | {REQUESTED_RULE}, "unexpected managed ruleset")
+                | {REQUESTED_RULE, REQUIRED_SHORT_RULE}, "unexpected managed ruleset")
         for policy in policies:
             if policy["name"] in managed:
                 ensure(managed, policy, "verify")

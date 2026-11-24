@@ -345,7 +345,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
     def test_pr_checks_are_separate_workflows_with_independent_entry_points(self):
         expected = {"code.yml", "tagged-runtime.yml", "native-regressions.yml", "experiments.yml", self.PERIODIC,
                     self.RELEASE_MATRIX, self.COMMAND, self.GATE, self.BLOCK_FAULT_PROBE, self.ARM64,
-                    "structural-review.yml",
+                    "structural-review.yml", "required-short.yml",
                     "structural-collect.yml", *self.ENTRY_POINTS}
         self.assertEqual(set(self.workflows), expected)
         probe = self.workflows[self.BLOCK_FAULT_PROBE]
@@ -1748,6 +1748,50 @@ class ChangedSelectionIdentityWorkflowTests(unittest.TestCase):
                     self.assertEqual(interpolate(folded(caller, "changed_head"), context), head if selected else "")
         for filename in ("short.yml", "periodic.yml", "release-matrix.yml"):
             self.assertNotIn("changed_head", (ROOT / (".github/workflows/" + filename)).read_text())
+
+
+class RequiredShortTests(unittest.TestCase):
+    def test_required_batch_is_removed_from_the_advisory_pr_matrix(self):
+        # Both calls share the source batch, including when declaration
+        # selection would otherwise omit it or schedule it in ordinary Short.
+        workflows = ROOT / ".github/workflows"
+        required = (workflows / "required-short.yml").read_text()
+        short = (workflows / "short.yml").read_text()
+        names = scalar(required, "include_batches")
+        self.assertEqual(names, "daemon_basics")
+        self.assertEqual(scalar(short, "exclude_batches"),
+                         "${{ github.event_name == 'pull_request' && '" + names + "' || '' }}")
+        profiles = [{"batch": "daemon_basics"}, {"batch": "basic"}]
+        plan = {"include": profiles}
+        core = engine.partition_runtime_batches(plan, profiles, names, "")
+        self.assertEqual(core["include"], [profiles[0]])
+        for ordinary in (profiles, profiles[1:]):
+            with self.subTest(ordinary=ordinary):
+                remaining = engine.partition_runtime_batches({"include": ordinary}, profiles, "", names)
+                self.assertEqual(remaining["include"], [profiles[1]])
+        with self.assertRaisesRegex(ValueError, "unknown runtime batch"):
+            engine.partition_runtime_batches(plan, profiles, "renamed", "")
+
+    def test_only_successful_required_native_work_or_confirmed_docs_passes(self):
+        workflow = (ROOT / ".github/workflows/required-short.yml").read_text()
+        jobs = dict(blocks(workflow.split("\njobs:\n", 1)[1], r"^  ([\w-]+):$"))
+        self.assertNotIn("paths", workflow.split("\njobs:", 1)[0])
+        self.assertEqual(scalar(jobs["scenarios"], "if"), "needs.changes.outputs.docs_only != 'true'")
+        self.assertIn("    needs: [changes, scenarios]\n", jobs["required"])
+        self.assertEqual(scalar(jobs["required"].split("    steps:", 1)[0], "if"), "always()")
+        command = run_command(steps(jobs["required"])[0])
+        for changes, docs, native, expected in (
+                ("success", "false", "success", 0),
+                ("success", "true", "skipped", 0),
+                ("success", "false", "failure", 1),
+                ("success", "false", "cancelled", 1),
+                ("success", "false", "skipped", 1),
+                ("failure", "true", "skipped", 1)):
+            with self.subTest(changes=changes, docs=docs, native=native):
+                result = subprocess.run(["sh", "-e", "-c", command], env={
+                    "CHANGES_RESULT": changes, "DOCS_ONLY": docs, "BATCH_RESULT": native,
+                }, timeout=10)
+                self.assertEqual(result.returncode, expected)
 
 
 class OptInDeclarationSelectionTests(unittest.TestCase):
