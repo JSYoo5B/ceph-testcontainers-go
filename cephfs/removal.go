@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/strictjson"
 )
 
 // removeFilesystem deletes one owned filesystem, its MDS daemons and Cephx keys,
@@ -149,12 +151,16 @@ func filesystemExists(ctx context.Context, c *ceph.Container, name string) (bool
 	var filesystems []struct {
 		Name string `json:"name"`
 	}
-	if err := json.Unmarshal(data, &filesystems); err != nil {
+	if err := strictjson.Decode(data, &filesystems, strictjson.Options{RejectNull: true}); err != nil {
 		return false, fmt.Errorf("decode CephFS filesystems: %w", err)
 	}
-	return slices.ContainsFunc(filesystems, func(fs struct {
-		Name string `json:"name"`
-	}) bool {
-		return fs.Name == name
-	}), nil
+	// Establish presence or absence only after validating the entire list.
+	names := make(map[string]bool, len(filesystems))
+	for i, fs := range filesystems {
+		if strings.TrimSpace(fs.Name) == "" || names[fs.Name] {
+			return false, fmt.Errorf("decode CephFS filesystems: missing, blank or repeated name at entry %d", i)
+		}
+		names[fs.Name] = true
+	}
+	return names[name], nil
 }
