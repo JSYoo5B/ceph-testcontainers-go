@@ -284,7 +284,8 @@ func RunInputWithExecCushion(ctx context.Context, ctr testcontainers.Container, 
 	// EOF alone cannot establish that the supervisor exited or cleaned up.
 	// Inspect its exit under a separate bound because attempt may have ended
 	// as the output did.
-	inspectCtx, inspectCancel := context.WithTimeout(context.WithoutCancel(ctx), CancelTimeout)
+	const attachedExitInspectTimeout = 10 * time.Second
+	inspectCtx, inspectCancel := context.WithTimeout(context.WithoutCancel(ctx), attachedExitInspectTimeout)
 	defer inspectCancel()
 	code, inspectErr := attachment.ExitCode(inspectCtx)
 	if readErr != nil {
