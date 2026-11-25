@@ -157,6 +157,10 @@ func (u *User) OverrideRateLimit(ctx context.Context, scope RateLimitScope, limi
 		if scope.Bucket == "" && servicehook.CephBefore(g.Cluster(), 20) {
 			return userRateLimitUnsupported(g.Cluster())
 		}
+		user, err := resolveRateLimitUser(ctx, g, user, scope.Bucket)
+		if err != nil {
+			return err
+		}
 		target, err := bindRateLimitTarget(ctx, g, user, native, scope.Bucket)
 		if err != nil {
 			return err
@@ -239,6 +243,10 @@ func (change *RateLimitOverrideHandle) Restore(ctx context.Context) error {
 		overrides := rateLimitOverridesOf(g.Cluster())
 		if overrides.byTarget[state.key] != state {
 			return errors.New("RGW rate-limit override is not tracked by this cluster")
+		}
+		user, err := resolveRateLimitUser(ctx, g, user, state.target.bucket)
+		if err != nil {
+			return err
 		}
 		if err := checkRateLimitTarget(ctx, g, user, native, state.target); err != nil {
 			return err
@@ -365,6 +373,31 @@ func (t rateLimitTarget) selector() []string {
 		args = append(args, "--tenant", t.tenant)
 	}
 	return args
+}
+
+// resolveRateLimitUser pins a configured realm's implicit zone to the
+// running gateway's registration. A raw zone get with no zone selector
+// reads the global default realm's zone, even when RGW user operations
+// use the configured realm's default zone.
+func resolveRateLimitUser(ctx context.Context, g *gwbase.Core, user *gwbase.User, bucket string) (*gwbase.User, error) {
+	configured := g.Scope()
+	if bucket != "" || user.State.NativeScope != nil || configured.Realm == "" || configured.Zone != "" {
+		return user, nil
+	}
+	scope, err := g.RuntimeScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if scope.Realm != configured.Realm || (configured.Zonegroup != "" && scope.Group != configured.Zonegroup) {
+		return nil, errors.New("RGW gateway registered outside its configured realm or zonegroup")
+	}
+	scoped, state := *user, *user.State
+	state.NativeScope = &scope
+	scoped.State = &state
+	if _, err := g.OwnedUser(ctx, &scoped); err != nil {
+		return nil, fmt.Errorf("confirm the owned RGW user in the realm's zone: %w", err)
+	}
+	return &scoped, nil
 }
 
 // bindRateLimitTarget captures the native identity of the selected scope of

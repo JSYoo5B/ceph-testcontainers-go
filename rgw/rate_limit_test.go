@@ -75,6 +75,9 @@ func (f *rateLimitGateway) Exec(_ context.Context, args []string, _ ...tcexec.Pr
 	}
 	original := args
 	args = gwtest.Argv(args)
+	if slices.Equal(args, []string{"hostname"}) {
+		return 0, gwtest.Stream(false, []byte(f.GetContainerID()+"\n")), nil
+	}
 	f.mu.Lock()
 	f.calls = append(f.calls, slices.Clone(args))
 	f.mu.Unlock()
@@ -198,9 +201,13 @@ func itoa(v int64) string { data, _ := json.Marshal(v); return string(data) }
 
 // rateLimitCommand returns the two words of the radosgw-admin operation.
 func rateLimitCommand(args []string) []string {
-	for i, arg := range args {
-		if arg == "json" && i+2 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-			return args[i+1 : i+3]
+	i := slices.Index(args, "json")
+	if i < 0 {
+		return nil
+	}
+	for i++; i+1 < len(args); i += 2 {
+		if !strings.HasPrefix(args[i], "-") {
+			return args[i : i+2]
 		}
 	}
 	return nil
@@ -1167,5 +1174,39 @@ func TestRGWUserRateLimitRefusesMissingNativeUserPool(t *testing.T) {
 	if _, err := user.OverrideRateLimit(t.Context(), RateLimitScope{}, RateLimit{Enabled: true}); err == nil ||
 		!strings.Contains(err.Error(), "no valid user metadata pool") || len(native.mutations()) != 0 {
 		t.Fatalf("override was not refused before mutation: %v", err)
+	}
+}
+
+func TestRGWUserRateLimitResolvesImplicitZoneOfConfiguredRealm(t *testing.T) {
+	const serviceMap = `{"services":{"rgw":{"daemons":{"1":{"metadata":{"hostname":"realm-gateway","pid":"1","frontend_config#0":"beast port=0","realm_id":"realm-id","realm_name":"named-realm","zonegroup_id":"group-id","zonegroup_name":"named-group","zone_id":"realm-zone-id","zone_name":"realm-default-zone"}}}}}}`
+	control := &clustertest.CannedCommandContainer{Output: map[string]string{"service dump --format json": serviceMap}}
+	config := Config{Name: "realm-gateway", Realm: "named-realm", Zonegroup: "named-group"}
+	f := &rateLimitGateway{
+		id: config.Name, userPool: "realm-meta:users.uid",
+		userDocument: rgwAdminFixture("test-user", "PRIVATE-SECRET", false, Quota{MaxSizeBytes: -1, MaxObjects: -1}),
+		policies:     map[string]map[string]any{},
+	}
+	cluster := testCluster(control, testhelper.TestConfig{}, map[string]testcontainers.Container{rgwServiceName(config): f})
+	user := rgwAdminOwnedTestUser(registerTestGateway(testGateway(cluster, f, config)))
+	limit, err := user.OverrideRateLimit(t.Context(), RateLimitScope{}, RateLimit{Enabled: true, MaxWriteOps: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := limit.Restore(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	seen := 0
+	for _, args := range f.calls {
+		command := rateLimitCommand(args)
+		if len(command) == 0 || command[0] != "zone" && command[0] != "ratelimit" {
+			continue
+		}
+		seen++
+		if rateLimitFlag(args, "--zone-id") != "realm-zone-id" || rateLimitFlag(args, "--realm-id") != "realm-id" {
+			t.Fatalf("operation used the global or unpinned default zone: %v", args)
+		}
+	}
+	if seen == 0 || user.base().State.NativeScope != nil {
+		t.Fatalf("rate-limit calls=%d, shared user scope=%+v", seen, user.base().State.NativeScope)
 	}
 }
