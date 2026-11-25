@@ -40,6 +40,8 @@ type rateLimitBucket struct{ id, marker, owner string }
 type rateLimitGateway struct {
 	mu sync.Mutex
 	testcontainers.Container
+	id           string
+	userPool     string
 	userDocument string
 	buckets      map[string]rateLimitBucket
 	policies     map[string]map[string]any
@@ -53,7 +55,12 @@ type rateLimitGateway struct {
 	failCancel  bool
 }
 
-func (f *rateLimitGateway) GetContainerID() string { return "gateway" }
+func (f *rateLimitGateway) GetContainerID() string {
+	if f.id != "" {
+		return f.id
+	}
+	return "gateway"
+}
 
 func (f *rateLimitGateway) State(context.Context) (*container.State, error) {
 	return &container.State{Running: true}, nil
@@ -102,6 +109,9 @@ func (f *rateLimitGateway) answer(args []string) (string, int) {
 	switch {
 	case slices.Equal(command, []string{"user", "info"}):
 		return f.userDocument, 0
+	case slices.Equal(command, []string{"zone", "get"}):
+		data, _ := json.Marshal(map[string]string{"user_uid_pool": f.userPool})
+		return string(data), 0
 	case slices.Equal(command, []string{"bucket", "stats"}):
 		bucket, ok := f.buckets[rateLimitFlag(args, "--bucket")]
 		if !ok {
@@ -212,6 +222,7 @@ func newRateLimitFixture(t *testing.T) (*User, *rateLimitGateway) {
 	t.Helper()
 	gateway, _ := newRGWAdminTestGateway(Config{})
 	f := &rateLimitGateway{
+		userPool:     "default.rgw.meta:users.uid",
 		userDocument: rgwAdminFixture("test-user", "PRIVATE-SECRET", false, Quota{MaxSizeBytes: -1, MaxObjects: -1}),
 		buckets: map[string]rateLimitBucket{
 			"limited":     {id: "zone.1", marker: "zone.1", owner: "test-user"},
@@ -1090,5 +1101,71 @@ func TestRGWRateLimitUnstoppedCommandKeepsOwnership(t *testing.T) {
 	// has settled. The missing native reply keeps the override reserved.
 	if err := h.Restore(t.Context()); err == nil {
 		t.Fatal("stop was treated as native completion")
+	}
+}
+
+func TestRGWUserRateLimitReservationUsesNativeUserPool(t *testing.T) {
+	user, implicit := newRateLimitFixture(t)
+	implicit.userPool = "rgw.meta:users.a"
+	cluster := user.base().Origin.Cluster()
+	scopedUser := func(config Config, pool string, policies map[string]map[string]any) (*User, *rateLimitGateway) {
+		native := &rateLimitGateway{id: config.Name, userPool: pool, userDocument: implicit.userDocument, policies: policies}
+		testhelper.TestRecordService(cluster, rgwServiceName(config), native)
+		return rgwAdminOwnedTestUser(registerTestGateway(testGateway(cluster, native, config))), native
+	}
+	// Different configured zones can resolve to the same underlying pool and
+	// namespace as the default scope. A different namespace is independent.
+	alias, aliasNative := scopedUser(Config{Name: "alias", Zone: "zone-alias"}, implicit.userPool, implicit.policies)
+	other, otherNative := scopedUser(Config{Name: "other", Zone: "zone-other"}, "rgw.meta:users.b", map[string]map[string]any{})
+	scope := RateLimitScope{}
+	first, err := user.OverrideRateLimit(t.Context(), scope, RateLimit{Enabled: true, MaxWriteOps: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := alias.OverrideRateLimit(t.Context(), scope, RateLimit{Enabled: true, MaxWriteOps: 7}); err == nil ||
+		!strings.Contains(err.Error(), "existing rate-limit override") || len(aliasNative.mutations()) != 0 {
+		t.Fatalf("shared metadata accepted another override: %v", err)
+	}
+	second, err := other.OverrideRateLimit(t.Context(), scope, RateLimit{Enabled: true, MaxWriteOps: 5})
+	if err != nil {
+		t.Fatalf("independent user metadata was refused: %v", err)
+	}
+	if !maps.Equal(implicit.policies["user:test-user"], rateLimitNative(true, 0, 2)) ||
+		!maps.Equal(otherNative.policies["user:test-user"], rateLimitNative(true, 0, 5)) {
+		t.Fatalf("scoped policies: default %v, other %v", implicit.policies, otherNative.policies)
+	}
+	for _, c := range []struct {
+		native *rateLimitGateway
+		zone   string
+	}{{implicit, ""}, {aliasNative, "zone-alias"}, {otherNative, "zone-other"}} {
+		i := slices.IndexFunc(c.native.calls, func(args []string) bool {
+			return slices.Equal(rateLimitCommand(args), []string{"zone", "get"})
+		})
+		if i < 0 || rateLimitFlag(c.native.calls[i], "--rgw-zone") != c.zone {
+			t.Fatalf("pool was not read using the user scope %q: %v", c.zone, c.native.calls)
+		}
+	}
+	implicit.userPool = otherNative.userPool
+	if err := first.Restore(t.Context()); err == nil || !strings.Contains(err.Error(), "metadata pool changed") {
+		t.Fatalf("changed default pool was accepted: %v", err)
+	}
+	implicit.userPool = aliasNative.userPool
+	if err := first.Restore(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !maps.Equal(otherNative.policies["user:test-user"], rateLimitNative(true, 0, 5)) {
+		t.Fatal("restoration changed the independent override")
+	}
+	if err := second.Restore(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRGWUserRateLimitRefusesMissingNativeUserPool(t *testing.T) {
+	user, native := newRateLimitFixture(t)
+	native.userPool = ""
+	if _, err := user.OverrideRateLimit(t.Context(), RateLimitScope{}, RateLimit{Enabled: true}); err == nil ||
+		!strings.Contains(err.Error(), "no valid user metadata pool") || len(native.mutations()) != 0 {
+		t.Fatalf("override was not refused before mutation: %v", err)
 	}
 }
