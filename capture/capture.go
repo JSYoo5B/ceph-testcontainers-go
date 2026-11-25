@@ -96,7 +96,8 @@ type Request struct {
 	// DefaultReadyTimeout.
 	ReadyTimeout time.Duration
 	// StopGrace bounds the wait for tcpdump to end after SIGTERM; zero is
-	// DefaultStopGrace. After it, Stop kills the helper.
+	// DefaultStopGrace. After it, Stop requests SIGKILL if it has not
+	// confirmed the helper exited.
 	StopGrace time.Duration
 }
 
@@ -149,7 +150,8 @@ func (r Request) validate() error {
 type EndReason string
 
 const (
-	// EndStopped means tcpdump ended with status 0 after Stop's SIGTERM.
+	// EndStopped means a status-0 exit after Stop's SIGTERM was confirmed
+	// within the stop grace.
 	EndStopped EndReason = "stopped"
 	// EndPacketLimit means tcpdump ended with status 0 before Stop, and the
 	// valid file holds Request.MaxPackets packets (as does tcpdump's
@@ -165,9 +167,9 @@ const (
 	EndKilled EndReason = "killed"
 	// EndFailed means tcpdump ended with a nonzero status.
 	EndFailed EndReason = "failed"
-	// EndUnknown means the end could not be observed, or that tcpdump ended
-	// with status 0 before Stop and no valid file was retrieved to tell
-	// EndPacketLimit from EndPremature.
+	// EndUnknown means the end could not be confirmed within the stop grace
+	// and no kill was confirmed, or tcpdump ended with status 0 before Stop
+	// and no valid file was retrieved to tell EndPacketLimit from EndPremature.
 	EndUnknown EndReason = "unknown"
 )
 
@@ -624,17 +626,19 @@ func (s *Session) removeHelper(ctx context.Context) error {
 	return nil
 }
 
-// Stop ends the capture with SIGTERM and waits up to the stop grace for
-// tcpdump to flush and close its file; after the grace it kills the helper
-// (EndKilled). It then compares the target with the joined generation,
+// Stop sends SIGTERM and waits up to the stop grace to confirm that tcpdump
+// flushed and closed its file. After the grace it requests SIGKILL. An exit
+// only confirmed after the grace can leave the timing unknown. Stop then
+// compares the target with the joined generation,
 // copies the helper's file into the file reserved at Start, checks its structure and
 // removes the helper. Its Docker work uses a fresh bounded context, so a
 // canceled or expired ctx does not leave the helper behind. A replaced output
 // path fails retrieval. Keep the reserved file at Request.Output until Stop returns.
 //
 // The report is returned also with an error. The error joins ErrFailed for
-// a capture that failed, was killed, ended early on its own, lost its target
-// or delivered a file that is not valid classic pcap, and a removal error.
+// a capture that failed, was killed, ended early on its own, could not be
+// confirmed to have stopped within the grace, lost its target or delivered a
+// file that is not valid classic pcap, and a removal error.
 // Docker and stream errors retain their causes; a failed retrieval alone does
 // not imply ErrFailed. A capture that ended at MaxPackets is not an error; its
 // End says so. After a removal error Stop can be called again; it returns the
@@ -716,35 +720,49 @@ func (s *Session) endCapture(ctx context.Context) error {
 		}
 		return err
 	}
-	if err := s.backend.signal(ctx, s.helper, "SIGKILL"); err != nil && !errdefs.IsConflict(err) {
+	err = s.backend.signal(ctx, s.helper, "SIGKILL")
+	if err != nil && !errdefs.IsConflict(err) {
 		return classifyDocker(ctx, fmt.Errorf("kill the capture helper: %w", err))
 	}
+	killed := err == nil
 	state, ok, err := s.waitEnd(ctx, 30*time.Second)
-	if err == nil && !ok {
-		err = fmt.Errorf("%w: the capture helper did not end after SIGKILL", ErrFailed)
+	if err != nil {
+		return err
 	}
-	if ok {
-		s.recordEnd(state, true, true)
+	if !ok {
+		return fmt.Errorf("%w: the capture helper's exit was not confirmed after requesting SIGKILL", ErrFailed)
 	}
-	return err
+	if !killed && signaled && state.exitCode == 0 {
+		// The kill raced with exit. The late observation cannot establish
+		// when tcpdump stopped relative to the grace.
+		s.report.EndedAt = state.finishedAt
+		return fmt.Errorf("%w: the capture helper's exit was not confirmed within %s of SIGTERM", ErrFailed, s.stopGrace())
+	}
+	s.recordEnd(state, false, killed)
+	return nil
 }
 
 func (s *Session) waitEnd(ctx context.Context, grace time.Duration) (helperState, bool, error) {
-	deadline := time.Now().Add(grace)
+	waitCtx, cancel := context.WithTimeout(ctx, grace)
+	defer cancel()
+	deadline, _ := waitCtx.Deadline()
 	for {
-		state, err := s.backend.state(ctx, s.helper)
+		state, err := s.backend.state(waitCtx, s.helper)
+		if err := ctx.Err(); err != nil {
+			return helperState{}, false, err
+		}
+		if !time.Now().Before(deadline) {
+			return helperState{}, false, nil
+		}
 		if err != nil {
-			return state, false, classifyDocker(ctx, fmt.Errorf("inspect the capture helper: %w", err))
+			return state, false, classifyDocker(waitCtx, fmt.Errorf("inspect the capture helper: %w", err))
 		}
 		if !state.running {
 			return state, true, nil
 		}
-		if !time.Now().Before(deadline) {
-			return state, false, nil
-		}
 		select {
-		case <-ctx.Done():
-			return state, false, ctx.Err()
+		case <-waitCtx.Done():
+			return helperState{}, false, ctx.Err()
 		case <-time.After(pollInterval):
 		}
 	}
@@ -788,7 +806,7 @@ func (s *Session) settleSelfEnd() error {
 func (s *Session) compareTarget(ctx context.Context) (TargetState, error) {
 	current, err := s.backend.target(ctx, s.report.ContainerID, s.request.Network)
 	switch {
-	case err != nil && observed(ctx, err) && errdefs.IsNotFound(err):
+	case err != nil && observed(ctx, err) && nshelper.ContainerNotFound(err):
 		return TargetGone, nil
 	case err != nil:
 		return TargetUnknown, classifyDocker(ctx, fmt.Errorf("inspect the capture target: %w", err))
@@ -825,12 +843,9 @@ func copyBounded(dst io.Writer, src io.Reader, limit int64) (written int64, beyo
 	if err != nil || written != limit {
 		return written, nil, err
 	}
-	extra := make([]byte, 1)
-	n, err := io.ReadFull(src, extra)
-	if err != nil && !errors.Is(err, io.EOF) {
-		return written, extra[:n], err
-	}
-	return written, extra[:n], nil
+	var extra bytes.Buffer
+	_, err = io.Copy(&extra, io.LimitReader(src, 1))
+	return written, extra.Bytes(), err
 }
 
 // retrieve delivers the helper's file into Output and checks it.
