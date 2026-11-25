@@ -1034,3 +1034,55 @@ func TestCephFSDirectoryRemovalReceiptNeverResendsALegacyUncertainRemove(t *test
 		t.Fatalf("release after the legacy remove: %+v %v", st, err)
 	}
 }
+
+func TestCephFSDirectoryMutationsRequireOriginalFilesystems(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*Container, context.Context) error
+	}{
+		{name: "add", mutate: func(m *Container, ctx context.Context) error { return m.AddDirectory(ctx, "/new") }},
+		{name: "remove", mutate: func(m *Container, ctx context.Context) error { return m.RemoveDirectory(ctx, "/owned") }},
+		{name: "rebalance", mutate: (*Container).RebalanceDirectories},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, drift := range []string{"descriptor", "filesystem ID", "metadata pool ID", "destination ID"} {
+				t.Run(drift, func(t *testing.T) {
+					m, source, destination, _, _ := newDirectoryRemovalFixture()
+					switch drift {
+					case "descriptor":
+						m.SourceFilesystem = "other-filesystem"
+					case "filesystem ID":
+						source.id++
+					case "metadata pool ID":
+						source.pool++
+					case "destination ID":
+						destination.id++
+					}
+					err := tc.mutate(m, t.Context())
+					if !errors.Is(err, errCephFSObservationGuard) || source.adds != 0 || source.removals != 0 ||
+						!m.directories.owns("/owned") || m.directories.releasePending("/owned") || m.directories.generation("/owned") != 1 {
+						t.Fatalf("drift changed native policy or ownership: %v, adds=%d, removes=%d, ownership=%+v",
+							err, source.adds, source.removals, m.directories)
+					}
+					if drift == "descriptor" && len(source.calls) != 0 {
+						t.Fatalf("a public descriptor reached native commands: %v", source.calls)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestCephFSDirectoryRebalanceRejectsReplacementBeforeDispatch(t *testing.T) {
+	m, source, _, _, _ := newDirectoryRemovalFixture()
+	source.hook = func(f *directoryRemovalControlFake, args []string) {
+		if slices.Equal(args, []string{"fs", "snapshot", "mirror", "dirmap", "source", "/owned"}) {
+			f.id = 100
+		}
+	}
+	err := m.RebalanceDirectories(t.Context())
+	if !errors.Is(err, errCephFSObservationGuard) || source.adds != 0 || source.removals != 0 ||
+		m.directories.releasePending("/owned") || m.directories.generation("/owned") != 1 {
+		t.Fatalf("replacement dispatched or retained a spurious removal: %v, ownership=%+v", err, m.directories)
+	}
+}

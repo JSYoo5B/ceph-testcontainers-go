@@ -37,7 +37,7 @@ type cephFSOriginalScope struct {
 // after its native cluster identities are read and found distinct. operation
 // names the receipt in the refusals. Container.mu is held.
 func (mirror *Container) captureOriginalScope(ctx context.Context, operation, peerID string, readClusters func(context.Context) ([2]string, error)) (*cephFSOriginalScope, error) {
-	if !mirror.filesystemIdentityConfirmed || mirror.metadataPoolID < 0 || mirror.destinationMetadataPoolID < 0 || mirror.SourceClientEntity == "" || mirror.metadataPool == "" {
+	if !mirror.originalDirectoryFilesystemNames() || !mirror.filesystemIdentityConfirmed || mirror.metadataPoolID < 0 || mirror.destinationMetadataPoolID < 0 || mirror.SourceClientEntity == "" || mirror.metadataPool == "" {
 		return nil, cephFSObserveGuard(operation + " original filesystem metadata identity is unavailable")
 	}
 	if readClusters == nil {
@@ -51,7 +51,7 @@ func (mirror *Container) captureOriginalScope(ctx context.Context, operation, pe
 		return nil, cephFSObserveGuard(operation + " original cluster identities are unavailable or equal")
 	}
 	return &cephFSOriginalScope{mirror: mirror, source: mirror.source, destination: mirror.destination,
-		sourceFilesystem: mirror.SourceFilesystem, destinationFilesystem: mirror.DestinationFilesystem, sourceClient: mirror.SourceClientEntity, metadataPool: mirror.metadataPool,
+		sourceFilesystem: mirror.sourceFilesystem, destinationFilesystem: mirror.destinationFilesystem, sourceClient: mirror.SourceClientEntity, metadataPool: mirror.metadataPool,
 		sourceID: mirror.filesystemID, destinationID: mirror.destinationFilesystemID, sourceMetadata: mirror.metadataPoolID, destinationMetadata: mirror.destinationMetadataPoolID,
 		peerID: peerID, peer: cephFSPeerIdentity{mirror.DestinationClientEntity, mirror.destinationSite, mirror.DestinationFilesystem}, generation: mirror.ops.peerGeneration, clusters: clusters, readClusters: readClusters}, nil
 }

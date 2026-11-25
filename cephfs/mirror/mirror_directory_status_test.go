@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
@@ -111,7 +112,7 @@ func newCephFSObserverDraft() (*Container, *cephFSObserverDraftControl, *cephFSO
 	b := &cephFSObserverDraftDaemon{running: true, session: session("172.20.0.9:0/5678"), replay: a.replay}
 	mirror := &Container{
 		source: &ceph.Container{Container: source}, destination: &ceph.Container{Container: destination},
-		SourceFilesystem: "source", DestinationFilesystem: "destination", SourceClientEntity: "client.owned-auth", DestinationClientEntity: "client.peer",
+		sourceFilesystem: "source", destinationFilesystem: "destination", SourceFilesystem: "source", DestinationFilesystem: "destination", SourceClientEntity: "client.owned-auth", DestinationClientEntity: "client.peer",
 		filesystemID: 1, destinationFilesystemID: 2, filesystemIdentityConfirmed: true, metadataPool: "source-metadata", metadataPoolID: 7, destinationMetadataPoolID: 9, destinationSite: "destination-site", peerID: cephFSObserverDraftPeer,
 		directories: cephFSDirectoryOwnership{owned: map[string]bool{"/owned": true}}, Directories: []string{"/owned"},
 		roster: cephFSDaemonRoster{daemons: []*Daemon{{Container: a, DaemonName: "a"}, {Container: b, DaemonName: "b"}}},
@@ -567,5 +568,57 @@ func TestCephFSObserverDraftWaitPeerSchemaFailsPermanently(t *testing.T) {
 	status, err := mirror.WaitDirectoryReady(ctx, "/owned")
 	if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, queryErr) || errors.Is(err, errCephFSObservationGuard) || status.Ready || strings.Contains(err.Error(), queryErr.Error()) {
 		t.Fatalf("peer CLI transport failure classified as schema guard or leaked/lost: %+v %v", status, err)
+	}
+}
+
+func TestCephFSDirectoryWaitRejectsReplacementRegistration(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		wait func(*Container, context.Context, string) (DirectoryStatus, error)
+	}{
+		{name: "ready", wait: (*Container).WaitDirectoryReady},
+		{name: "snapshot", wait: func(m *Container, ctx context.Context, directory string) (DirectoryStatus, error) {
+			return m.WaitSnapshotSynced(ctx, directory, Snapshot{ID: 120, Name: "checkpoint"})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, replace := range []bool{false, true} {
+				synctest.Test(t, func(t *testing.T) {
+					m, source, _, _, _ := newCephFSObserverDraft()
+					ready := source.mapping
+					source.mapping = `{"state":"stalled"}`
+					type result struct {
+						status DirectoryStatus
+						err    error
+					}
+					resultCh := make(chan result, 1)
+					go func() {
+						status, err := tc.wait(m, t.Context(), "/owned")
+						resultCh <- result{status, err}
+					}()
+					synctest.Wait()
+					select {
+					case got := <-resultCh:
+						t.Fatalf("wait ended before its second observation: %+v, %v", got.status, got.err)
+					default:
+					}
+					m.mu.Lock()
+					source.mapping = ready
+					if replace {
+						m.registerDirectory("/owned", false)
+					}
+					m.mu.Unlock()
+					got := <-resultCh
+					if replace {
+						if !errors.Is(got.err, errCephFSObservationGuard) || !strings.Contains(got.err.Error(), "registered again") || got.status.Ready ||
+							got.status.MappingState != "stalled" || got.status.LastSyncedSnapshot != nil {
+							t.Fatalf("replacement satisfied original wait: %+v, %v", got.status, got.err)
+						}
+					} else if got.err != nil || !got.status.Ready || got.status.LastSyncedSnapshot == nil {
+						t.Fatalf("unchanged registration did not become ready: %+v, %v", got.status, got.err)
+					}
+				})
+			}
+		})
 	}
 }
