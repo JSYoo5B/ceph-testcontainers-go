@@ -286,9 +286,9 @@ func TestRBDMirrorNamespaceReadRequiresNativeModeUUIDAndRemote(t *testing.T) {
 }
 
 func TestRBDMirrorNamespaceImageEnrollmentAndPoolIdentity(t *testing.T) {
-	client := &rbdEnableFixture{info: `{"features":["exclusive-lock"]}`}
+	client := &rbdEnableFixture{info: `{"name":"volume","id":"source","features":["exclusive-lock"]}`, afterEnable: rbdImageStatusInfo("source", "snapshot", "global", true)}
 	link := &Container{pair: rbdMirrorPair{sourceClient: client, config: Config{Pool: "images", SourceNamespace: "ns-a", Mode: ModeSnapshot}}}
-	if err := link.EnableImage(t.Context(), "volume"); err != nil || len(client.calls) != 2 || client.calls[0][2] != "images/ns-a/volume" || client.calls[1][4] != "images/ns-a/volume" {
+	if err := link.EnableImage(t.Context(), "volume"); err != nil || len(client.calls) != 3 || client.calls[0][2] != "images/ns-a/volume" || client.calls[1][4] != "images/ns-a/volume" || !slices.Equal(client.calls[0], client.calls[2]) {
 		t.Fatalf("enrollment lost source namespace: %v error=%v", client.calls, err)
 	}
 	client.calls = nil

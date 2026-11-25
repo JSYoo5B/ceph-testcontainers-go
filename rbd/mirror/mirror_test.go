@@ -130,9 +130,10 @@ func TestRBDMirrorModeRejectsAmbiguousValues(t *testing.T) {
 
 type rbdEnableFixture struct {
 	testcontainers.Container
-	info   string
-	status string
-	calls  [][]string
+	info        string
+	afterEnable string
+	status      string
+	calls       [][]string
 }
 
 func (c *rbdEnableFixture) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
@@ -141,6 +142,8 @@ func (c *rbdEnableFixture) Exec(_ context.Context, args []string, _ ...tcexec.Pr
 	data := ""
 	if len(args) > 1 && args[1] == "info" {
 		data = c.info
+	} else if len(args) > 3 && slices.Equal(args[:4], []string{"rbd", "mirror", "image", "enable"}) && c.afterEnable != "" {
+		c.info = c.afterEnable
 	} else if len(args) > 1 && args[1] == "--admin-daemon" {
 		data = c.status
 	}
@@ -180,23 +183,23 @@ func TestRBDMirrorDaemonStatusUsesNativeElectionFields(t *testing.T) {
 }
 
 func TestEnableRBDJournalImageRequiresExplicitExclusiveLock(t *testing.T) {
-	client := &rbdEnableFixture{info: `{"features":["layering"]}`}
+	client := &rbdEnableFixture{info: `{"name":"volume","id":"source","features":["layering"]}`, afterEnable: rbdImageStatusInfo("source", "journal", "global", true)}
 	link := &Container{pair: rbdMirrorPair{sourceClient: client, config: Config{Pool: "rbd", Mode: ModeJournal}}}
 	if err := link.EnableImage(t.Context(), "volume"); err == nil || !strings.Contains(err.Error(), "exclusive-lock") || len(client.calls) != 1 {
 		t.Fatalf("journal setup changed an image without exclusive-lock: calls=%v error=%v", client.calls, err)
 	}
-	client.info = `{"features":["layering","exclusive-lock"]}`
+	client.info = `{"name":"volume","id":"source","features":["layering","exclusive-lock"]}`
 	client.calls = nil
 	if err := link.EnableImage(t.Context(), "volume"); err != nil {
 		t.Fatal(err)
 	}
-	if len(client.calls) != 2 || !slices.Equal(client.calls[1], []string{"rbd", "mirror", "image", "enable", "rbd/volume", "journal"}) {
+	if len(client.calls) != 3 || !slices.Equal(client.calls[1], []string{"rbd", "mirror", "image", "enable", "rbd/volume", "journal"}) || !slices.Equal(client.calls[0], client.calls[2]) {
 		t.Fatalf("journal mode was not applied to only the selected image: %v", client.calls)
 	}
 }
 
 func TestEnableRBDImagePreservesExistingModeAndRejectsAmbiguousSpec(t *testing.T) {
-	client := &rbdEnableFixture{info: `{"features":["exclusive-lock","journaling"],"mirroring":{"mode":"journal","state":"enabled"}}`}
+	client := &rbdEnableFixture{info: rbdImageStatusInfo("source", "journal", "global", true)}
 	link := &Container{pair: rbdMirrorPair{sourceClient: client, config: Config{Pool: "rbd", Mode: ModeJournal}}}
 	if err := link.EnableImage(t.Context(), "volume"); err != nil || len(client.calls) != 1 {
 		t.Fatalf("already enabled image should remain unchanged: calls=%v error=%v", client.calls, err)
@@ -212,10 +215,34 @@ func TestEnableRBDImagePreservesExistingModeAndRejectsAmbiguousSpec(t *testing.T
 			t.Errorf("ambiguous image %q reached the CLI: calls=%v error=%v", name, client.calls, err)
 		}
 	}
-	client.info = `{"features":["exclusive-lock"],"mirroring":{"mode":"journal","state":"disabling"}}`
+	client.info = strings.Replace(rbdImageStatusInfo("source", "journal", "global", true), "enabled", "disabling", 1)
 	client.calls = nil
 	if err := link.EnableImage(t.Context(), "volume"); err == nil || len(client.calls) != 1 {
 		t.Fatal("transitional mirroring state must not be mutated")
+	}
+}
+
+func TestEnableRBDImageRequiresSourceAndReadbackEvidence(t *testing.T) {
+	const disabled = `{"name":"volume","id":"original"}`
+	enabled := rbdImageStatusInfo("original", "snapshot", "global", true)
+	for _, tc := range []struct {
+		name, before, after string
+		calls               int
+	}{
+		{"empty preflight", `{}`, "", 1},
+		{"foreign name", strings.Replace(enabled, "volume", "foreign", 1), "", 1},
+		{"unchanged disabled", disabled, "", 3},
+		{"same-name replacement", disabled, rbdImageStatusInfo("new", "snapshot", "global", true), 3},
+		{"wrong readback mode", disabled, rbdImageStatusInfo("original", "journal", "global", true), 3},
+		{"transition is not confirmed", disabled, strings.Replace(enabled, "enabled", "creating", 1), 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &rbdEnableFixture{info: tc.before, afterEnable: tc.after}
+			link := &Container{pair: rbdMirrorPair{sourceClient: client, config: Config{Pool: "images", Mode: ModeSnapshot}}}
+			if err := link.EnableImage(t.Context(), "volume"); err == nil || len(client.calls) != tc.calls {
+				t.Fatalf("EnableImage accepted insufficient evidence or sent unexpected commands: %v, %v", err, client.calls)
+			}
+		})
 	}
 }
 
