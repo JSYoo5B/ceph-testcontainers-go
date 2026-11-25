@@ -825,7 +825,8 @@ func (p *rbdMirrorPair) reconcileImportedPeer(ctx context.Context, bootstrap rbd
 // EnableImage enables the configured snapshot or journal mode on an existing
 // source image in this link's Pool and SourceNamespace. imageName is a name, without pool, namespace
 // or snapshot syntax. A matching enabled image is left unchanged; a different
-// enabled mode is rejected before any mutation.
+// enabled mode is rejected before any mutation. A successful enable is
+// confirmed on the same native image ID in the configured mode.
 //
 // Journal mode requires the exclusive-lock image feature. The native enable
 // command adds journaling when necessary; this method does not change the
@@ -862,33 +863,42 @@ func (m *Container) EnableImage(ctx context.Context, imageName string) error {
 	if err != nil {
 		return fmt.Errorf("read source RBD image: %w", err)
 	}
-	var info struct {
-		Features  []string `json:"features"`
-		Mirroring *struct {
-			Mode  string `json:"mode"`
-			State string `json:"state"`
-		} `json:"mirroring"`
+	before, err := decodeRBDMirrorObservedInfo(data, imageName, "")
+	if err != nil && !errors.Is(err, errRBDImageMirroringDisabled) {
+		return fmt.Errorf("verify source RBD image: %w", err)
 	}
-	if err := json.Unmarshal(data, &info); err != nil {
-		return fmt.Errorf("decode source RBD image: %w", err)
-	}
-	if info.Mirroring != nil && info.Mirroring.State != "disabled" && info.Mirroring.State != "" {
-		if info.Mirroring.State != "enabled" {
-			return servicehook.Invalid(fmt.Errorf("source image mirroring is %q, expected a stable enabled or disabled state", info.Mirroring.State))
+	if err == nil {
+		if before.State != "enabled" {
+			return servicehook.Invalid(fmt.Errorf("source image mirroring is %q, expected a stable enabled or disabled state", before.State))
 		}
-		if info.Mirroring.Mode != string(mode) {
-			return servicehook.Invalid(fmt.Errorf("source image already uses %s mirroring; changing to %s requires explicit disable/reconfiguration", info.Mirroring.Mode, mode))
+		if before.Mode != mode {
+			return servicehook.Invalid(fmt.Errorf("source image already uses %s mirroring; changing to %s requires explicit disable/reconfiguration", before.Mode, mode))
 		}
 		return m.pair.checkPolicyIdentities(ctx)
 	}
-	if mode == ModeJournal && !slices.Contains(info.Features, "exclusive-lock") {
-		return servicehook.Invalid(errors.New("journal mirroring requires the source image's exclusive-lock feature; enable it explicitly before mirroring"))
+	if mode == ModeJournal {
+		var info struct {
+			Features []string `json:"features"`
+		}
+		if err := json.Unmarshal(data, &info); err != nil {
+			return rbdImageGuardError("decode source RBD image features")
+		}
+		if !slices.Contains(info.Features, "exclusive-lock") {
+			return servicehook.Invalid(errors.New("journal mirroring requires the source image's exclusive-lock feature; enable it explicitly before mirroring"))
+		}
 	}
 	if err := m.pair.checkPolicyIdentities(ctx); err != nil {
 		return err
 	}
 	if _, err := m.SourceRBD(ctx, "mirror", "image", "enable", image, string(mode)); err != nil {
 		return fmt.Errorf("enable source %s RBD mirroring: %w", mode, err)
+	}
+	after, err := readRBDMirrorObservedInfo(ctx, m.pair.sourceClient, image, imageName, mode)
+	if err != nil {
+		return fmt.Errorf("confirm source RBD image mirroring: %w", err)
+	}
+	if after.ID != before.ID || after.State != "enabled" {
+		return rbdImageGuardError("source RBD image identity or enabled mirroring state was not confirmed")
 	}
 	return m.pair.checkPolicyIdentities(ctx)
 }

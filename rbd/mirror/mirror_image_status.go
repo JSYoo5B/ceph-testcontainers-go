@@ -44,7 +44,8 @@ type ImageStatus struct {
 // It never enables mirroring, creates checkpoints, resyncs, changes primary
 // ownership or restarts a process. Original pool and namespace policy identities
 // are checked before and after reading the image. Source/destination global IDs
-// must agree. A non-zero partial observation can accompany an error.
+// must agree. ReplayReady also requires the original admitted receiver and
+// unchanged cluster and peer identities. A partial observation can accompany an error.
 //
 // The wait for the fixture's gate, behind another observation or a mutation, is
 // bounded by ctx alone. Once the gate is held, the reads take at most 30 seconds
@@ -240,61 +241,62 @@ func (o *rbdImageObservation) attributeScoped(ctx context.Context, service *rbdO
 		if !ownedClient || nativeID == "" || nativeID != service.DaemonID {
 			continue
 		}
-		o.result.DaemonName, o.result.InstanceID = name, service.InstanceID
-		observed, err := o.m.readRBDReceiver(ctx, o.scope, member)
-		if err != nil {
-			return err
-		}
-		o.result.ReplayReady = observed.problem == "" && observed.report.Running && observed.report.NamespaceDiscovered && observed.report.PoolState == "running" && observed.report.InstanceID == service.InstanceID
-		return nil
+		return o.attributeMember(ctx, o.scope, member, name, service.InstanceID, rbdReceiverRead)
 	}
 	return nil
 }
 
-// attributeOwned matches the reporting service to a fixture daemon and
-// requires a stable running process to discover the selected peer and namespace
-// with the same instance. Other receivers and election readiness are not required.
+// attributeOwned matches the reporting service to the original identity of
+// one fixture daemon. The image does not need a ready receiver election.
 func (o *rbdImageObservation) attributeOwned(ctx context.Context, service *rbdObservedService) error {
 	for _, daemon := range o.m.roster.daemons {
-		if daemon == nil || daemon.Container == nil {
+		if daemon == nil {
 			continue
 		}
 		// AddDaemon creates client.rbd-mirror.<id>. Ceph registers its
 		// service as <id>, stripping both the client entity type and the
 		// rbd-mirror daemon prefix. Match this exact owned identity.
-		nativeDaemonID, ownedClient := strings.CutPrefix(daemon.ClientName, "client.rbd-mirror.")
+		nativeDaemonID, ownedClient := strings.CutPrefix(daemon.receiverClientName, "client.rbd-mirror.")
 		if !ownedClient || nativeDaemonID == "" || nativeDaemonID != service.DaemonID {
 			continue
 		}
-		o.result.DaemonName, o.result.InstanceID = daemon.DaemonName, service.InstanceID
-		if o.m.receiver.peer == nil {
-			return nil // No recorded peer can attribute this discovery report.
-		}
-		before, err := daemon.State(ctx)
+		scope := o.m.pair.originalReceiverScope()
+		name := daemon.receiverDaemonName
+		names := []string{name}
+		witness, err := o.m.receiverWitness(scope, names, nil)
 		if err != nil {
-			return rbdImageQueryError("inspect RBD receiving process", err)
+			return rbdImageGuardError(err.Error())
 		}
-		if !normalRBDReceiverProcess(before) {
+		// Confirm the peer and cluster IDs before taking the selected witness's
+		// socket evidence and again after the final image reads.
+		confirm := func(ctx context.Context) error {
+			if err := o.m.checkRBDReceiverScopeIdentities(ctx, scope); err != nil {
+				if rbdReceiverPermanent(err) {
+					return rbdImageGuardError(err.Error())
+				}
+				return rbdImageQueryError("check original RBD image receiver authority", err)
+			}
+			if _, err := o.m.receiverWitness(scope, names, witness); err != nil {
+				return rbdImageGuardError(err.Error())
+			}
 			return nil
 		}
-		// Copy generation fields before another container inspection can update
-		// an implementation's reused State value.
-		pid, started := before.Pid, before.StartedAt
-		data, err := rbdObservedRead.exec(ctx, daemon.Container, "read RBD receiving process status", "ceph", "--admin-daemon", "/tmp/rbd-mirror.asok", "rbd", "mirror", "status")
-		if err != nil {
+		if err := confirm(ctx); err != nil {
 			return err
 		}
-		native, present, err := decodeRBDReceiverDiscovery(data, o.m.pair.config.Pool, o.m.receiver.peer)
-		if err != nil {
-			return rbdImageGuardError("decode RBD receiving process discovery")
-		}
-		after, err := daemon.State(ctx)
-		if err != nil {
-			return rbdImageQueryError("recheck RBD receiving process", err)
-		}
-		o.result.ReplayReady = normalRBDReceiverProcess(after) && pid == after.Pid && started == after.StartedAt && present && native.state == "running" && native.instance == service.InstanceID && slices.Contains(native.namespaces, rbdReceiverNamespace{o.m.pair.config.DestinationNamespace, o.m.pair.config.SourceNamespace})
-		return nil
+		o.checkIdentities = confirm
+		return o.attributeMember(ctx, scope, witness.members[name], name, service.InstanceID, rbdObservedRead)
 	}
+	return nil
+}
+
+func (o *rbdImageObservation) attributeMember(ctx context.Context, scope *rbdReceiverScope, member rbdReceiverMemberWitness, name, instance string, read rbdNativeRead) error {
+	o.result.DaemonName, o.result.InstanceID = name, instance
+	observed, err := o.m.readRBDReceiver(ctx, scope, member, read)
+	if err != nil {
+		return err
+	}
+	o.result.ReplayReady = observed.problem == "" && observed.report.Running && observed.report.NamespaceDiscovered && observed.report.PoolState == "running" && observed.report.InstanceID == instance
 	return nil
 }
 
