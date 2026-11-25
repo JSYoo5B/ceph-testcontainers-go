@@ -87,10 +87,19 @@ func rbdImageStatusInfo(id, mode, global string, primary bool) string {
 
 type rbdImageStatusDaemon struct {
 	testcontainers.Container
+	cid                 string
 	running             bool
 	status              string
 	state               *container.State
 	stateErr, statusErr error
+}
+
+func (d *rbdImageStatusDaemon) GetContainerID() string { return d.cid }
+
+func confirmedRBDImageTestDaemon(d *rbdImageStatusDaemon, name, client string) *Daemon {
+	d.cid = strings.Repeat(name, 64)
+	return &Daemon{Container: d, DaemonName: name, ClientName: client, receiverHandle: d, receiverContainerID: d.cid,
+		receiverClientName: client, receiverDaemonName: name, receiverStartupConfirmed: true}
 }
 
 func (d *rbdImageStatusDaemon) State(context.Context) (*container.State, error) {
@@ -113,9 +122,14 @@ func newRBDImageStatusFixture(t *testing.T, mode Mode, sourceNS, destinationNS s
 	if err := link.pair.provisionPolicies(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	link.receiver.peer = &rbdReceiverPeerIdentity{uuid: receiverPeerUUID, site: "source", client: receiverPeerClient}
+	source.fsid, destination.fsid = receiverSourceFSID, receiverDestinationFSID
+	source.peers = []rbdMirrorPeer{}
+	destination.peers = []rbdMirrorPeer{{UUID: receiverPeerUUID, Direction: "rx-only", SiteName: "source", ClientName: receiverPeerClient}}
+	link.receiver = rbdReceiverPeer{setupConfirmed: true, generation: 1,
+		clusters: &rbdReceiverClusterIdentities{source: source.fsid, destination: destination.fsid, sourceCluster: link.pair.config.Source, destinationCluster: link.pair.config.Destination},
+		peer:     &rbdReceiverPeerIdentity{generation: 1, uuid: receiverPeerUUID, site: "source", client: receiverPeerClient}}
 	daemon := &rbdImageStatusDaemon{running: true, status: receiverTestStatus(destinationNS, sourceNS, "123", "123", true, []string{"123"})}
-	link.roster.daemons = []*Daemon{{Container: daemon, DaemonName: "a", ClientName: "client.rbd-mirror.tc-owned"}}
+	link.roster.daemons = []*Daemon{confirmedRBDImageTestDaemon(daemon, "a", "client.rbd-mirror.tc-owned")}
 	return link, source, destination, daemon
 }
 
@@ -588,7 +602,7 @@ func TestRBDMirrorImageStatusDoesNotSubstituteAnotherHealthyOwnedReceiver(t *tes
 	link, _, destination, daemon := newRBDImageStatusFixture(t, ModeSnapshot, "", "")
 	daemon.running = false
 	second := &rbdImageStatusDaemon{running: true, status: daemon.status}
-	link.roster.daemons = append(link.roster.daemons, &Daemon{Container: second, DaemonName: "b", ClientName: "client.rbd-mirror.tc-other"})
+	link.roster.daemons = append(link.roster.daemons, confirmedRBDImageTestDaemon(second, "b", "client.rbd-mirror.tc-other"))
 	status, err := link.ImageStatus(t.Context(), "volume")
 	if err != nil || status.ReplayReady || status.DaemonName != "a" {
 		t.Fatalf("healthy receiver b was substituted for stopped report owner a: %+v %v", status, err)
@@ -620,6 +634,7 @@ func TestRBDMirrorImageStatusMatchesExactNativeOwnedDaemonIdentity(t *testing.T)
 		t.Run(tc.name, func(t *testing.T) {
 			link, _, destination, _ := newRBDImageStatusFixture(t, ModeSnapshot, "", "")
 			link.roster.daemons[0].ClientName = tc.clientName
+			link.roster.daemons[0].receiverClientName = tc.clientName
 			destination.imageStatus = strings.Replace(destination.imageStatus, "\"daemon_id\":\"tc-owned\"", fmt.Sprintf("\"daemon_id\":%q", tc.nativeID), 1)
 			status, err := link.ImageStatus(t.Context(), "volume")
 			if err != nil || status.ReplayReady != tc.ready {

@@ -378,6 +378,8 @@ type rbdNamespacePolicyFixture struct {
 	site         string
 	poolID       int64
 	infoOverride string
+	fsid         string
+	peers        []rbdMirrorPeer
 	falseSuccess bool
 	lostReply    bool
 	beforeInfo   func(*rbdNamespacePolicyFixture, string, int)
@@ -399,6 +401,8 @@ func newRBDNamespacePolicyFixture() *rbdNamespacePolicyFixture {
 func (c *rbdNamespacePolicyFixture) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
 	var data []byte
 	switch {
+	case c.fsid != "" && slices.Equal(args, []string{"ceph", "--connect-timeout", "5", "fsid"}):
+		data = []byte(c.fsid)
 	case slices.Equal(args, []string{"rbd", "help", "mirror", "pool", "enable"}):
 		data = []byte("usage: rbd mirror pool enable [--pool <pool>] [--namespace <namespace>] \n  [--site-name <site-name>] \n")
 		if !c.squidRBD {
@@ -425,6 +429,12 @@ func (c *rbdNamespacePolicyFixture) Exec(_ context.Context, args []string, _ ...
 			policy.SiteName = c.site
 		}
 		data, _ = json.Marshal(policy)
+		if c.peers != nil && !strings.Contains(spec, "/") {
+			data, _ = json.Marshal(struct {
+				nativeRBDMirrorPolicy
+				Peers []rbdMirrorPeer `json:"peers"`
+			}{policy, c.peers})
+		}
 		if c.infoOverride != "" {
 			data = []byte(c.infoOverride)
 		}

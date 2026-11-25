@@ -853,13 +853,14 @@ func TestRBDReceiverRejectedRebootstrapPreservesCapability(t *testing.T) {
 	}
 }
 
-func TestRBDImageStatusDoesNotRequireReceiverCohortCapability(t *testing.T) {
+func TestRBDImageStatusRequiresConfirmedReceiverAuthority(t *testing.T) {
 	link, _, _, _ := newRBDImageStatusFixture(t, ModeSnapshot, "", "")
-	if link.receiver.clusters != nil || link.receiver.setupConfirmed {
-		t.Fatal("image fixture unexpectedly has whole-cohort capability")
-	}
 	if status, err := link.ImageStatus(t.Context(), "volume"); err != nil || !status.ReplayReady {
-		t.Fatalf("image observer required whole-cohort capability: %+v %v", status, err)
+		t.Fatalf("confirmed receiver did not establish image readiness: %+v %v", status, err)
+	}
+	link.receiver.setupConfirmed = false
+	if status, err := link.ImageStatus(t.Context(), "volume"); !scopedRBDImagePermanent(err) || status.ReplayReady {
+		t.Fatalf("unconfirmed receiver established image readiness: %+v %v", status, err)
 	}
 	if status, err := link.ReceiverStatus(t.Context()); err == nil || status.Ready {
 		t.Fatal("unconfirmed hand-built receiver capability adopted")
