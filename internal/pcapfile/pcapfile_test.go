@@ -334,7 +334,7 @@ type bytesWithError struct {
 
 func (r *bytesWithError) Read(p []byte) (int, error) {
 	if r.done {
-		return 0, r.err
+		return 0, io.EOF
 	}
 	r.done = true
 	return copy(p, r.data), r.err
@@ -350,5 +350,29 @@ func TestReadErrorWithBytesIsNotHiddenByTheBound(t *testing.T) {
 	if !errors.Is(err, failure) || report.Status == LimitExceeded || report.Complete || report.BytesRead != fileHeaderBytes+1 ||
 		report.ByteOrder != "little" || report.SHA256 != digest(append(bytes.Clone(header), 1)) {
 		t.Fatalf("report %+v err %v", report, err)
+	}
+}
+
+func TestReadErrorAtExactStructureBoundary(t *testing.T) {
+	header := newCapture(binary.LittleEndian, magicMicro).bytes()
+	packet := newCapture(binary.LittleEndian, magicMicro).add([]byte("hello"), 5).bytes()
+	failure := errors.New("synthetic read failure")
+	for _, tc := range []struct {
+		name   string
+		data   []byte
+		offset int
+	}{
+		{name: "file header", data: header},
+		{name: "record header", data: packet[:fileHeaderBytes+recordHeaderBytes], offset: fileHeaderBytes},
+		{name: "record payload", data: packet, offset: fileHeaderBytes + recordHeaderBytes},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reader := io.MultiReader(bytes.NewReader(tc.data[:tc.offset]), &bytesWithError{data: tc.data[tc.offset:], err: failure})
+			report, err := Validate(reader, Limits{MaxFileBytes: int64(len(tc.data))})
+			if !errors.Is(err, failure) || report.Status != "" || report.Complete || report.Packets != 0 ||
+				report.BytesRead != int64(len(tc.data)) || report.SHA256 != digest(tc.data) {
+				t.Fatalf("report %+v err %v", report, err)
+			}
+		})
 	}
 }

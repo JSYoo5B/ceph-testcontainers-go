@@ -102,7 +102,7 @@ func Validate(r io.Reader, limits Limits) (Report, error) {
 	if limits.MaxFileBytes < math.MaxInt64 {
 		lookahead = io.LimitReader(r, limits.MaxFileBytes+1)
 	}
-	v.in = io.TeeReader(lookahead, &boundedWriter{w: v.sum, left: limits.MaxFileBytes})
+	v.in.Reader = io.TeeReader(lookahead, &boundedWriter{w: v.sum, left: limits.MaxFileBytes})
 	report, err := v.run(limits)
 	report.BytesRead = min(v.read, limits.MaxFileBytes)
 	report.SHA256 = hex.EncodeToString(v.sum.Sum(nil))
@@ -116,12 +116,27 @@ func Validate(r io.Reader, limits Limits) (Report, error) {
 }
 
 type validator struct {
-	in    io.Reader
+	in    errorRecordingReader
 	sum   hash.Hash
 	read  int64
 	limit int64
 	// ended records that a read reached the end of the input.
 	ended bool
+}
+
+// errorRecordingReader retains errors returned alongside the exact bytes
+// requested by io.ReadFull or io.CopyN, which can otherwise discard them.
+type errorRecordingReader struct {
+	io.Reader
+	err error
+}
+
+func (r *errorRecordingReader) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	if err != nil && err != io.EOF {
+		r.err = err
+	}
+	return n, err
 }
 
 // boundedWriter passes on at most left bytes and drops the rest.
@@ -148,8 +163,11 @@ var errShort = errors.New("input ended")
 // fill reads exactly len(buf) bytes. It returns errShort, with the count
 // read, when the input ends first, and a read error as is.
 func (v *validator) fill(buf []byte) (int, error) {
-	n, err := io.ReadFull(v.in, buf)
+	n, err := io.ReadFull(&v.in, buf)
 	v.read += int64(n)
+	if v.in.err != nil {
+		return n, v.in.err
+	}
 	switch {
 	case err == nil:
 		return n, nil
@@ -167,8 +185,11 @@ func (v *validator) capped() bool { return v.read > v.limit }
 
 // skip consumes n bytes, through the hash, without holding them.
 func (v *validator) skip(n int64) (int64, error) {
-	copied, err := io.CopyN(io.Discard, v.in, n)
+	copied, err := io.CopyN(io.Discard, &v.in, n)
 	v.read += copied
+	if v.in.err != nil {
+		return copied, v.in.err
+	}
 	if errors.Is(err, io.EOF) {
 		v.ended = true
 		return copied, errShort
