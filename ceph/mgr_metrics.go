@@ -13,15 +13,23 @@ import (
 // managerMetricsLimit bounds one scrape's output, and managerMetricsTimeout
 // its time.
 const (
-	managerMetricsLimit   = 32 << 20
-	managerMetricsTimeout = 30 * time.Second
+	managerMetricsLimit        = 32 << 20
+	managerMetricsTimeout      = 30 * time.Second
+	managerMetricsTooLargeExit = 42
 )
 
 // managerMetricsScript fetches a URL and writes its body to stdout. The
 // essential image's python3 is a baseline requirement; curl is not.
 const managerMetricsScript = `import sys,urllib.request
-with urllib.request.urlopen(sys.argv[1],timeout=20) as r:
- sys.stdout.buffer.write(r.read())
+limit = int(sys.argv[2])
+with urllib.request.urlopen(sys.argv[1], timeout=20) as r:
+    body = r.read(limit + 1)
+    if len(body) > limit:
+        sys.exit(int(sys.argv[3]))
+    # Bounded HTTPResponse.read does not raise on a short Content-Length body.
+    if r.length:
+        raise IOError("incomplete metrics response")
+    sys.stdout.buffer.write(body)
 `
 
 // MetricSample is one sample of the Prometheus text exposition format.

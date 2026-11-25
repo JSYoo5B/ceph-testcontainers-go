@@ -3,7 +3,11 @@ package ceph
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"os/exec"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -59,7 +63,7 @@ func TestReadManagerMetricsScrapeContract(t *testing.T) {
 		if !reflect.DeepEqual(f.order, []string{"services", "lookup", "run"}) {
 			t.Fatalf("order = %v", f.order)
 		}
-		wantArgv := []string{"python3", "-c", managerMetricsScript, want}
+		wantArgv := []string{"python3", "-c", managerMetricsScript, want, strconv.Itoa(managerMetricsLimit), strconv.Itoa(managerMetricsTooLargeExit)}
 		if f.label != "scrape manager metrics" || f.limit != managerMetricsTimeout || f.stdoutMax != managerMetricsLimit || f.stderrMax != 64<<10 || !reflect.DeepEqual(f.argv, wantArgv) {
 			t.Fatalf("run = %q %v %d %d %q", f.label, f.limit, f.stdoutMax, f.stderrMax, f.argv)
 		}
@@ -103,6 +107,7 @@ func TestReadManagerMetricsReportOutcomes(t *testing.T) {
 		"run error":  {runErr: boom, want: "scrape http://mgr:9283/metrics"},
 		"timed out":  {report: supervised.Report{TimedOut: true, Stdout: []byte(controlMetricsPage)}, want: "timed out"},
 		"exit code":  {report: supervised.Report{ExitCode: 3, Stdout: []byte(controlMetricsPage), Stderr: []byte("denied")}, want: "denied"},
+		"oversized":  {report: supervised.Report{ExitCode: managerMetricsTooLargeExit}, want: "exceed"},
 		"truncated":  {report: supervised.Report{StdoutTruncated: true, Stdout: []byte(controlMetricsPage)}, want: "exceed"},
 		"malformed":  {report: supervised.Report{Stdout: []byte("up one\n")}, want: "parse the metrics"},
 		"no samples": {report: supervised.Report{Stdout: []byte("# TYPE up gauge\n")}, want: "served no samples"},
@@ -121,5 +126,50 @@ func TestReadManagerMetricsReportOutcomes(t *testing.T) {
 	f := &fakeControl{services: map[string]string{"prometheus": "http://mgr:9283/"}, report: supervised.Report{ExitCode: 3, Stderr: []byte("denied")}}
 	if _, err := readManagerMetrics(t.Context(), f.servicesFn, f.lookup); !errors.As(err, &failure) {
 		t.Fatalf("exit code is not a *NativeFailure: %v", err)
+	}
+}
+
+func TestManagerMetricsScriptBoundsResponseRead(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 is unavailable")
+	}
+	for _, tc := range []struct {
+		name          string
+		limit         int
+		contentLength int
+		body          string
+		wantExit      int
+	}{
+		{name: "exact limit", limit: 4, contentLength: 4, body: "up 1"},
+		{name: "oversized", limit: managerMetricsLimit, contentLength: managerMetricsLimit + 2, body: strings.Repeat("x", managerMetricsLimit+1), wantExit: managerMetricsTooLargeExit},
+		{name: "short response", limit: 4, contentLength: 4, body: "up", wantExit: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			release := make(chan struct{})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Length", strconv.Itoa(tc.contentLength))
+				_, _ = w.Write([]byte(tc.body))
+				if tc.wantExit == managerMetricsTooLargeExit {
+					// Hold the last byte to prove the helper exits before the end
+					// of the advertised body.
+					w.(http.Flusher).Flush()
+					<-release
+					_, _ = w.Write([]byte("\n"))
+				}
+			}))
+			defer server.Close()
+			defer close(release)
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, python, "-c", managerMetricsScript, server.URL, strconv.Itoa(tc.limit), strconv.Itoa(managerMetricsTooLargeExit))
+			out, err := cmd.Output()
+			if ctx.Err() != nil || cmd.ProcessState == nil || cmd.ProcessState.ExitCode() != tc.wantExit {
+				t.Fatalf("helper output = %q, error = %v, context = %v", out, err, ctx.Err())
+			}
+			if tc.wantExit == 0 && string(out) != tc.body || tc.wantExit != 0 && len(out) != 0 {
+				t.Fatalf("helper output = %q", out)
+			}
+		})
 	}
 }

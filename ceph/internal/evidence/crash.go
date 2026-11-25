@@ -323,10 +323,18 @@ type countingReader struct {
 	n       int64
 	after   int64
 	nonZero bool
+	readErr error
 }
 
 func (r *countingReader) Read(p []byte) (int, error) {
+	if r.readErr != nil {
+		return 0, r.readErr
+	}
 	n, err := r.r.Read(p)
+	// A full tar block can mask an error returned with its last bytes.
+	if err != nil && err != io.EOF {
+		r.readErr = err
+	}
 	start := r.n
 	r.n += int64(n)
 	if from := max(r.after-start, 0); from < int64(n) {
@@ -369,7 +377,7 @@ func readCrashArchive(content io.Reader, config CrashConfig[Member], result *Cra
 		header, err := archive.reader.Next()
 		if errors.Is(err, io.EOF) {
 			if !counted.terminated() {
-				return errors.Join(overLimit(), errors.New("the crash directory archive ends without its end marker"))
+				return errors.Join(overLimit(), counted.readErr, errors.New("the crash directory archive ends without its end marker"))
 			}
 			break
 		}
@@ -384,7 +392,18 @@ func readCrashArchive(content io.Reader, config CrashConfig[Member], result *Cra
 			return errors.Join(overLimit(), err)
 		}
 	}
-	return overLimit()
+	// tar.Reader stops at the marker. Finish the bounded transport read
+	// so a failed or oversized Docker response cannot look complete.
+	if _, err := io.Copy(io.Discard, counted); err != nil {
+		return errors.Join(overLimit(), fmt.Errorf("read the crash directory archive trailer: %w", err))
+	}
+	if err := overLimit(); err != nil {
+		return err
+	}
+	if !counted.terminated() {
+		return errors.New("the crash directory archive has nonzero data after its end marker")
+	}
+	return nil
 }
 
 // crashArchiveReader reads the entries of one crash directory archive into result.

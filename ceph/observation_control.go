@@ -3,6 +3,7 @@ package ceph
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,16 +46,16 @@ func readManagerMetrics(ctx context.Context, services managerServicesReader, loo
 		return ManagerMetrics{}, fmt.Errorf("select the control container: %w", err)
 	}
 	report, err := run(ctx, "scrape manager metrics", managerMetricsTimeout, managerMetricsLimit, 64<<10,
-		"python3", "-c", managerMetricsScript, endpoint)
+		"python3", "-c", managerMetricsScript, endpoint, strconv.Itoa(managerMetricsLimit), strconv.Itoa(managerMetricsTooLargeExit))
 	if err != nil {
 		return ManagerMetrics{}, fmt.Errorf("scrape %s: %w", endpoint, err)
 	}
 	switch {
 	case report.TimedOut:
 		return ManagerMetrics{}, fmt.Errorf("scrape %s timed out after %v", endpoint, managerMetricsTimeout)
-	case report.ExitCode != 0:
+	case report.ExitCode != 0 && report.ExitCode != managerMetricsTooLargeExit:
 		return ManagerMetrics{}, fmt.Errorf("scrape %s: %w", endpoint, nativeFailure("python3", report.ExitCode, nil, report.Stderr))
-	case report.StdoutTruncated:
+	case report.ExitCode == managerMetricsTooLargeExit || report.StdoutTruncated:
 		return ManagerMetrics{}, fmt.Errorf("scrape %s: the metrics exceed %d bytes", endpoint, managerMetricsLimit)
 	}
 	metrics, err := parseMetrics(string(report.Stdout))

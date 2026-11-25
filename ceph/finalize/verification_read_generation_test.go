@@ -2,9 +2,11 @@ package finalize
 
 import (
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics"
@@ -118,9 +120,12 @@ func TestVerificationGenerationReadBoundaries(t *testing.T) {
 			if boundary != "baseline-crash" && len(report.Crashes.Findings) == 0 {
 				t.Fatal("positive crash observation was discarded instead of retaining it with a gap")
 			}
-			if boundary == "before-log" || boundary == "during-log" {
+			if boundary == "before-log" || boundary == "during-log" || boundary == "after-log-before-confirmation" {
 				if len(report.Logs.Findings) == 0 || !strings.Contains(report.Logs.Findings[0].Text, "boundary-positive") {
 					t.Fatal("positive log observation was discarded")
+				}
+				if len(report.logLines) == 0 || report.Sources[0].LogLines != len(report.logLines) {
+					t.Fatalf("archived lines were discarded: %+v", report.Sources)
 				}
 			}
 		})
@@ -149,5 +154,102 @@ func TestVerificationStableNewGenerationBeforeCrashCollection(t *testing.T) {
 	report := v.evaluate(o)
 	if report.Logs.Outcome != VerificationClean || report.Crashes.Outcome == VerificationClean || len(report.Crashes.Gaps) == 0 || len(report.Crashes.Findings) != 1 {
 		t.Fatalf("stable newer crash read claimed full activation coverage or lost positive evidence: %+v", report)
+	}
+}
+
+// lateVerificationDocker can return an otherwise successful response after
+// the context used by the verifier has ended.
+type lateVerificationDocker struct {
+	*fakeVerifyDocker
+	afterInfo    func(context.Context)
+	afterInspect func()
+}
+
+func (d *lateVerificationDocker) Info(ctx context.Context, opts mobycl.InfoOptions) (mobycl.SystemInfoResult, error) {
+	result, err := d.fakeVerifyDocker.Info(ctx, opts)
+	d.afterInfo(ctx)
+	return result, err
+}
+
+func (d *lateVerificationDocker) ContainerInspect(ctx context.Context, id string, opts mobycl.ContainerInspectOptions) (mobycl.ContainerInspectResult, error) {
+	result, err := d.fakeVerifyDocker.ContainerInspect(ctx, id, opts)
+	d.afterInspect()
+	return result, err
+}
+
+func TestVerificationRejectsLateClockSample(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		fx := newVerifyFixture()
+		docker := &lateVerificationDocker{
+			fakeVerifyDocker: fx.docker,
+			afterInfo:        func(ctx context.Context) { <-ctx.Done() },
+		}
+		clock, err := dockerClock(t.Context(), docker, time.Second)
+		if !clock.IsZero() || !errors.Is(err, context.DeadlineExceeded) || t.Context().Err() != nil {
+			t.Fatalf("clock = %v, error = %v, parent error = %v", clock, err, t.Context().Err())
+		}
+	})
+}
+
+func TestVerificationCanceledAtFinalInspection(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		unexpected bool
+		want       VerificationOutcome
+	}{
+		{name: "clean evidence", want: VerificationIncomplete},
+		{name: "unexpected log", unexpected: true, want: VerificationUnexpected},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := newVerifyFixture()
+			fx.snapshot.containers = []diagnostics.Target{crashContainer("osd", "0", "osd0")}
+			fx.config.ArchiveLogs = true
+			v := fx.activate(t)
+			if report := fx.evaluate(t, v); report.Outcome != VerificationClean {
+				t.Fatalf("unchanged control = %+v", report)
+			}
+			if tc.unexpected {
+				fx.line("osd0", 2*time.Minute, "FAILED ceph_assert(false)")
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			inspections := 0
+			docker := &lateVerificationDocker{
+				fakeVerifyDocker: fx.docker,
+				afterInfo:        func(context.Context) {},
+				afterInspect: func() {
+					inspections++
+					// Inspect before and after logs, inside crash collection,
+					// and once more to confirm the crash read's generation.
+					if inspections == 4 {
+						cancel()
+					}
+				},
+			}
+			v.docker = func(context.Context) (verificationDocker, func(), error) { return docker, func() {}, nil }
+			report, err := v.Evaluate(ctx)
+			if err != nil || report.Outcome != tc.want || inspections != 4 ||
+				!strings.Contains(gapReasons(report.Logs), "complete verification: context canceled") ||
+				!strings.Contains(gapReasons(report.Crashes), "after crash collection: context canceled") {
+				t.Fatalf("report = %+v, error = %v, inspections = %d", report, err, inspections)
+			}
+			if tc.unexpected && (report.Logs.Unexpected != 1 || len(report.logLines) == 0) {
+				t.Fatalf("observed log evidence was lost: %+v", report)
+			}
+		})
+	}
+}
+
+func TestVerificationArchiveAllowsEmptyRead(t *testing.T) {
+	fx := newVerifyFixture()
+	fx.snapshot.containers = []diagnostics.Target{crashContainer("osd", "0", "osd0")}
+	fx.config.ArchiveLogs = true
+	fx.docker.containers["osd0"].lines = nil
+	report := fx.evaluate(t, fx.activate(t))
+	if report.Outcome != VerificationClean || len(report.logLines) != 0 || report.Sources[0].LogLines != 0 {
+		t.Fatalf("empty reads should retain complete coverage: %+v", report)
+	}
+	if !strings.Contains(strings.Join(report.Notes, "\n"), "distinguish an empty read from a skipped source") {
+		t.Fatalf("missing archive coverage explanation: %v", report.Notes)
 	}
 }

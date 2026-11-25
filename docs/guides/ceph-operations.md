@@ -601,10 +601,12 @@ received. Each object has the `source` (as the report names it),
 redacted `text` without that timestamp, and `truncated` for a line whose
 rest was not read: one longer than 64 KiB, or the last line of a stream that
 `MaxLogBytes` or an error ended. The source's `LogLines` in the report counts
-its lines. The lines have the log check's coverage, and its gaps apply to
-them: a restarted, removed or rotating source, or one with another log
-driver, keeps no lines, and a source over `MaxLogBytes` keeps the prefix that
-was read. Lines outside the window and lines without a valid timestamp are
+its lines. The log check retains lines it read before a gap, including a
+prefix limited by `MaxLogBytes` or lines read before a restart or removal was
+detected. Those lines are observations and do not establish coverage of the
+original generation. A source may have no archived lines because its window
+was empty or because the read was skipped. The report's coverage and gaps
+distinguish these cases. Lines outside the window and lines without a valid timestamp are
 not kept. The file holds what was received, not a record of every Ceph
 emission, and repeated lines stay repeated (the MON writes a cluster log
 entry more than once). A passing test writes no archive, so its lines are
