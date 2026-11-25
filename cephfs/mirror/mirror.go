@@ -124,6 +124,7 @@ type Container struct {
 	owned                                     multicluster.Resources
 	mu                                        sync.Mutex
 	source, destination                       *ceph.Container
+	sourceFilesystem, destinationFilesystem   string
 	destinationSite, peerID                   string
 	filesystemID                              int
 	metadataPool                              string
@@ -220,6 +221,7 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	sourceID, destinationID := "tc-cephfs-mirror-"+suffix, "tc-cephfs-peer-"+suffix
 	mirror := &Container{
 		SourceFilesystem: config.SourceFilesystem, DestinationFilesystem: config.DestinationFilesystem,
+		sourceFilesystem: config.SourceFilesystem, destinationFilesystem: config.DestinationFilesystem,
 		SourceClientEntity: "client." + sourceID, DestinationClientEntity: "client." + destinationID,
 		Directories: append([]string(nil), config.Directories...),
 		source:      config.Source, destination: config.Destination, destinationSite: config.DestinationSite,
@@ -891,7 +893,8 @@ func (networking *cephFSManagerNetworking) cleanup(ctx context.Context) error {
 // rejects overlapping paths. The path refers to the filesystem root, not a
 // container mount point. Registration does not create the directory or data.
 // After an uncertain removal of this path, retry once the path leaves the
-// native policy.
+// native policy. The original filesystem names and native identities must
+// still match.
 //
 //purpose:construction,condition
 func (mirror *Container) AddDirectory(ctx context.Context, directory string) error {
@@ -909,8 +912,8 @@ func (mirror *Container) AddDirectory(ctx context.Context, directory string) err
 	if err := mirror.ops.guardPeerRemovalOverlap(); err != nil {
 		return err
 	}
-	if mirror.source == nil {
-		return errors.New("CephFS mirror is not initialized")
+	if err := mirror.confirmDirectoryFilesystems(ctx); err != nil {
+		return err
 	}
 	if mirror.directories.releasePending(directory) {
 		if err := mirror.confirmDirectoryAbsent(ctx, directory); err != nil {
@@ -928,7 +931,7 @@ func (mirror *Container) AddDirectory(ctx context.Context, directory string) err
 		r.superseded = true
 	}
 	mirror.ops.supersedeDirectoryAddition(directory)
-	if _, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "add", mirror.SourceFilesystem, directory); err != nil {
+	if _, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "add", mirror.sourceFilesystem, directory); err != nil {
 		return fmt.Errorf("add CephFS mirror directory %q: %w", directory, err)
 	}
 	mirror.registerDirectory(directory, true)
@@ -942,6 +945,7 @@ func (mirror *Container) AddDirectory(ctx context.Context, directory string) err
 // Success means Ceph accepted the policy change; a sync in progress can still
 // finish. Use BeginDirectoryRemoval to prove that the daemons released the
 // directory. A pending tracked removal of the same path is retried instead.
+// The original filesystem names and native identities must still match.
 // The native remove is sent only once every directory that the native policy
 // tracks is mapped or stalled, which includes an earlier removed directory
 // having left the policy; a policy that stays busy for two minutes fails the
@@ -981,8 +985,8 @@ func (mirror *Container) RemoveDirectory(ctx context.Context, directory string) 
 	if err := mirror.ops.guardPeerRemovalOverlap(); err != nil {
 		return err
 	}
-	if mirror.source == nil {
-		return errors.New("CephFS mirror is not initialized")
+	if err := mirror.confirmDirectoryFilesystems(ctx); err != nil {
+		return err
 	}
 	if mirror.directories.releasePending(directory) {
 		// This request makes even a temporary rebalance removal permanent.
@@ -997,9 +1001,12 @@ func (mirror *Container) RemoveDirectory(ctx context.Context, directory string) 
 		if err := mirror.waitNativePolicyIdle(ctx); err != nil {
 			return fmt.Errorf("remove CephFS mirror directory %q: %w", directory, err)
 		}
+		if err := mirror.confirmDirectoryFilesystems(ctx); err != nil {
+			return err
+		}
 		mirror.ops.supersedeDirectoryAddition(directory)
 		mirror.directories.markReleasePending(directory)
-		if _, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "remove", mirror.SourceFilesystem, directory); err != nil {
+		if _, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "remove", mirror.sourceFilesystem, directory); err != nil {
 			return fmt.Errorf("remove CephFS mirror directory %q: %w", directory, err)
 		}
 	}
@@ -1023,7 +1030,8 @@ func (mirror *Container) RemoveDirectory(ctx context.Context, directory string) 
 // that path leaves the native policy. A path pending an explicit RemoveDirectory
 // is excluded from rebalance while still tracked and forgotten once absent.
 // The other owned paths can be redistributed when the native policy is idle.
-// Caller-added policies and other filesystems are not modified.
+// Caller-added policies and other filesystems are not modified. Each native
+// change requires the original filesystem names and identities to match.
 //
 // The deadlock: the MGR's mirroring module holds its policy lock while a
 // removal waits for a RADOS write, and the acknowledgement of an earlier
@@ -1049,12 +1057,18 @@ func (mirror *Container) RebalanceDirectories(ctx context.Context) error {
 	if mirror.closed {
 		return servicehook.Invalid(errors.New("CephFS mirror has been terminated"))
 	}
-	if mirror.source == nil || mirror.peerID == "" {
+	if mirror.peerID == "" {
 		return errors.New("CephFS mirror is not initialized")
+	}
+	if err := mirror.confirmDirectoryFilesystems(ctx); err != nil {
+		return err
 	}
 	if len(mirror.directories.pendingRelease) != 0 {
 		tracked, err := mirror.nativePolicyDirectories(ctx)
 		if err != nil {
+			return err
+		}
+		if err := mirror.confirmDirectoryFilesystems(ctx); err != nil {
 			return err
 		}
 		for directory := range mirror.directories.pendingRelease {
@@ -1073,15 +1087,42 @@ func (mirror *Container) RebalanceDirectories(ctx context.Context) error {
 	if err := mirror.waitForDaemonRegistrations(ctx, len(mirror.roster.daemons)); err != nil {
 		return err
 	}
+	pending := mirror.directories.rebalanceReleaseSet()
 	return rebalanceCephFSMirrorDirectories(ctx, directories, mirror.nativePolicyDirectories, mirror.nativePolicyState,
 		func(commandCtx context.Context, operation, directory string) error {
+			if err := mirror.confirmDirectoryFilesystems(commandCtx); err != nil {
+				if operation == "remove" {
+					delete(pending, directory) // the helper recorded intent, but no remove was sent
+				}
+				return err
+			}
 			mirror.ops.supersedeDirectoryAddition(directory)
-			_, err := mirror.source.Ceph(commandCtx, "fs", "snapshot", "mirror", operation, mirror.SourceFilesystem, directory)
+			_, err := mirror.source.Ceph(commandCtx, "fs", "snapshot", "mirror", operation, mirror.sourceFilesystem, directory)
 			if err == nil && operation == "add" {
 				mirror.registerDirectory(directory, false)
 			}
 			return err
-		}, mirror.directories.rebalanceReleaseSet(), 500*time.Millisecond)
+		}, pending, 500*time.Millisecond)
+}
+
+// originalDirectoryFilesystemNames requires the names captured at construction
+// before any public descriptor can be used as a native selector.
+func (mirror *Container) originalDirectoryFilesystemNames() bool {
+	return mirror.sourceFilesystem != "" && mirror.destinationFilesystem != "" &&
+		mirror.SourceFilesystem == mirror.sourceFilesystem && mirror.DestinationFilesystem == mirror.destinationFilesystem
+}
+
+func (mirror *Container) confirmDirectoryFilesystems(ctx context.Context) error {
+	if !mirror.originalDirectoryFilesystemNames() || !mirror.filesystemIdentityConfirmed || mirror.source == nil || mirror.destination == nil {
+		return cephFSObserveGuard("CephFS mirror original directory filesystem descriptors or identities are unavailable or changed")
+	}
+	if err := mirror.checkCephFSOriginalFilesystemIdentities(ctx, "read original CephFS directory filesystem", "CephFS original directory filesystem or metadata pool identity differs"); err != nil {
+		return err
+	}
+	if !mirror.originalDirectoryFilesystemNames() {
+		return cephFSObserveGuard("CephFS mirror directory filesystem descriptors changed during confirmation")
+	}
+	return ctx.Err()
 }
 
 // confirmDirectoryAbsent checks the outcome of a previously dispatched remove
@@ -1094,13 +1135,13 @@ func (mirror *Container) confirmDirectoryAbsent(ctx context.Context, directory s
 	if slices.Contains(tracked, directory) {
 		return uncertainRemoval(ctx, mirror, directory)
 	}
-	return nil
+	return mirror.confirmDirectoryFilesystems(ctx)
 }
 
 // nativePolicyDirectories lists the directories that the source filesystem's
 // native mirroring policy tracks.
 func (mirror *Container) nativePolicyDirectories(ctx context.Context) ([]string, error) {
-	data, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "ls", mirror.SourceFilesystem)
+	data, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "ls", mirror.sourceFilesystem)
 	if err != nil {
 		return nil, fmt.Errorf("list CephFS mirror directories: %w", err)
 	}
@@ -1116,7 +1157,7 @@ func (mirror *Container) nativePolicyDirectories(ctx context.Context) ([]string,
 // fs.ErrNotExist once the policy no longer tracks it. The null state that
 // v20.2.4 reports for a transient UNASSOCIATED directory is "unassociated".
 func (mirror *Container) nativePolicyState(ctx context.Context, directory string) (string, error) {
-	data, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "dirmap", mirror.SourceFilesystem, directory)
+	data, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "dirmap", mirror.sourceFilesystem, directory)
 	if err != nil {
 		return "", fmt.Errorf("read CephFS mirror directory %q state: %w", directory, err)
 	}

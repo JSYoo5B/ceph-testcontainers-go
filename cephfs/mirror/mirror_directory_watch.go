@@ -150,18 +150,23 @@ func (mirror *Container) WatchDirectory(ctx context.Context, cfg ceph.WatchConfi
 // the cluster check, then one observation whose admission pins the
 // identities on the first call and checks them on every later one.
 func (mirror *Container) directoryWatchRead(directory string) func(context.Context) (DirectoryStatus, error) {
-	pin := &directoryWatchPin{mirror: mirror, directory: directory}
+	pin := &directoryObservationPin{mirror: mirror, directory: directory}
 	return func(ctx context.Context) (DirectoryStatus, error) {
 		if err := pin.running(ctx); err != nil {
 			return DirectoryStatus{}, err
 		}
-		return mirror.directoryStatus(ctx, directory, pin.admit)
+		return mirror.directoryStatus(ctx, directory, func(ctx context.Context) error {
+			if err := pin.admit(ctx); err != nil {
+				return directoryWatchEnded{err}
+			}
+			return nil
+		})
 	}
 }
 
-// directoryWatchPin holds the identities that the baseline fixed. admit runs
-// under Container.mu, and only on the producer, one read at a time.
-type directoryWatchPin struct {
+// directoryObservationPin holds the identities fixed by a watch or wait.
+// admit runs under Container.mu, one read at a time.
+type directoryObservationPin struct {
 	mirror                              *Container
 	directory                           string
 	pinned                              bool
@@ -174,7 +179,7 @@ type directoryWatchPin struct {
 // before Container.mu, so a long cluster operation never holds up the mirror's
 // own operations behind a waiting read; a lock wait that ctx ends is a gap.
 // Both clusters are fixed when the mirror is constructed.
-func (p *directoryWatchPin) running(ctx context.Context) error {
+func (p *directoryObservationPin) running(ctx context.Context) error {
 	m := p.mirror
 	for _, site := range []struct {
 		name    string
@@ -197,13 +202,13 @@ func (p *directoryWatchPin) running(ctx context.Context) error {
 
 // admit refuses a read of a terminated mirror or of a replaced policy. Every
 // refusal ends the watch.
-func (p *directoryWatchPin) admit(context.Context) error {
+func (p *directoryObservationPin) admit(context.Context) error {
 	m := p.mirror
 	if m.closed {
-		return directoryWatchEnded{servicehook.Invalid(errors.New("the CephFS mirror has been terminated"))}
+		return servicehook.Invalid(errors.New("the CephFS mirror has been terminated"))
 	}
 	if !m.directories.owns(p.directory) {
-		return directoryWatchEnded{cephFSObserveGuard("CephFS mirror does not own the watched directory policy")}
+		return cephFSObserveGuard("CephFS mirror does not own the observed directory policy")
 	}
 	directoryGeneration, peerGeneration := m.directories.generation(p.directory), m.ops.peerGeneration
 	if !p.pinned {
@@ -212,9 +217,9 @@ func (p *directoryWatchPin) admit(context.Context) error {
 	}
 	switch {
 	case directoryGeneration != p.directoryGeneration:
-		return directoryWatchEnded{cephFSObserveGuard("CephFS watched directory policy was registered again")}
+		return cephFSObserveGuard("CephFS observed directory policy was registered again")
 	case peerGeneration != p.peerGeneration || m.peerID != p.peerID:
-		return directoryWatchEnded{cephFSObserveGuard("CephFS watched peer was removed or replaced")}
+		return cephFSObserveGuard("CephFS observed peer was removed or replaced")
 	}
 	return nil
 }

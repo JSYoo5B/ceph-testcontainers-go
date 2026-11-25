@@ -474,7 +474,8 @@ func (control *cephFSMirrorNativeControlFake) Exec(ctx context.Context, argument
 func TestCephFSMirrorNativeBarrierAndRebalanceUseRealJSONAndPrivateOwnership(t *testing.T) {
 	control := &cephFSMirrorNativeControlFake{directories: map[string]bool{"/owned": true, "/foreign": true}}
 	mirror := &Container{
-		source: &ceph.Container{Container: control}, peerID: "owned-peer", SourceFilesystem: "source",
+		source: &ceph.Container{Container: control}, destination: &ceph.Container{Container: &cephFSObserverDraftControl{filesystemID: 2, metadataPool: 9}},
+		peerID: "owned-peer", SourceFilesystem: "source", DestinationFilesystem: "destination", sourceFilesystem: "source", destinationFilesystem: "destination",
 		roster:      cephFSDaemonRoster{sourceID: "owned-auth", daemons: []*Daemon{{Container: control, DaemonName: "a"}}},
 		Directories: []string{"/owned", "/foreign"}, directories: cephFSDirectoryOwnership{owned: map[string]bool{"/owned": true}},
 	}
