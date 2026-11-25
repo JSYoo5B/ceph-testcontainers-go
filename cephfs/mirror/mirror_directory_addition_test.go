@@ -142,7 +142,7 @@ func TestRefusedDirectoryAdditionPreservesPrecedingReceipts(t *testing.T) {
 		retry, outside bool
 	}{
 		{"refused", false, false},
-		{"uncertain-then-refused", true, false},
+		{"refusal with unreadable policy", true, false},
 		{"external re-registration", false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -161,16 +161,20 @@ func TestRefusedDirectoryAdditionPreservesPrecedingReceipts(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			s.applyAdd = false
+			s.applyAdd, s.addExitCode = false, 22
 			if tc.retry {
-				s.addError = errPeerRemovalTransport
-				pending, err := beginDirectoryAdditionFixture(t, m, "/owned")
-				if pending == nil || !errors.Is(err, errPeerRemovalTransport) {
-					t.Fatalf("missing uncertain receipt: %v", err)
+				s.hook = func(f *directoryRemovalControlFake, args []string) {
+					if len(args) == 6 && args[3] == "add" {
+						f.policyOverride = `{}`
+					}
 				}
-				s.addError = nil
+				pending, err := beginDirectoryAdditionFixture(t, m, "/owned")
+				var failure *ceph.NativeFailure
+				if pending == nil || !errors.As(err, &failure) || failure.ExitCode != 22 {
+					t.Fatalf("missing retained refusal: %v", err)
+				}
+				s.hook, s.policyOverride = nil, ""
 			}
-			s.addExitCode = 22
 			if tc.outside {
 				s.hook = func(_ *directoryRemovalControlFake, args []string) {
 					if len(args) == 6 && args[3] == "add" {
@@ -178,8 +182,12 @@ func TestRefusedDirectoryAdditionPreservesPrecedingReceipts(t *testing.T) {
 					}
 				}
 			}
+			before := s.adds
 			if r, err := beginDirectoryAdditionFixture(t, m, "/owned"); r != nil || err == nil {
 				t.Fatalf("refused native add returned receipt %v, error %v", r, err)
+			}
+			if tc.retry && s.adds != before {
+				t.Fatal("known refusal was redispatched after a readback error")
 			}
 			if status, err := previous.Status(t.Context()); err != nil || !status.Registered || !status.PolicyPresent {
 				t.Fatalf("previous completed addition: %+v, %v", status, err)
@@ -196,7 +204,7 @@ func TestRefusedDirectoryAdditionPreservesPrecedingReceipts(t *testing.T) {
 	}
 }
 
-func TestCephFSDirectoryAdditionRetriesOnlyUncertainAbsentRequest(t *testing.T) {
+func TestCephFSDirectoryAdditionReconcilesLateApplyWithoutResending(t *testing.T) {
 	for _, acknowledged := range []bool{false, true} {
 		t.Run(map[bool]string{false: "uncertain", true: "acknowledged"}[acknowledged], func(t *testing.T) {
 			m, s, _ := newDirectoryAdditionFixture(t)
@@ -212,24 +220,20 @@ func TestCephFSDirectoryAdditionRetriesOnlyUncertainAbsentRequest(t *testing.T) 
 			if err != nil || st.PolicyPresent || st.Registered || s.adds != 1 {
 				t.Fatal("absent Status replayed request")
 			}
-			s.addError, s.applyAdd = nil, true
+			// A second add would let the first request apply just before
+			// the duplicate receives a definite refusal.
+			s.addError, s.applyAdd, s.addExitCode = nil, true, 22
 			same, err := beginDirectoryAdditionFixture(t, m, "/added")
-			if same != r {
-				t.Fatal("retry replaced original intent")
+			if same != r || err == nil || s.adds != 1 || r.registered {
+				t.Fatalf("an absent policy allowed a second dispatch: %v", err)
 			}
-			if acknowledged {
-				if err == nil || s.adds != 1 || r.registered {
-					t.Fatal("acknowledged but invisible request was resent")
-				}
-				s.directories = append(s.directories, "/added")
-				same, err = beginDirectoryAdditionFixture(t, m, "/added")
+			if !acknowledged && !errors.Is(err, errPeerRemovalTransport) {
+				t.Fatalf("pending request lost its dispatch cause: %v", err)
 			}
-			wantAdds := 2
-			if acknowledged {
-				wantAdds = 1
-			}
-			if err != nil || same != r || !r.registered || s.adds != wantAdds || m.directories.generations["/added"] != 1 {
-				t.Fatalf("fresh intent reconciliation: %v", err)
+			s.directories = append(s.directories, "/added") // first dispatch applies
+			same, err = beginDirectoryAdditionFixture(t, m, "/added")
+			if err != nil || same != r || !r.registered || s.adds != 1 || m.directories.generations["/added"] != 1 {
+				t.Fatalf("late apply did not reconcile the original intent: %v", err)
 			}
 		})
 	}

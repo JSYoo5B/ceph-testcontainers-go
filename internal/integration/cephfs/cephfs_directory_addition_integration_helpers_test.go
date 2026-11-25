@@ -374,8 +374,17 @@ func runCephFSDirectoryAdditionIntent(t *testing.T, host bool) {
 	verify(seed, seedCheckpoint, "seed-after-new-generation")
 	cephFSDirectoryAdditionLog(t, "new-owned-cycle", status, counter, mirror, policy)
 
-	// Separate unapplied fault: the first wrapper attempt never dispatches native
-	// add. Fresh exact native absence authorizes a later attempt, not a cached ACK.
+	// Refuse direct removal of any outside path while the fixture is idle.
+	beforeCommands = counter.commands.Load()
+	for _, path := range []string{foreign, outside} {
+		if receipt, err := mirror.BeginDirectoryRemoval(ctx, path); receipt != nil || err == nil || counter.commands.Load() != beforeCommands || slices.Contains(mirror.Directories, path) {
+			t.Fatalf("foreign policy %q gained privately owned removal authority: %v", path, err)
+		}
+	}
+
+	// The wrapper knows that it did not dispatch this add. The fixture only
+	// sees a transport failure, and an absent policy does not prove that
+	// native dispatch cannot still take effect.
 	unappliedCheckpoint := checkpoint(unapplied, "unapplied-request-backlog")
 	uncertain, err := mirror.BeginDirectoryAddition(ctx, unapplied)
 	if uncertain == nil || !errors.Is(err, errCephFSDirectoryAdditionUnappliedFault) || counter.unappliedAttempts.Load() != 1 || counter.unappliedDispatches.Load() != 0 || counter.unappliedFaults.Load() != 1 || slices.Contains(mirror.Directories, unapplied) {
@@ -391,36 +400,27 @@ func runCephFSDirectoryAdditionIntent(t *testing.T, host bool) {
 	}
 	cephFSDirectoryAdditionLog(t, "unapplied-absent-unpublished", status, counter, mirror, policy)
 	harness.CephFSAssertOriginalProcessSnapshotAbsent(t, ctx, destinationClient, destinationFS.FilesystemName, script, unapplied, unappliedCheckpoint.Name, "unapplied-native-absence", 3*time.Second)
-	if same, err := mirror.BeginDirectoryAddition(ctx, unapplied); same != uncertain || counter.unappliedAttempts.Load() != 2 || counter.unappliedDispatches.Load() != 1 {
-		t.Fatal("fresh uncertain absent retry did not preserve exact intent", err)
-	}
-	harness.CephFSDirectoryAdditionReconcile(t, ctx, mirror, unapplied, uncertain)
-	if counter.unappliedAttempts.Load() != 2 || counter.unappliedDispatches.Load() != 1 {
-		t.Fatal("acknowledged formerly-unapplied request was resent during convergence")
+	if same, err := mirror.BeginDirectoryAddition(ctx, unapplied); same != uncertain ||
+		!errors.Is(err, errCephFSDirectoryAdditionUnappliedFault) || counter.unappliedAttempts.Load() != 1 || counter.unappliedDispatches.Load() != 0 {
+		t.Fatal("absent policy caused the uncertain request to be replayed or retired", err)
 	}
 	status, err = observeDirectoryAdditionStatus(t, ctx, uncertain)
-	harness.CephFSDirectoryAdditionAssertStatus(t, status, expected, unapplied, true, true)
-	if err != nil || cephFSDirectoryAdditionPathCount(mirror.Directories, unapplied) != 1 {
-		t.Fatal("unapplied retry failed one owned publication", err)
+	harness.CephFSDirectoryAdditionAssertStatus(t, status, expected, unapplied, false, false)
+	if err != nil || cephFSDirectoryAdditionPathCount(mirror.Directories, unapplied) != 0 {
+		t.Fatal("unsettled intent gained ownership", err)
 	}
+	cephFSDirectoryAdditionAssertPendingGates(t, ctx, mirror, counter, unapplied, expected.PeerID)
 	beforeCommands = counter.commands.Load()
 	if old, err := newAddition.Status(ctx); err == nil || old.Registered || counter.commands.Load() != beforeCommands {
 		t.Fatal("singleton different-path typed intent did not invalidate prior completed receipt")
 	}
-	harness.CephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, script, expected, unapplied, unappliedCheckpoint)
-	verify(unapplied, unappliedCheckpoint, "unapplied-retry-client-bytes")
+	harness.CephFSAssertOriginalProcessSnapshotAbsent(t, ctx, destinationClient, destinationFS.FilesystemName, script, unapplied, unappliedCheckpoint.Name, "unapplied-after-retry", 3*time.Second)
 	verify(seed, seedCheckpoint, "final-seed-unchanged")
 	verify(foreign, foreignCheckpoint, "final-foreign-unchanged")
-	beforeCommands = counter.commands.Load()
-	for _, path := range []string{foreign, outside} {
-		if receipt, err := mirror.BeginDirectoryRemoval(ctx, path); receipt != nil || err == nil || counter.commands.Load() != beforeCommands || slices.Contains(mirror.Directories, path) {
-			t.Fatalf("foreign policy %q gained privately owned removal authority: %v", path, err)
-		}
-	}
-	if err := harness.CephFSDirectoryAdditionCheckScope(ctx, policy, []string{seed, foreign, outside, added, unapplied}); err != nil || customizers.Load() != 2 || counter.appliedLosses.Load() != 1 || counter.unappliedFaults.Load() != 1 || counter.removeLosses.Load() != 1 {
+	if err := harness.CephFSDirectoryAdditionCheckScope(ctx, policy, []string{seed, foreign, outside, added}); err != nil || customizers.Load() != 2 || counter.appliedLosses.Load() != 1 || counter.unappliedFaults.Load() != 1 || counter.removeLosses.Load() != 1 {
 		t.Fatal("final original policy/client lifecycle/fault evidence changed", err)
 	}
-	cephFSDirectoryAdditionLog(t, "unapplied-fresh-retry", status, counter, mirror, policy)
+	cephFSDirectoryAdditionLog(t, "unapplied-retry-retains-pending", status, counter, mirror, policy)
 }
 
 func cephFSDirectoryAdditionAssertPendingGates(t *testing.T, ctx context.Context, mirror *cephfsmirror.Container, counter *cephFSDirectoryAdditionCommandCounter, directory, peer string) {
