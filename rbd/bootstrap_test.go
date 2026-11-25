@@ -41,18 +41,31 @@ func TestPoolsValidateAndJoinInitialPools(t *testing.T) {
 
 func TestDefaultPoolAppliesOnlyWithoutExplicitPools(t *testing.T) {
 	for _, tc := range []struct {
+		name string
 		opts []ceph.Option
-		want string
+		want []string
 	}{
-		{[]ceph.Option{defaultPool()}, "rbd"},
-		{[]ceph.Option{WithPools(ceph.PoolConfig{Name: "volumes"}), defaultPool()}, "volumes"},
+		{"default", []ceph.Option{defaultPool()}, []string{"rbd"}},
+		{"empty", []ceph.Option{WithPools(), defaultPool()}, nil},
+		{"named", []ceph.Option{WithPools(ceph.PoolConfig{Name: "volumes"}), defaultPool()}, []string{"volumes"}},
 	} {
-		services, err := testhelper.TestApply(tc.opts...)
-		if err != nil || len(services) != 1 {
-			t.Fatalf("bootstraps: %v %v", services, err)
-		}
-		if pools := services[0].InitialPools(); len(pools) != 1 || pools[0].Name != tc.want {
-			t.Fatalf("pools = %+v, want %s", pools, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			pools, services, err := testhelper.TestPrepare(2, false, nil, tc.opts...)
+			if err != nil || len(services) != 1 {
+				t.Fatalf("bootstraps: %v %v", services, err)
+			}
+			for _, selected := range [][]ceph.PoolConfig{pools, services[0].InitialPools()} {
+				var names []string
+				for _, pool := range selected {
+					if pool.Application != "rbd" {
+						t.Fatalf("pool %s has application %q", pool.Name, pool.Application)
+					}
+					names = append(names, pool.Name)
+				}
+				if !slices.Equal(names, tc.want) {
+					t.Fatalf("selected pools = %v, want %v", names, tc.want)
+				}
+			}
+		})
 	}
 }

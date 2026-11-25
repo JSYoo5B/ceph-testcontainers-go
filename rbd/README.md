@@ -17,7 +17,8 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/rbd
 
 1. **Start a cluster** with `rbd.Run(ctx, ceph.DefaultImage, opts...)`. It is a
    `ceph` cluster (MON, MGR, two OSDs by default) with an initialized pool
-   named `rbd`; `rbd.WithPools` selects other pools. On a cluster started by
+   named `rbd` by default. `rbd.WithPools` replaces that selection, and
+   `rbd.WithPools()` selects no RBD pools. On a cluster started by
    `ceph.Run` or another service package, prepare a pool with `rbd.InitPool`.
    Call `ceph.Observe(cluster.Container)` and its `WaitForClean` before the
    first client I/O.
