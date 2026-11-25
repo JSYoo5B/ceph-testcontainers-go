@@ -758,6 +758,9 @@ func (v *Verification) Evaluate(ctx context.Context) (*VerificationReport, error
 		defer closeDocker()
 		observeVerification(ctx, v.config, baseline, docker, observation)
 	}
+	if err := ctx.Err(); err != nil {
+		observation.gap("", "complete verification: "+err.Error())
+	}
 	return v.evaluate(observation), nil
 }
 
@@ -899,7 +902,7 @@ var verificationNotes = []string{
 	"The bug compatibility selection is a build property that the library does not see.",
 }
 
-const archivedLogsNote = "With ArchiveLogs, the failure archive keeps every line of the window that the log check read, events or not, in verification-<n>-<name>-logs.jsonl, in the order received, with split cluster log entries restored; the log check's gaps apply to those lines as well, and a source without lines there was not read."
+const archivedLogsNote = "With ArchiveLogs, the failure archive keeps every line of the window that the log check read, events or not, in verification-<n>-<name>-logs.jsonl, in the order received, with split cluster log entries restored; the log check retains any lines it read before a gap. Consult the report's coverage and gaps to distinguish an empty read from a skipped source."
 
 func (v *Verification) evaluate(o *verificationObservation) *VerificationReport {
 	b := v.baseline

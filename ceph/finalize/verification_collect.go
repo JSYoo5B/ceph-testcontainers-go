@@ -98,8 +98,8 @@ func dockerClock(ctx context.Context, docker verificationDocker, timeout time.Du
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	info, err := docker.Info(ctx, mobycl.InfoOptions{})
-	if err != nil {
-		return time.Time{}, errors.Join(err, ctx.Err())
+	if err := errors.Join(err, ctx.Err()); err != nil {
+		return time.Time{}, err
 	}
 	clock, err := time.Parse(time.RFC3339Nano, info.Info.SystemTime)
 	if err != nil {
@@ -120,7 +120,7 @@ func inspectGeneration(ctx context.Context, docker verificationDocker, id string
 	switch {
 	case errdefs.IsNotFound(err):
 		return nil, errVerificationRemoved
-	case err != nil:
+	case err != nil || ctx.Err() != nil:
 		return nil, errors.Join(err, ctx.Err())
 	}
 	ctr := inspection.Container
