@@ -724,7 +724,8 @@ func nativeScopeIn(ctx context.Context, g *gwbase.Core, target testcontainers.Co
 	for _, list := range []struct {
 		values any
 		key    string
-	}{{group["placement_targets"], "name"}, {zone["placement_pools"], "key"}} {
+		value  string
+	}{{group["placement_targets"], "name", ""}, {zone["placement_pools"], "key", "val"}} {
 		items, ok := list.values.([]any)
 		if !ok {
 			return nil, nil, errors.New("RGW native placement listing is missing")
@@ -738,6 +739,11 @@ func nativeScopeIn(ctx context.Context, g *gwbase.Core, target testcontainers.Co
 			name, ok := item[list.key].(string)
 			if !ok || name == "" || seen[name] {
 				return nil, nil, errors.New("RGW native placement listing has an invalid or duplicate name")
+			}
+			if list.value != "" {
+				if _, ok := item[list.value].(map[string]any); !ok {
+					return nil, nil, errors.New("RGW native placement listing has an incomplete zone mapping")
+				}
 			}
 			seen[name] = true
 		}

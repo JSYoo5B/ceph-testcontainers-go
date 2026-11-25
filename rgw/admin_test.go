@@ -238,7 +238,7 @@ func TestRGWUserCreationRejectsExistingIdentityAndKeepsPartialCapsFailure(t *tes
 			t.Fatal("ordinary user acquired global admin or system permissions")
 		}
 	}
-	ctr.responses = []rgwAdminResponse{{data: `["test-user"]`}, {data: native}, {}}
+	ctr.responses = []rgwAdminResponse{{data: `["test-user"]`}, {data: native}, {}, {data: `[]`}}
 	if err := user.Remove(t.Context()); err != nil || !user.base().State.Removed {
 		t.Fatal("capability setup failure prevented removing a confirmed owned identity")
 	}
@@ -421,7 +421,7 @@ func TestRGWRemovalRetainsUserOnFailureAndNeverPurgesData(t *testing.T) {
 	native := rgwAdminFixture("test-user", "PRIVATE-SECRET", false, Quota{MaxSizeBytes: -1, MaxObjects: -1})
 	gateway, ctr := newRGWAdminTestGateway(Config{},
 		rgwAdminResponse{data: `["test-user"]`}, rgwAdminResponse{data: native}, rgwAdminResponse{data: "user still owns buckets PRIVATE-SECRET", code: 1}, rgwAdminResponse{data: `["test-user"]`},
-		rgwAdminResponse{data: native}, rgwAdminResponse{data: `["test-user"]`}, rgwAdminResponse{data: native}, rgwAdminResponse{})
+		rgwAdminResponse{data: native}, rgwAdminResponse{data: `["test-user"]`}, rgwAdminResponse{data: native}, rgwAdminResponse{}, rgwAdminResponse{data: `[]`})
 	user := rgwAdminOwnedTestUser(gateway)
 	if err := user.Remove(t.Context()); err == nil || user.base().State.Removed {
 		t.Fatal("failed user removal lost its handle")
@@ -432,7 +432,7 @@ func TestRGWRemovalRetainsUserOnFailureAndNeverPurgesData(t *testing.T) {
 	if err := user.Remove(t.Context()); err != nil || !user.base().State.Removed {
 		t.Fatal("empty owned user could not be removed")
 	}
-	if err := user.Remove(t.Context()); err != nil || len(ctr.calls) != 8 {
+	if err := user.Remove(t.Context()); err != nil || len(ctr.calls) != 9 {
 		t.Fatal("repeat removal was not idempotent")
 	}
 	for _, args := range ctr.calls {
@@ -471,5 +471,57 @@ func TestRGWUserConfigRejectsInvalidIdentityAndCapabilities(t *testing.T) {
 		if _, err := normalizeRGWUserConfig(config); err == nil {
 			t.Fatalf("invalid user configuration accepted: %v", config)
 		}
+	}
+}
+
+func TestRGWRemovalWaitsForUnstoppedDeletion(t *testing.T) {
+	for _, present := range []bool{false, true} {
+		t.Run(fmt.Sprintf("present after settle=%t", present), func(t *testing.T) {
+			native := rgwAdminFixture("test-user", "PRIVATE-SECRET", false, Quota{MaxSizeBytes: -1, MaxObjects: -1})
+			responses := []rgwAdminResponse{{data: `["test-user"]`}, {data: native}, {err: errors.New("lost remove reply")}}
+			if present {
+				responses = append(responses, rgwAdminResponse{data: `["test-user"]`}, rgwAdminResponse{data: native}, rgwAdminResponse{})
+			}
+			responses = append(responses, rgwAdminResponse{data: `[]`})
+			gateway, ctr := newRGWAdminTestGateway(Config{}, responses...)
+			ctr.stopFailures = 2
+			user := rgwAdminOwnedTestUser(gateway)
+			var pending *ceph.NativeCommandUnstoppedError
+			if err := user.Remove(t.Context()); !errors.As(err, &pending) || user.base().State.Removed || len(ctr.calls) != 3 {
+				t.Fatalf("initial deletion: %v, commands: %v", err, ctr.calls)
+			}
+			copy := *user
+			if err := copy.Remove(t.Context()); err == nil || len(ctr.calls) != 3 {
+				t.Fatalf("issued an observation or deletion before settlement: %v, commands: %v", err, ctr.calls)
+			}
+			if err := copy.Remove(t.Context()); err != nil || !user.base().State.Removed || len(ctr.calls) != len(responses) ||
+				!slices.Contains(ctr.calls[len(ctr.calls)-1], "list") {
+				t.Fatalf("settled deletion: %v, commands: %v", err, ctr.calls)
+			}
+		})
+	}
+}
+
+func TestRGWRemovalRequiresAbsenceAfterSuccessfulReply(t *testing.T) {
+	native := rgwAdminFixture("test-user", "PRIVATE-SECRET", false, Quota{MaxSizeBytes: -1, MaxObjects: -1})
+	gateway, ctr := newRGWAdminTestGateway(Config{},
+		rgwAdminResponse{data: `["test-user"]`}, rgwAdminResponse{data: native}, rgwAdminResponse{}, rgwAdminResponse{data: `["test-user"]`},
+		rgwAdminResponse{data: `[]`})
+	user := rgwAdminOwnedTestUser(gateway)
+	if err := user.Remove(t.Context()); err == nil || !strings.Contains(err.Error(), "without removing") || user.base().State.Removed || len(ctr.calls) != 4 {
+		t.Fatalf("accepted a false success: %v, commands: %v", err, ctr.calls)
+	}
+	if err := user.Remove(t.Context()); err != nil || !user.base().State.Removed || len(ctr.calls) != 5 {
+		t.Fatalf("did not accept confirmed absence on retry: %v, commands: %v", err, ctr.calls)
+	}
+}
+
+func TestRGWRemovalRejectsIncompleteListingAfterMutation(t *testing.T) {
+	native := rgwAdminFixture("test-user", "PRIVATE-SECRET", false, Quota{MaxSizeBytes: -1, MaxObjects: -1})
+	gateway, _ := newRGWAdminTestGateway(Config{},
+		rgwAdminResponse{data: `["test-user"]`}, rgwAdminResponse{data: native}, rgwAdminResponse{}, rgwAdminResponse{data: `[null]`})
+	user := rgwAdminOwnedTestUser(gateway)
+	if err := user.Remove(t.Context()); err == nil || !strings.Contains(err.Error(), "decode RGW user listing") || user.base().State.Removed {
+		t.Fatalf("incomplete listing was accepted as absence: %v", err)
 	}
 }

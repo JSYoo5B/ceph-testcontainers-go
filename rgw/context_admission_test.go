@@ -40,7 +40,7 @@ func TestRGWUserOperationsWaitForTheClusterOnlyUntilTheContextEnds(t *testing.T)
 		"Suspend": {[]rgwAdminResponse{{data: native}, {}, {data: suspended}}, func(ctx context.Context, _ *Gateway, u *User) error {
 			return u.Suspend(ctx, true)
 		}},
-		"Remove": {[]rgwAdminResponse{{data: `["test-user"]`}, {data: native}, {}}, func(ctx context.Context, _ *Gateway, u *User) error {
+		"Remove": {[]rgwAdminResponse{{data: `["test-user"]`}, {data: native}, {}, {data: `[]`}}, func(ctx context.Context, _ *Gateway, u *User) error {
 			return u.Remove(ctx)
 		}},
 	}

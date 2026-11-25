@@ -83,6 +83,9 @@ type UserState struct {
 	// UnstoppedCreate retains a create command that could still publish the
 	// identity after an absence check. Remove must settle it first.
 	UnstoppedCreate *ceph.NativeCommandUnstoppedError
+	// UnstoppedRemove retains a removal that must stop before a retry can
+	// check absence or dispatch another deletion.
+	UnstoppedRemove *ceph.NativeCommandUnstoppedError
 	// NativeScope, when set, is the exact native scope that the user's
 	// commands use: that of a tenanted user's gateway or of a root user's
 	// account.
@@ -230,7 +233,7 @@ func (g *Core) CreateUser(ctx context.Context, spec UserSpec) (*User, error) {
 	if spec.MaxBuckets != nil {
 		args = append(args, "--max-buckets", strconv.Itoa(*spec.MaxBuckets))
 	}
-	data, err := g.supervisedUserCommand(ctx, user, args...)
+	data, err := g.SupervisedUserCommand(ctx, user, args...)
 	if err != nil {
 		errors.As(err, &user.State.UnstoppedCreate)
 		return user, err
@@ -266,7 +269,7 @@ func (g *Core) UserExists(ctx context.Context, u *User) (bool, error) {
 		return false, err
 	}
 	var users []string
-	if json.Unmarshal(data, &users) != nil || users == nil {
+	if json.Unmarshal(data, &users) != nil || users == nil || slices.Contains(users, "") {
 		return false, errors.New("decode RGW user listing")
 	}
 	return slices.Contains(users, u.ID), nil

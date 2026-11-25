@@ -81,11 +81,12 @@ type rateLimitState struct {
 	refused error
 }
 
-// rateLimitTarget is the native identity of one rate-limit scope. A bucket is
-// bound by its instance ID and marker, so a bucket deleted and created again
-// under the same name is a different target.
+// rateLimitTarget is the native identity of one rate-limit scope. A user
+// policy lives with its user in the selected metadata pool and namespace.
+// A bucket is bound by its instance ID and marker, so a bucket deleted and
+// created again under the same name is a different target.
 type rateLimitTarget struct {
-	uid                                    string
+	uid, userPool                          string
 	bucket, tenant, bucketID, bucketMarker string
 }
 
@@ -155,6 +156,10 @@ func (u *User) OverrideRateLimit(ctx context.Context, scope RateLimitScope, limi
 	err := u.withGateway(ctx, func(ctx context.Context, g *gwbase.Core, user *gwbase.User, native *gwbase.NativeUser) error {
 		if scope.Bucket == "" && servicehook.CephBefore(g.Cluster(), 20) {
 			return userRateLimitUnsupported(g.Cluster())
+		}
+		user, err := resolveRateLimitUser(ctx, g, user, scope.Bucket)
+		if err != nil {
+			return err
 		}
 		target, err := bindRateLimitTarget(ctx, g, user, native, scope.Bucket)
 		if err != nil {
@@ -238,6 +243,10 @@ func (change *RateLimitOverrideHandle) Restore(ctx context.Context) error {
 		overrides := rateLimitOverridesOf(g.Cluster())
 		if overrides.byTarget[state.key] != state {
 			return errors.New("RGW rate-limit override is not tracked by this cluster")
+		}
+		user, err := resolveRateLimitUser(ctx, g, user, state.target.bucket)
+		if err != nil {
+			return err
 		}
 		if err := checkRateLimitTarget(ctx, g, user, native, state.target); err != nil {
 			return err
@@ -349,7 +358,7 @@ type rateLimitStep struct {
 // key identifies the target in the cluster's override registry.
 func (t rateLimitTarget) key() string {
 	if t.bucket == "" {
-		return "user\x00" + t.uid
+		return "user\x00" + t.userPool + "\x00" + t.uid
 	}
 	return "bucket\x00" + t.tenant + "\x00" + t.bucket + "\x00" + t.bucketID
 }
@@ -366,11 +375,40 @@ func (t rateLimitTarget) selector() []string {
 	return args
 }
 
+// resolveRateLimitUser pins a configured realm's implicit zone to the
+// running gateway's registration. A raw zone get with no zone selector
+// reads the global default realm's zone, even when RGW user operations
+// use the configured realm's default zone.
+func resolveRateLimitUser(ctx context.Context, g *gwbase.Core, user *gwbase.User, bucket string) (*gwbase.User, error) {
+	configured := g.Scope()
+	if bucket != "" || user.State.NativeScope != nil || configured.Realm == "" || configured.Zone != "" {
+		return user, nil
+	}
+	scope, err := g.RuntimeScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if scope.Realm != configured.Realm || (configured.Zonegroup != "" && scope.Group != configured.Zonegroup) {
+		return nil, errors.New("RGW gateway registered outside its configured realm or zonegroup")
+	}
+	scoped, state := *user, *user.State
+	state.NativeScope = &scope
+	scoped.State = &state
+	if _, err := g.OwnedUser(ctx, &scoped); err != nil {
+		return nil, fmt.Errorf("confirm the owned RGW user in the realm's zone: %w", err)
+	}
+	return &scoped, nil
+}
+
 // bindRateLimitTarget captures the native identity of the selected scope of
 // an owned user whose identity the caller has just confirmed.
 func bindRateLimitTarget(ctx context.Context, g *gwbase.Core, user *gwbase.User, native *gwbase.NativeUser, bucket string) (rateLimitTarget, error) {
 	if bucket == "" {
-		return rateLimitTarget{uid: user.ID}, nil
+		pool, err := readRateLimitUserPool(ctx, g, user)
+		if err != nil {
+			return rateLimitTarget{}, err
+		}
+		return rateLimitTarget{uid: user.ID, userPool: pool}, nil
 	}
 	return bindRateLimitBucket(ctx, g, user, native.Info.Tenant, bucket)
 }
@@ -382,6 +420,13 @@ func checkRateLimitTarget(ctx context.Context, g *gwbase.Core, user *gwbase.User
 		return servicehook.Invalid(errors.New("RGW rate-limit override belongs to another user"))
 	}
 	if target.bucket == "" {
+		pool, err := readRateLimitUserPool(ctx, g, user)
+		if err != nil {
+			return err
+		}
+		if pool != target.userPool {
+			return errors.New("RGW user metadata pool changed; refusing rate-limit restoration")
+		}
 		return nil
 	}
 	if native.Info.Tenant != target.tenant {
@@ -389,6 +434,25 @@ func checkRateLimitTarget(ctx context.Context, g *gwbase.Core, user *gwbase.User
 	}
 	_, err := bindRateLimitBucket(ctx, g, user, target.tenant, target.bucket, target)
 	return err
+}
+
+// readRateLimitUserPool reads the backing pool and namespace of user
+// metadata through the same scope selection as the policy commands. Zone IDs
+// do not identify the policy when more than one zone uses this storage.
+func readRateLimitUserPool(ctx context.Context, g *gwbase.Core, user *gwbase.User) (string, error) {
+	data, err := g.UserCommand(ctx, user, "zone", "get")
+	if err != nil {
+		return "", fmt.Errorf("read the RGW user's metadata pool: %w", err)
+	}
+	zone, err := gwbase.DecodeObject(data)
+	if err != nil {
+		return "", err
+	}
+	pool, ok := zone["user_uid_pool"].(string)
+	if !ok || strings.TrimSpace(pool) == "" || strings.ContainsRune(pool, 0) {
+		return "", errors.New("RGW zone has no valid user metadata pool")
+	}
+	return pool, nil
 }
 
 // bindRateLimitBucket reads the native identity of bucket and requires that

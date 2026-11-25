@@ -172,11 +172,11 @@ func withoutKey(keys []NativeKey, accessKey string) []NativeKey {
 	return slices.DeleteFunc(slices.Clone(keys), func(key NativeKey) bool { return key.AccessKey == accessKey })
 }
 
-// supervisedUserCommand runs a radosgw-admin command of u through g as
+// SupervisedUserCommand runs a radosgw-admin command of u through g as
 // UserCommand does, under the gateway's shell supervisor: a call whose ctx
 // ends stops the command before it returns, and a stop that cannot be
 // confirmed returns a *ceph.NativeCommandUnstoppedError.
-func (g *Core) supervisedUserCommand(ctx context.Context, u *User, args ...string) ([]byte, error) {
+func (g *Core) SupervisedUserCommand(ctx context.Context, u *User, args ...string) ([]byte, error) {
 	if u.State.NativeScope == nil {
 		return g.AdminCommand(ctx, args...)
 	}
@@ -226,7 +226,7 @@ func (g *Core) CreateKey(ctx context.Context, u *User) (*Key, error) {
 	}
 	key := &Key{AccessKey: accessKey, Status: KeyPending}
 	u.State.Issued = append(u.State.Issued, key)
-	_, cmdErr := g.supervisedUserCommand(ctx, u, "key", "create", "--uid", u.ID, "--key-type", "s3", "--access-key", accessKey, "--gen-secret")
+	_, cmdErr := g.SupervisedUserCommand(ctx, u, "key", "create", "--uid", u.ID, "--key-type", "s3", "--access-key", accessKey, "--gen-secret")
 	errors.As(cmdErr, &key.Unstopped)
 	cause := cmdErr
 	if cause == nil {
@@ -305,7 +305,7 @@ func (g *Core) RevokeKey(ctx context.Context, u *User, key *Key) error {
 	}
 	prior := key.Status
 	key.Status = KeyRevoking
-	_, cmdErr := g.supervisedUserCommand(ctx, u, "key", "rm", "--uid", u.ID, "--key-type", "s3", "--access-key", key.AccessKey)
+	_, cmdErr := g.SupervisedUserCommand(ctx, u, "key", "rm", "--uid", u.ID, "--key-type", "s3", "--access-key", key.AccessKey)
 	errors.As(cmdErr, &key.Unstopped)
 	after, err := g.settle(ctx, u)
 	if err != nil {

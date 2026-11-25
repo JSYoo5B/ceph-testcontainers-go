@@ -437,8 +437,9 @@ func (u *User) Suspend(ctx context.Context, suspended bool) error {
 // Ceph refuses ordinary users that still own buckets; remove those through the
 // S3 client first. Account buckets belong to the account and may outlive a root
 // user's removal; removing the account independently refuses a nonempty one.
-// Success is idempotent across copies of a handle. After an uncertain
-// native failure, an absent user is accepted as completed removal; a user still
+// Success requires a native listing that confirms absence and is idempotent
+// across copies of a handle. A removal command that may still be running
+// must stop before a retry can check absence or delete again. A user still
 // present remains tracked and its fixture-created keys are verified before
 // retrying. Removing the user removes all of its keys, so a later Revoke of
 // one of its S3Key handles returns nil.
@@ -466,6 +467,12 @@ func (u *User) Remove(ctx context.Context) error {
 		}
 		user.State.UnstoppedCreate = nil
 	}
+	if pending := user.State.UnstoppedRemove; pending != nil {
+		if err := pending.Stop(ctx); err != nil {
+			return fmt.Errorf("settle the prior RGW user removal: %w", err)
+		}
+		user.State.UnstoppedRemove = nil
+	}
 	g, err := user.Origin.ScopeGateway(ctx)
 	if err != nil {
 		return err
@@ -486,13 +493,21 @@ func (u *User) Remove(ctx context.Context) error {
 	if _, err := g.OwnedUser(ctx, user); err != nil {
 		return err
 	}
-	if _, err := g.UserCommand(ctx, user, "user", "rm", "--uid", user.ID); err != nil {
-		checkCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-		defer cancel()
-		exists, checkErr := g.UserExists(checkCtx, user)
-		if checkErr != nil || exists {
-			return errors.Join(err, checkErr)
+	_, commandErr := g.SupervisedUserCommand(ctx, user, "user", "rm", "--uid", user.ID)
+	if errors.As(commandErr, &user.State.UnstoppedRemove) {
+		return commandErr
+	}
+	checkCtx, cancelCheck := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancelCheck()
+	exists, checkErr := g.UserExists(checkCtx, user)
+	if checkErr != nil {
+		return errors.Join(commandErr, fmt.Errorf("confirm RGW user removal: %w", checkErr))
+	}
+	if exists {
+		if commandErr != nil {
+			return commandErr
 		}
+		return errors.New("RGW answered without removing the user")
 	}
 	user.State.Removed = true
 	return nil
