@@ -381,3 +381,49 @@ func TestRetrieveClassifiesDockerArchiveArtifacts(t *testing.T) {
 		})
 	}
 }
+
+// dockerTargetBackend preserves fixture setup, retrieval and cleanup while
+// routing only Stop's target observation through the Docker Engine client.
+type dockerTargetBackend struct{ *fakeBackend }
+
+func (b dockerTargetBackend) target(ctx context.Context, id, network string) (nshelper.Target, error) {
+	return (dockerBackend{}).target(ctx, id, network)
+}
+
+func TestStopDistinguishesMissingNetworkFromMissingContainer(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		missingContainer bool
+		want             TargetState
+	}{
+		{name: "bridge removed", want: TargetUnknown},
+		{name: "container removed", missingContainer: true, want: TargetGone},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := withFakeEngine(t)
+			f := newFakeBackend()
+			req := request(t)
+			session, err := startFake(t, f, req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			session.backend = dockerTargetBackend{fakeBackend: f}
+			if !tc.missingContainer {
+				engine.json("GET /containers/"+targetID+"/json", http.StatusOK,
+					strings.Replace(engineRunningTarget, `"ceph":`, `"`+req.Network+`":`, 1))
+			}
+			report, err := session.Stop(t.Context())
+			if report.Target != tc.want || report.File.Status != FileValid || !report.HelperRemoved {
+				t.Fatalf("report = %+v, error = %v", report, err)
+			}
+			if tc.missingContainer {
+				if !errors.Is(err, ErrFailed) || engine.called("GET /networks/") {
+					t.Fatalf("missing container: %v", err)
+				}
+			} else if !errdefs.IsNotFound(err) || errors.Is(err, ErrFailed) ||
+				!strings.Contains(err.Error(), "inspect network") || !engine.called("GET /networks/") {
+				t.Fatalf("missing bridge: %v", err)
+			}
+		})
+	}
+}
