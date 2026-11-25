@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -78,6 +79,7 @@ type fakeCrashContainer struct {
 	inspections     int
 	noCrashDir      bool
 	archive         []byte
+	archiveReader   io.Reader
 	copyErr         error
 	state           dockercontainer.State
 	copies          int
@@ -122,7 +124,11 @@ func (d *fakeCrashDocker) CopyFromContainer(ctx context.Context, id string, opti
 		return mobycl.CopyFromContainerResult{}, ctr.copyErr
 	}
 	ctr.copies++
-	return mobycl.CopyFromContainerResult{Content: io.NopCloser(bytes.NewReader(ctr.archive))}, nil
+	reader := ctr.archiveReader
+	if reader == nil {
+		reader = bytes.NewReader(ctr.archive)
+	}
+	return mobycl.CopyFromContainerResult{Content: io.NopCloser(reader)}, nil
 }
 
 type crashTarget struct {
@@ -499,6 +505,46 @@ func TestCrashMetadataSelectsTargetsByIdentity(t *testing.T) {
 				if result.Outcome != CrashRecordsFound || len(result.Records) != 1 {
 					t.Fatalf("result %+v", result)
 				}
+			}
+		})
+	}
+}
+
+func TestCrashMetadataReadsPastEndMarker(t *testing.T) {
+	archive := crashArchive(t,
+		crashEntry{name: "crash/r/meta", body: `{"crash_id":"r"}`},
+		crashEntry{name: "crash/r/done"})
+	const padding = 512
+	limit := int64(len(archive) + padding)
+	transportErr := errors.New("archive connection interrupted")
+	for _, tc := range []struct {
+		name      string
+		trailer   io.Reader
+		wantBytes int64
+		wantError string
+	}{
+		{name: "un-padded", trailer: bytes.NewReader(nil), wantBytes: int64(len(archive))},
+		{name: "padded at limit", trailer: bytes.NewReader(make([]byte, padding)), wantBytes: limit},
+		{name: "over limit", trailer: bytes.NewReader(make([]byte, 2*padding)), wantBytes: limit, wantError: "exceeds"},
+		{name: "nonzero trailer", trailer: strings.NewReader("garbage"), wantBytes: int64(len(archive)) + 7, wantError: "nonzero data"},
+		{name: "transport failure", trailer: iotest.ErrReader(transportErr), wantBytes: int64(len(archive)), wantError: transportErr.Error()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			docker := &fakeCrashDocker{containers: map[string]*fakeCrashContainer{
+				"osd0": {archiveReader: io.MultiReader(bytes.NewReader(archive), tc.trailer)},
+			}}
+			report, err := collectCrashes(t, t.Context(), CrashMetadataConfig{MaxArchiveBytes: limit}, docker,
+				crashSnapshot(crashContainer("osd", "0", "osd0")))
+			got := report.Containers[0]
+			if got.ArchiveBytes != tc.wantBytes || len(got.Records) != 1 || !got.Records[0].Done {
+				t.Fatalf("archive evidence = %+v", got)
+			}
+			if tc.wantError == "" {
+				if err != nil || !report.Complete || got.Outcome != CrashRecordsFound {
+					t.Fatalf("complete archive = %+v, %v", got, err)
+				}
+			} else if err == nil || report.Complete || got.Outcome != CrashArchiveIncomplete || !strings.Contains(got.Error, tc.wantError) {
+				t.Fatalf("incomplete archive = %+v, %v", got, err)
 			}
 		})
 	}
