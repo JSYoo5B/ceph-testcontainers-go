@@ -42,4 +42,18 @@ func TestBlockIOEIOFaultEvidence(t *testing.T) {
 			t.Errorf("put %+v accepted=%t, want %t", tc.result, got, tc.want)
 		}
 	}
+	for _, tc := range []struct {
+		result ceph.NativeCommandResult
+		want   bool
+	}{
+		{ceph.NativeCommandResult{ExitCode: 1, Stderr: []byte("error getting object: (110) Connection timed out")}, true},
+		{ceph.NativeCommandResult{ExitCode: 1, Stderr: []byte("error getting object: (2) No such file or directory")}, false},
+		{ceph.NativeCommandResult{ExitCode: 1, Stderr: []byte("permission denied")}, false},
+		{ceph.NativeCommandResult{ExitCode: 0, Stderr: []byte("(110) Connection timed out")}, false},
+		{ceph.NativeCommandResult{ExitCode: 1, TimedOut: true, Stderr: []byte("(110) Connection timed out")}, false},
+	} {
+		if got := blockIORecoveryReadRetryable(tc.result); got != tc.want {
+			t.Errorf("read %+v retryable=%t, want %t", tc.result, got, tc.want)
+		}
+	}
 }
