@@ -107,6 +107,13 @@ func testBlockIOMainDeviceRecovery(t *testing.T) {
 	}
 	baseline := put("acknowledged")
 	read("acknowledged", "baseline")
+	// Prove that a native read failure retains its stderr before faulting the OSD.
+	missing := blockIOCommand(t, ctx, cluster, client, "get", "absent-read-control", "-")
+	if !missing.Complete() || missing.ExitCode == 0 || len(missing.Stderr) == 0 {
+		t.Fatalf("missing-object read did not provide a complete failure diagnostic: complete=%t exit=%d timeout=%t stderr=%q",
+			missing.Complete(), missing.ExitCode, missing.TimedOut, missing.Stderr)
+	}
+	t.Logf("BLOCKIO_READ_CONTROL missing_object_exit=%d stderr=%q", missing.ExitCode, missing.Stderr)
 	const delay = 250 * time.Millisecond
 	delayEligible := true
 	if err := backend.Apply(ctx, blockio.Profile{Delay: delay}); err != nil {
