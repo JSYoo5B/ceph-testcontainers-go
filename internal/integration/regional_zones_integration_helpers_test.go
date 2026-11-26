@@ -1292,6 +1292,68 @@ func regionalContainerName(t *testing.T, ctx context.Context, ctr testcontainers
 	return strings.TrimPrefix(info.Name, "/")
 }
 
+func testRegionalZoneAttachmentDrift(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
+	defer cancel()
+	cluster := harness.NewRegionalCluster(t, ceph.Run,
+		ceph.WithZoneConfig(harness.RegionalZoneConfig(t)),
+		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithSeparateClusterNetwork()),
+		ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()))
+	client := harness.RegionalClient(t, ctx, cluster, "b")
+	facts, err := ceph.FactsOf(cluster)
+	if err != nil {
+		t.Fatal(err)
+	}
+	docker, err := testcontainers.NewDockerClientWithOpts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = docker.Close() }()
+	id := client.GetContainerID()
+	inspection, err := docker.ContainerInspect(ctx, id, mobycl.ContainerInspectOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inspection.Container.State.Running || inspection.Container.NetworkSettings.Networks[facts.ClusterNetworkName] != nil {
+		t.Fatal("the control needs a running client attached only to the public plane")
+	}
+	profile := fault.NetworkProfile{Plane: ceph.PublicNetworkPlane, HelperImage: harness.NetemImage(t), Delay: regionalOneWay}
+	control := func() {
+		t.Helper()
+		lease, err := fault.ApplyZoneProfile(ctx, cluster, "a", profile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := lease.Restore(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	control()
+	if _, err := docker.NetworkConnect(ctx, facts.ClusterNetworkName, mobycl.NetworkConnectOptions{Container: id}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := docker.ContainerInspect(ctx, id, mobycl.ContainerInspectOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	added := current.Container.NetworkSettings.Networks[facts.ClusterNetworkName]
+	if !current.Container.State.Running || current.Container.State.StartedAt != inspection.Container.State.StartedAt ||
+		added == nil || !added.IPAddress.IsValid() {
+		t.Fatal("the new plane needs an IPv4 endpoint with the original start time")
+	}
+	lease, err := fault.ApplyZoneProfile(ctx, cluster, "a", profile)
+	if lease != nil || err == nil || !strings.Contains(err.Error(), "would bypass the boundary") {
+		t.Fatalf("profile on the public plane after the client joined the cluster plane: lease %v, error %v", lease != nil, err)
+	}
+	if err := client.Stop(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	control()
+}
+
 func testRegionalZonePoolAndVolumeMonitor(t *testing.T) {
 	ctx := t.Context()
 	cluster := harness.NewRegionalCluster(t, ceph.Run,

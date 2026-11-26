@@ -126,7 +126,10 @@ completely enrolled member: such a container reaches every zone directly, or
 through the routes a partial enrollment lacks. With a separate cluster
 network, an unzoned container attached only to the cluster bridge therefore
 also blocks shaping the public plane; `ZoneLayout.Unzoned` lists the
-containers to look for. A path within a zone is not at the boundary; use
+containers to look for. A running member whose bridge address or Docker
+endpoint changed after enrollment also blocks shaping. Stop and start the
+member through its fixture lifecycle to enroll its current attachments and
+install the corresponding routes. A path within a zone is not at the boundary; use
 `fault.ApplyNetworkProfile` with a `Peer` on the member's own endpoint for it.
 
 ## Expected Ceph behavior

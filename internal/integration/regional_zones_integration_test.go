@@ -18,6 +18,10 @@ func TestRegionalZoneRouteOwnership(t *testing.T) {
 	testRegionalZoneRouteOwnership(t)
 }
 
+func TestRegionalZoneAttachmentDrift(t *testing.T) {
+	testRegionalZoneAttachmentDrift(t)
+}
+
 func TestRegionalZonePoolAndVolumeMonitor(t *testing.T) {
 	testRegionalZonePoolAndVolumeMonitor(t)
 }

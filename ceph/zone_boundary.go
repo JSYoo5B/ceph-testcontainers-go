@@ -76,6 +76,7 @@ type zoneMemberState struct {
 	clusterOwned      bool // The member carried this cluster's owner label at enrollment.
 	endpoint          zoneEndpoint
 	startedAt         string
+	endpointIDs       map[NetworkPlane]string
 	ifaces            map[NetworkPlane]string
 	agent             testcontainers.Container
 	routes            map[netip.Addr]zoneRouteRecord
@@ -87,6 +88,10 @@ type zoneMemberState struct {
 // startedAt. A partial enrollment or one of an earlier start is not.
 func (m *zoneMemberState) enrolledFor(startedAt string) bool {
 	return m != nil && m.complete && m.agent != nil && m.startedAt == startedAt
+}
+
+func (m *zoneMemberState) matchesAttachments(info zoneInspection, addrs map[NetworkPlane]netip.Addr) bool {
+	return maps.Equal(m.endpoint.addrs, addrs) && maps.Equal(m.endpointIDs, info.endpointIDs)
 }
 
 // routable reports whether routes can be installed in m's namespace: it has
@@ -238,7 +243,7 @@ func (b *zoneBoundary) inspectEndpoint(ctx context.Context, id string) (map[Netw
 	if err != nil {
 		return nil, zoneInspection{}, fmt.Errorf("inspect zone endpoint %.12s: %w", id, err)
 	}
-	info := zoneInspection{name: strings.TrimPrefix(inspection.Container.Name, "/")}
+	info := zoneInspection{name: strings.TrimPrefix(inspection.Container.Name, "/"), endpointIDs: make(map[NetworkPlane]string)}
 	if inspection.Container.Config != nil {
 		info.labels = inspection.Container.Config.Labels
 	}
@@ -250,6 +255,7 @@ func (b *zoneBoundary) inspectEndpoint(ctx context.Context, id string) (map[Netw
 		for plane, name := range b.planes {
 			if endpoint := settings.Networks[name]; endpoint != nil && endpoint.IPAddress.IsValid() {
 				addrs[plane] = endpoint.IPAddress.Unmap()
+				info.endpointIDs[plane] = endpoint.EndpointID
 			}
 		}
 	}
@@ -262,6 +268,7 @@ type zoneInspection struct {
 	name, startedAt string
 	running         bool
 	labels          map[string]string
+	endpointIDs     map[NetworkPlane]string
 }
 
 // trackMember records the inspected container's identity before creating its
@@ -275,6 +282,7 @@ func (info zoneInspection) trackMember(id, owner string, addrs map[NetworkPlane]
 	return &zoneMemberState{
 		endpoint:     zoneEndpoint{id: id, name: name, zone: info.labels[zoneLabel], addrs: addrs},
 		startedAt:    info.startedAt,
+		endpointIDs:  info.endpointIDs,
 		clusterOwned: owner != "" && info.labels[clusterOwnerLabel] == owner,
 		ifaces:       make(map[NetworkPlane]string),
 		routes:       make(map[netip.Addr]zoneRouteRecord),
@@ -286,9 +294,9 @@ func (info zoneInspection) trackMember(id, owner string, addrs map[NetworkPlane]
 // zone through its own zone's router, and in every other member a route to
 // it through that member's router, or, within the zone, no route. It runs on
 // every start, because a start gives the container a new network namespace,
-// and does nothing for a start it already enrolled completely. A failed step
-// leaves the member tracked but not admitted (see unzonedLocked), and a retry
-// for the same start resumes it.
+// and does nothing for a complete enrollment of the same start with unchanged
+// attachments. A failed step leaves the member tracked but not admitted
+// (see unzonedLocked); a retry with the same attachments resumes it.
 func (b *zoneBoundary) enroll(ctx context.Context, ctr testcontainers.Container) error {
 	if b == nil {
 		return nil
@@ -315,6 +323,8 @@ func (b *zoneBoundary) enroll(ctx context.Context, ctr testcontainers.Container)
 	}
 	member := b.enrolled[id]
 	switch {
+	case member != nil && member.startedAt == info.startedAt && !member.matchesAttachments(info, addrs):
+		return invalidRequest("zone member %s changed its network attachments since enrollment: stop and start it to enroll again", member.endpoint.name)
 	case member.enrolledFor(info.startedAt):
 		return nil
 	case member != nil && member.startedAt == info.startedAt:
@@ -417,12 +427,12 @@ func (b *zoneBoundary) dropStaleMembers(ctx context.Context, joining string, add
 		if !shares {
 			continue
 		}
-		current, info, err := b.inspectEndpoint(ctx, id)
+		_, info, err := b.inspectEndpoint(ctx, id)
 		if !onlyMissingHostResource(err) {
 			return err
 		}
-		if err == nil && info.running && info.startedAt == member.startedAt && maps.Equal(current, member.endpoint.addrs) {
-			return fmt.Errorf("zone member %s still has an address of the joining container", member.endpoint.name)
+		if err == nil && info.running && info.startedAt == member.startedAt {
+			return fmt.Errorf("zone member %s is still running with an enrollment for an address of the joining container", member.endpoint.name)
 		}
 		if err := b.dropMember(ctx, id); err != nil {
 			return err
@@ -642,8 +652,8 @@ func (b *zoneBoundary) exec(ctx context.Context, ctr testcontainers.Container, a
 }
 
 // router returns the router of zone after checking that every container on
-// every configured plane's bridge is a router or a member completely enrolled for its
-// current start: any other container, a partial enrollment included, would
+// every configured plane's bridge is a router or a member completely enrolled
+// for its current start and attachments: any other container could
 // reach the other zones directly.
 func (b *zoneBoundary) router(ctx context.Context, zone string, plane NetworkPlane) (testcontainers.Container, string, error) {
 	if b == nil {
@@ -711,20 +721,21 @@ func (b *zoneBoundary) unzonedLocked(ctx context.Context) ([]string, error) {
 }
 
 // admittedLocked reports whether the container id on a plane's bridge is a
-// member completely enrolled for its current start. A container the boundary
+// member completely enrolled for its current start and attachments. A container the boundary
 // never tracked, such as one attached to the bridge without
 // Container.WithZone, is not, and neither is a partial enrollment; only a
-// complete one is inspected for a restart. The caller holds mu.
+// complete one is inspected for a restart or attachment change.
+// The caller holds mu.
 func (b *zoneBoundary) admittedLocked(ctx context.Context, id string) (bool, error) {
 	member := b.enrolled[id]
 	if member == nil || !member.enrolledFor(member.startedAt) {
 		return false, nil
 	}
-	_, info, err := b.inspectEndpoint(ctx, id)
+	addrs, info, err := b.inspectEndpoint(ctx, id)
 	if err != nil {
 		return false, err
 	}
-	return member.enrolledFor(info.startedAt), nil
+	return info.running && member.enrolledFor(info.startedAt) && member.matchesAttachments(info, addrs), nil
 }
 
 // close releases the boundary before the cluster's containers are removed:
