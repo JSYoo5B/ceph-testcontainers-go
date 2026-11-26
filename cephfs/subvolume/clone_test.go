@@ -53,6 +53,21 @@ func cloneLifecycleFixture(t *testing.T) (*fstest.Filesystem, *cloneLifecycleFix
 	return fs, ctr, clone
 }
 
+func TestCephFSCloneInheritedPoolIsCheckedAtCompletion(t *testing.T) {
+	_, ctr, clone := cloneLifecycleFixture(t)
+	ctr.Output["fs clone status fixture copy --group_name restores --format json"] = cloneLifecycleStatus("complete")
+	key := "fs subvolume info fixture copy --group_name restores --format json"
+	complete := `{"path":"/volumes/restores/copy/10000000-0000-4000-8000-000000000001","bytes_quota":32768,"bytes_used":8192,"data_pool":"additional","pool_namespace":"","created_at":"2026-10-03 00:02:00.123456","state":"complete","type":"clone"}`
+	ctr.Output[key] = strings.Replace(complete, `"data_pool":"additional"`, `"data_pool":"data"`, 1)
+	if adopted, err := clone.Wait(t.Context()); err == nil || adopted != nil {
+		t.Fatalf("contradictory inherited pool adopted: %+v %v", adopted, err)
+	}
+	ctr.Output[key] = complete
+	if adopted, err := clone.Wait(t.Context()); err != nil || adopted == nil {
+		t.Fatalf("matching inherited pool rejected: %+v %v", adopted, err)
+	}
+}
+
 func TestCephFSCloneCancelAndExplicitPartialCleanupShareIdentity(t *testing.T) {
 	_, ctr, clone := cloneLifecycleFixture(t)
 	copy := *clone

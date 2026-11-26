@@ -52,7 +52,7 @@ const (
 	observerMgrKey     = "mgr dump --format json"
 	observerStatusOK   = `{"fsid":"f1","health":{"status":"HEALTH_OK"}}`
 	observerStatusWarn = `{"fsid":"f2","health":{"status":"HEALTH_WARN"}}`
-	observerMgrJSON    = `{"available":true,"active_name":"a","active_gid":7}`
+	observerMgrJSON    = `{"epoch":1,"available":true,"active_name":"a","active_gid":7,"standbys":[],"services":{}}`
 )
 
 func newObserverCluster() (*Container, *observerControl) {

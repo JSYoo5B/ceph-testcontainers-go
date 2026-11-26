@@ -320,3 +320,39 @@ func TestRGWPlacementReloadRequiresPublishedTargetAndExactLocalResources(t *test
 		})
 	}
 }
+
+func TestRGWPlacementCreationRequiresCompleteZoneMapping(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		pools     []any
+		wantError string
+	}{
+		{name: "missing key"},
+		{name: "missing value", pools: []any{map[string]any{"key": "tiered"}}, wantError: "incomplete zone mapping"},
+		{name: "null value", pools: []any{map[string]any{"key": "tiered", "val": nil}}, wantError: "incomplete zone mapping"},
+		{name: "wrong value type", pools: []any{map[string]any{"key": "tiered", "val": []any{}}}, wantError: "incomplete zone mapping"},
+		{name: "existing mapping", pools: []any{map[string]any{"key": "tiered", "val": map[string]any{}}}, wantError: "already exists"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g, f := newRGWPlacementFixture()
+			if tc.pools != nil {
+				f.Zone["placement_pools"] = tc.pools
+			}
+			p, err := create(t.Context(), g.Core, testConfig())
+			if tc.wantError == "" {
+				if err != nil || p == nil || !p.confirmed {
+					t.Fatalf("missing key: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantError) || p != nil {
+				t.Fatalf("placement = %v, error = %v", p, err)
+			}
+			for _, call := range f.Calls {
+				if slices.Contains(call, "placement") {
+					t.Fatalf("creation reached a placement mutation: %v", call)
+				}
+			}
+		})
+	}
+}

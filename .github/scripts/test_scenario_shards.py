@@ -4,6 +4,7 @@ The Go AST catalog reads source only. Compiled profile verification belongs to
 `tag_scenarios.py plan --verify`; this suite does not compile every batch again.
 """
 
+from collections import Counter
 import contextlib
 import io
 from pathlib import Path
@@ -14,8 +15,10 @@ import tempfile
 import unittest
 from unittest import mock
 
+import ci_command
 import periodic_gate
 import report_test_failures as failure_reporter
+import required_ci as command_gate
 import run_image_matrix as runner
 import tag_scenarios as engine
 
@@ -39,18 +42,24 @@ class PublicBlockIOQualificationTests(unittest.TestCase):
         public = jobs['public-api']
         self.assertEqual(re.search(r'^    if: (.+)$', public, re.MULTILINE)[1],
                          "github.event_name == 'workflow_dispatch' && inputs.public_api")
-        kernel = next(step for step in steps(public) if 'modprobe' in step)
-        self.assertEqual(scalar(kernel, 'if'), 'inputs.prepare_kernel')
-        self.assertIn('test "$RUNNER_ENVIRONMENT" = github-hosted', kernel)
-        self.assertIn("CEPH_TEST_BLOCKIO_REQUIRE_DELAY: '1'", public)
+        prepare = next(step for step in steps(public) if 'uses: ./.github/actions/block-io-helper' in step)
+        self.assertEqual(scalar(prepare, 'prepare_kernel'), "${{ inputs.prepare_kernel && 'true' || 'false' }}")
+        action = (ROOT / '.github/actions/block-io-helper/action.yml').read_text()
+        self.assertIn('test "$RUNNER_ENVIRONMENT" = github-hosted', action)
+        self.assertIn("if: inputs.prepare_kernel == 'true'", action)
+        self.assertIn('sudo -n modprobe loop', action)
+        self.assertIn('sudo -n modprobe dm_delay', action)
+        self.assertIn('CEPH_TEST_BLOCKIO_REQUIRE_DELAY=1', action)
+        self.assertIn('CEPH_TEST_BLOCKIO_HELPER_IMAGE=$helper', action)
+        self.assertIn('extension_check.py --extension blockio --image "$helper"', action)
+        self.assertRegex(action, r'(?m)^        ref: [0-9a-f]{40}$')
+        self.assertNotIn('docker push', action)
         self.assertIn('--category optional', public)
         self.assertIn('--batch block_io --package ./internal/integration', public)
         self.assertIn('--binary artifacts/blockio/compile', public)
         self.assertIn('steps.baseline.outcome ==', public)
         self.assertNotIn('docker push', public)
         self.assertNotIn('packages: write', workflow)
-        revision = re.search(r'HELPER_REVISION: ([0-9a-f]{40})$', public, re.MULTILINE)[1]
-        self.assertIn('ref: ' + revision, public)
         source = (ROOT / 'internal/integration/public_block_io_integration_test.go').read_text()
         self.assertIn('integration && ci_optional && ci_batch_block_io', source)
 
@@ -108,6 +117,8 @@ def engine_command(job_steps, operation, option=None):
 
 class SourceDrivenWorkflowTests(unittest.TestCase):
     # Workflow categories are public check types, never a list of Test names.
+    # The runner allocation that each release-matrix workflow asks for.
+    ALLOCATION = {"Periodic": "periodic", "Release matrix": "release"}
     ENTRY_POINTS = {
         "docker.yml": ("Docker checks", "environment"),
         "short.yml": ("Short", "short"),
@@ -132,6 +143,8 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
     PERIODIC, RELEASE_MATRIX = "periodic.yml", "release-matrix.yml"
     # The pull request comment command: issue_comment only.
     COMMAND = "ci-command.yml"
+    # The fixed status of the requested CI that a reviewer required.
+    GATE = "requested-ci-gate.yml"
     # The scratch-device research probe (#7): its own paths only, no scenarios.
     BLOCK_FAULT_PROBE = "block-fault-probe.yml"
     # The native ARM64 qualification of the source-owned arm64 cohort.
@@ -198,12 +211,20 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         releases job and calls tagged-runtime once per entry of that matrix."""
         releases, runtime = jobs["releases"], jobs["runtime"]
         command = shlex.split(run_command(engine_step(steps(releases), "releases")))
-        self.assertEqual(command[command.index("--scope") + 1], scope)
+        if prefix == "Release matrix":
+            # The full matrix everywhere but on the rehearsal branch.
+            self.assertEqual(command[command.index("--scope") + 1], "$SCOPE")
+            self.assertEqual(scalar(engine_step(steps(releases), "releases"), "SCOPE"),
+                             "${{ (github.base_ref == 'rehearsal/promotion' || "
+                             "github.ref == 'refs/heads/rehearsal/promotion') && 'rehearsal' || '" + scope + "' }}")
+        else:
+            self.assertEqual(command[command.index("--scope") + 1], scope)
+        self.assertEqual(command[command.index("--allocation") + 1], self.ALLOCATION[prefix])
         self.assertEqual(command[command.index("--check-prefix") + 1], prefix)
         self.assertEqual(command[command.index("--github-output") + 1], "$GITHUB_OUTPUT")
         self.assertIn("matrix: ${{ steps.releases.outputs.matrix }}", releases)
         self.assertIn("uses: ./.github/workflows/tagged-runtime.yml", runtime)
-        self.assertEqual(scalar(runtime, "needs"), "releases")
+        self.assertEqual(scalar(runtime, "needs"), {"Periodic": "releases", "Release matrix": "[releases, reuse]"}[prefix])
         self.assertEqual(scalar(runtime, "matrix"), "${{ fromJSON(needs.releases.outputs.matrix) }}")
         self.assertEqual(scalar(runtime, "fail-fast"), "false")
         self.assertEqual(scalar(runtime.split("    strategy:", 1)[0], "name"), "${{ matrix.title }}")
@@ -249,12 +270,35 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertEqual(runner.CODENAMES["21.2.0"], "umbrella")
         self.assertEqual(runner.RELEASE, "20.2.4")
         categories = set(engine.RUNTIME_CATEGORIES) - {"environment"}
-        for scope in engine.RELEASE_SCOPES:
+        for scope in ("all", "others"):
             entries = [entry for entry in engine.release_matrix(scope, "Periodic")
                        if entry["release"] == "21.2.0"]
             self.assertEqual({entry["category"] for entry in entries}, categories)
             self.assertEqual(len(entries), len(categories))
             self.assertTrue(all(entry["codename"] == "umbrella" for entry in entries))
+
+    def test_a_rehearsal_runs_one_category_of_the_current_release(self):
+        """A promotion rehearsal tries the candidate record and the reuse
+        decision; it claims no release coverage and takes every release
+        runner for its one caller."""
+        self.assertEqual(engine.RELEASE_SCOPES, ("all", "others", "rehearsal"))
+        entries = engine.release_matrix("rehearsal", "Release matrix")
+        share = engine.RUNNER_LIMIT - engine.OTHER_REPOSITORY_RUNNERS
+        self.assertEqual([(entry["release"], entry["category"], entry["max_parallel"]) for entry in entries],
+                         [(runner.RELEASE, engine.REHEARSAL_CATEGORY, share - engine.ENVIRONMENT_MAX_PARALLEL)])
+        report = engine.releases_report(self.plan, "rehearsal", "Release matrix")
+        self.assertTrue(report["passed"], report)
+        self.assertEqual(report["releases"], [runner.RELEASE])
+        self.assertEqual(report["runner_budget"], {"runners": share, "available": share, "passed": True})
+        self.assertEqual(report["coverage"]["callers"], 2)
+        self.assertEqual(report["cells"], sum(engine.runtime_cells(
+            self.plan, [(runner.RELEASE, engine.REHEARSAL_CATEGORY), (None, "environment")]).values()))
+        self.assertEqual(sorted(report["images"]), [runner.RELEASE])
+        # It can never be taken for the coverage of a release.
+        full = engine.releases_report(self.plan, "all", "Release matrix")
+        self.assertNotEqual(report["coverage"]["digest"], full["coverage"]["digest"])
+        self.assertLess(report["cells"], full["cells"])
+        self.assertEqual(len(full["include"]), len(runner.SUPPORTED_RELEASES) * (len(engine.RUNTIME_CATEGORIES) - 1))
 
     def test_coverage_difference_names_missing_duplicate_and_unknown_release_cells(self):
         required = engine.required_cells(self.plan, runner.RELEASES)
@@ -307,7 +351,8 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
 
     def test_pr_checks_are_separate_workflows_with_independent_entry_points(self):
         expected = {"code.yml", "tagged-runtime.yml", "native-regressions.yml", "experiments.yml", self.PERIODIC,
-                    self.RELEASE_MATRIX, self.COMMAND, self.BLOCK_FAULT_PROBE, self.ARM64, "structural-review.yml",
+                    self.RELEASE_MATRIX, self.COMMAND, self.GATE, self.BLOCK_FAULT_PROBE, self.ARM64,
+                    "structural-review.yml", "required-short.yml",
                     "structural-collect.yml", *self.ENTRY_POINTS}
         self.assertEqual(set(self.workflows), expected)
         probe = self.workflows[self.BLOCK_FAULT_PROBE]
@@ -374,6 +419,19 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             jobs = dict(self.jobs[self.PERIODIC])
             sample_plan, sample = jobs.pop("sample-plan"), jobs.pop("sample")
             self.assertIn("github.event_name == 'schedule'", scalar(sample_plan.split("    steps:", 1)[0], "if"))
+            # No mode starts native work beside a release run: the yield job
+            # decides first, and every job that starts a mode needs it.
+            yielding = jobs.pop("yield")
+            self.assertIn("python3 .github/scripts/periodic_gate.py --yield-to " + self.RELEASE_MATRIX, yielding)
+            self.assertEqual(scalar(yielding.split("    steps:", 1)[0], "clear"), "${{ steps.yield.outputs.clear }}")
+            self.assertNotIn("needs:", yielding)
+            for starter in ("sample-plan", "gate", "storage"):
+                body = self.jobs[self.PERIODIC][starter].split("    steps:", 1)[0].split("    with:", 1)[0]
+                self.assertEqual(scalar(body, "needs"), "yield", starter)
+                self.assertTrue(scalar(body, "if").startswith("needs.yield.outputs.clear == 'true' && "), starter)
+            for job_id, body in self.jobs[self.PERIODIC].items():
+                if job_id not in ("yield", "history"):
+                    self.assertIn("needs:", body.split("    steps:", 1)[0].split("    with:", 1)[0], job_id)
             self.assertEqual(scalar(sample, "needs"), "sample-plan")
             self.assertEqual(scalar(sample, "timeout-minutes"), "120")
             self.assertIn('--source "$sha"', sample_plan)
@@ -385,7 +443,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             self.assertEqual(scalar(gate, "PERIODIC_SCHEDULE"), "${{ github.event.schedule }}")
             self.assertEqual(scalar(gate, "PERIODIC_MODE"), "${{ inputs.mode }}")
             qualification = jobs.pop("storage")
-            self.assertEqual(scalar(qualification, "if"), "github.event_name == 'workflow_dispatch' && inputs.mode == 'storage'")
+            self.assertEqual(scalar(qualification, "if"), "needs.yield.outputs.clear == 'true' && github.event_name == 'workflow_dispatch' && inputs.mode == 'storage'")
             self.assertEqual(scalar(qualification, "category"), "selected")
             self.assertEqual(scalar(qualification, "profiles"), "${{ inputs.storage_profiles }}")
             storage_input = next(block for key, block in blocks(workflow.split("\npermissions:", 1)[0], r"^      ([\w-]+):$") if key == "storage_profiles")
@@ -393,7 +451,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             self.assertEqual(scalar(qualification, "max_parallel"), str(engine.STORAGE_MAX_PARALLEL))
             self.assertEqual(scalar(qualification, "ref"), "${{ inputs.ref || github.sha }}")
             self.assertEqual(scalar(qualification, "storage_policy"), "${{ inputs.storage_policy }}")
-            self.assertEqual(scalar(gate, "if"), "github.event_name == 'workflow_dispatch' && (inputs.mode == 'full' || inputs.mode == 'representative')")
+            self.assertEqual(scalar(gate, "if"), "needs.yield.outputs.clear == 'true' && github.event_name == 'workflow_dispatch' && (inputs.mode == 'full' || inputs.mode == 'representative')")
             self.assertFalse(periodic_gate.runtime_job({"name": "Storage qualification / rados_fixtures_watchers"}))
             # The campaign: one pinned commit for every attempt of the
             # source-owned representative batches, which pull the role
@@ -454,15 +512,15 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         with self.subTest(workflow=self.RELEASE_MATRIX):
             workflow = self.workflows[self.RELEASE_MATRIX]
             self.assertRegex(workflow, r"(?m)^name: Release matrix$")
-            branches = "    branches: [main, 'release/**', 'support/**']\n"
+            branches = "    branches: [main, 'release/**', 'support/**', rehearsal/promotion]\n"
             # A release line's push runs no second matrix of its candidate.
-            pushed = "    branches: [main, 'support/**']\n"
+            pushed = "    branches: [main, 'support/**', rehearsal/promotion]\n"
             self.assertIn("\non:\n  push:\n" + pushed + "  pull_request:\n" + branches +
                           "    types: [opened, synchronize, reopened, edited]\n  workflow_dispatch:\n", workflow)
             self.assertNotIn("paths", workflow)
             self.assertEqual(scalar(workflow, "cancel-in-progress"), "true")
             jobs = self.jobs[self.RELEASE_MATRIX]
-            self.assertEqual(set(jobs), {"releases", "runtime", "environment", "validated"})
+            self.assertEqual(set(jobs), {"releases", "reuse", "runtime", "environment", "validated", "receipt"})
             for caller in ("runtime", "environment"):
                 self.assertNotIn("      ref:", jobs[caller])
                 self.assertEqual(scalar(jobs[caller], "networks"), "all")
@@ -471,8 +529,8 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             self.assertEqual(scalar(jobs["releases"], "ref"), "${{ github.sha }}")
             self.assert_release_caller(jobs, "all", "Release matrix")
             gate = jobs["validated"]
-            self.assertEqual(scalar(gate, "needs"), "[releases, runtime, environment]")
-            self.assertEqual(scalar(gate, "if"), "always()")
+            self.assertEqual(scalar(gate, "needs"), "[releases, reuse, runtime, environment]")
+            self.assertEqual(scalar(gate.split("    steps:", 1)[0], "if"), "always()")
             name = scalar(gate.split("    steps:", 1)[0], "name")
             for event, base, ref, want in (
                 ("pull_request", "release/1.0", "7/merge", "Release candidate validated (release/1.0)"),
@@ -482,10 +540,73 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             ):
                 self.assertEqual(interpolate(name, {"github": {"event_name": event, "base_ref": base, "ref_name": ref}}), want)
             check = run_command(steps(gate)[0])
-            success = dict(PLANNER="success", RUNTIME="success", ENVIRONMENT="success", COUNT="1")
+            success = dict(PLANNER="success", RUNTIME="success", ENVIRONMENT="success", COUNT="1",
+                           REUSE="skipped", REUSED="")
             for overrides in ({}, {"PLANNER": "failure"}, {"RUNTIME": "skipped"}, {"ENVIRONMENT": "cancelled"}, {"COUNT": "0"}):
                 result = subprocess.run(["bash", "-e", "-c", check], env={**success, **overrides})
                 self.assertEqual(result.returncode == 0, not overrides)
+            # A verified promotion reuse passes the gate without the
+            # matrix; nothing short of it does, and it never replaces the
+            # planner.
+            reused = dict(success, REUSE="success", REUSED="true", RUNTIME="skipped", ENVIRONMENT="skipped")
+            for overrides, passes in (({}, True), ({"REUSED": "false"}, False), ({"REUSED": ""}, False),
+                                      ({"REUSE": "failure"}, False), ({"REUSE": "skipped"}, False),
+                                      ({"REUSE": "cancelled"}, False), ({"PLANNER": "failure"}, False),
+                                      ({"COUNT": "0"}, False),
+                                      ({"REUSED": "false", "RUNTIME": "success", "ENVIRONMENT": "success"}, True),
+                                      ({"REUSE": "failure", "REUSED": "", "RUNTIME": "success",
+                                        "ENVIRONMENT": "success"}, True)):
+                with self.subTest(overrides=overrides):
+                    result = subprocess.run(["bash", "-e", "-c", check], env={**reused, **overrides},
+                                            capture_output=True)
+                    self.assertEqual(result.returncode == 0, passes)
+            # Only a push to main asks for a reuse, after the planner; the
+            # matrix runs unless the reuse was verified, also when the reuse
+            # job failed or was skipped.
+            reuse = jobs["reuse"]
+            header = reuse.split("    steps:", 1)[0]
+            self.assertEqual(scalar(header, "needs"), "releases")
+            self.assertEqual(scalar(header, "if"), "github.event_name == 'push' && (github.ref == 'refs/heads/main' || "
+                             "github.ref == 'refs/heads/rehearsal/promotion')")
+            self.assertEqual(scalar(header, "reused"), "${{ steps.verify.outputs.reused }}")
+            self.assertIn("python3 scripts/release/promotion_reuse.py verify --coverage artifacts/release-coverage.json "
+                          "--output artifacts/promotion-reuse\n", reuse)
+            self.assertIn("name: promotion-reuse-receipt-${{ github.run_attempt }}", reuse)
+            self.assertEqual(scalar(steps(reuse)[-1], "path"), "artifacts/promotion-reuse/")
+            condition = ("${{ !cancelled() && needs.releases.result == 'success' && "
+                         "needs.reuse.outputs.reused != 'true' }}")
+            for caller in ("runtime", "environment"):
+                self.assertEqual(scalar(jobs[caller].split("    with:", 1)[0].split("    strategy:", 1)[0], "if"), condition)
+                self.assertEqual(scalar(jobs[caller].split("    with:", 1)[0].split("    strategy:", 1)[0], "needs"),
+                                 "[releases, reuse]")
+            # The gate only decides. The candidate receipt is a job of its
+            # own after a passed gate of a promotion to main, so that
+            # collecting the records can neither delay nor fail the gate.
+            self.assertEqual(len(steps(gate)), 1)
+            receipt = jobs["receipt"]
+            header = receipt.split("    steps:", 1)[0]
+            self.assertEqual(scalar(header, "needs"), "[releases, validated]")
+            self.assertEqual(scalar(header, "if"), "${{ !cancelled() && github.event_name == 'pull_request' && "
+                                                   "(github.base_ref == 'main' || "
+                                                   "github.base_ref == 'rehearsal/promotion') "
+                                                   "&& needs.validated.result == 'success' }}")
+            self.assertEqual(scalar(header, "name"), "Candidate receipt")
+            # It keeps the history row of every runtime job with the
+            # receipt, for as long as the receipt. The script fetches the
+            # rows itself: a release run has more artifacts than
+            # actions/download-artifact lists, so no step downloads them
+            # by pattern.
+            self.assertNotIn("pattern:", receipt)
+            self.assertIn("python3 scripts/release/promotion_reuse.py record --coverage artifacts/coverage/release-coverage.json "
+                          "--output artifacts/release-candidate\n", receipt)
+            upload = steps(receipt)[-1]
+            self.assertEqual(scalar(upload, "name"), "release-candidate-receipt-${{ github.run_attempt }}")
+            self.assertEqual(scalar(upload, "path"), "artifacts/release-candidate/")
+            for kept in (upload, steps(reuse)[-1]):
+                self.assertEqual(scalar(kept, "retention-days"), "90")
+            self.assertEqual(scalar(workflow.split("\nconcurrency:", 1)[0], "actions"), "read")
+            self.assertIn("name: release-coverage-${{ github.run_attempt }}", jobs["releases"])
+            self.assertIn("set -o pipefail", jobs["releases"])
         for source in self.workflows.values():
             self.assertNotIn("vars.CI_RELEASE_PHASE", source)
         reusable = self.workflows["tagged-runtime.yml"]
@@ -567,7 +688,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             context = {"github": {"event_name": event}, "inputs": {"storage_policy": "always", "ref": "a" * 40}}
             self.assertEqual(interpolate(scalar(caller, "storage_policy"), context), "always" if event == "workflow_dispatch" else "auto")
             self.assertEqual(interpolate(scalar(caller, "ref"), context), "a" * 40 if event == "workflow_dispatch" else "")
-        self.assertNotIn("max_parallel", caller)
+        self.assertEqual(scalar(caller, "max_parallel"), str(engine.PULL_REQUEST_MAX_PARALLEL["short"]))
         self.assertEqual(scalar(caller, "category"), "short")
 
     def test_storage_pressure_is_explicit_owned_and_never_uploaded(self):
@@ -579,6 +700,99 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertIn("Verify post-image runner headroom", runtime)
         self.assertLess(runtime.index("Verify post-image runner headroom"), runtime.index("Native assertions and completion proof"))
 
+    def test_only_trusted_jobs_can_write_the_required_status_or_its_ledger(self):
+        # A commit status and a pull request comment are what the required
+        # status and its ledger are made of. The jobs that can write either
+        # run default-branch code only: none checks out a pull request head,
+        # builds Go or calls the runtime template.
+        writers = set()
+        for filename, jobs in self.jobs.items():
+            for name, job in jobs.items():
+                if re.search(r"(?m)^      (?:statuses|pull-requests|issues): write$", job):
+                    writers.add((filename, name))
+                    with self.subTest(workflow=filename, job=name):
+                        self.assertNotIn("uses: ./", job)
+                        self.assertNotIn("setup-go", job)
+                        self.assertNotIn("go test", job)
+                        self.assertNotIn("head.sha", job)
+                        self.assertNotIn("outputs.sha }}\n          path:", job)
+                        for ref in re.findall(r"(?m)^          ref: (.*)$", job):
+                            self.assertIn(ref, ("${{ github.event.repository.default_branch }}", "${{ github.sha }}"))
+        self.assertEqual(writers, {(self.COMMAND, "register"), (self.COMMAND, "acknowledge"), (self.COMMAND, "report"),
+                                   (self.COMMAND, "gate"), (self.COMMAND, "structural-report"),
+                                   (self.GATE, "evaluate"), ("structural-review.yml", "publish")})
+        for filename, workflow in self.workflows.items():
+            with self.subTest(workflow=filename):
+                # No workflow grants a write scope to all its jobs, and none
+                # runs pull request code with the base repository's token.
+                top = workflow.split("\njobs:\n", 1)[0]
+                self.assertNotRegex(top, r"(?m)^  [a-z-]+: write$")
+                self.assertNotIn("write-all", workflow)
+                self.assertNotIn("pull_request_target", workflow)
+
+    def test_every_publication_of_the_required_status_is_in_one_concurrency_group(self):
+        publishers = {(self.COMMAND, "register"), (self.COMMAND, "gate"), (self.GATE, "evaluate")}
+        for filename, jobs in self.jobs.items():
+            for name, job in jobs.items():
+                with self.subTest(workflow=filename, job=name):
+                    self.assertEqual("required_ci.py" in job, (filename, name) in publishers)
+                    if (filename, name) in publishers:
+                        self.assertIn("    concurrency:\n      group: required-requested-ci\n"
+                                      "      cancel-in-progress: false\n", job)
+                        self.assertEqual(set(re.findall(r"GH_TOKEN: (.*)", job)), {"${{ github.token }}"})
+                    else:
+                        self.assertNotIn("required-requested-ci\n", job)
+        # A failed job does not fail a commit status, so each publisher
+        # ends with a step that sets the error itself unless the script
+        # reported every head published. It runs after a failed checkout or
+        # a cancelled step as well, and it is the only place a workflow
+        # names the context: no step sets it to anything but error.
+        commits = {(self.COMMAND, "register"): ("register", "needs.command.outputs.sha"),
+                   (self.COMMAND, "gate"): ("evaluate", "needs.command.outputs.sha"),
+                   (self.GATE, "evaluate"): ("evaluate", "github.event.workflow_run.head_sha")}
+        for (filename, name), (step, commit) in commits.items():
+            with self.subTest(workflow=filename, job=name):
+                job = self.jobs[filename][name]
+                script, withdraw = job.split("      - name: Withdraw the status when the evaluation did not finish\n")
+                self.assertIn("        id: " + step + "\n", script)
+                self.assertIn('--github-output "$GITHUB_OUTPUT"\n', script)
+                self.assertTrue(withdraw.startswith(
+                    "        if: always() && steps." + step + ".outputs.settled != 'true' && " + commit + " != ''\n"))
+                self.assertEqual(scalar(withdraw, "HEAD_SHA"), "${{ " + commit + " }}")
+                self.assertIn('gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA"\n'
+                              "          -f state=error -f context='" + command_gate.CONTEXT + "' ", withdraw)
+                self.assertNotIn("- name:", withdraw)
+                if name != "evaluate" or filename == self.COMMAND:
+                    self.assertIn("command", scalar(job, "needs"))
+        for filename, workflow in self.workflows.items():
+            self.assertEqual(workflow.count(command_gate.CONTEXT + "'"),
+                             sum(key[0] == filename for key in commits), filename)
+            self.assertNotRegex(workflow, r"state=(?!error)\S+ -f context='" + command_gate.CONTEXT)
+
+    def test_the_gate_evaluates_from_the_default_branch_on_every_pull_request_event(self):
+        workflow, jobs = self.workflows[self.GATE], self.jobs[self.GATE]
+        self.assertRegex(workflow, r"(?m)^name: Requested CI gate$")
+        self.assertIn("\non:\n  workflow_run:\n    workflows: [Code checks]\n    types: [requested]\n"
+                      "  workflow_dispatch:\n\npermissions: {}\n", workflow)
+        self.assertNotRegex(workflow, r"(?m)^  (?:push|pull_request|pull_request_target|issue_comment):")
+        # Code checks is the workflow that starts for every pull request
+        # event of every maintained branch, documentation-only ones included.
+        code = self.workflows["code.yml"]
+        self.assertRegex(code, r"(?m)^name: Code checks$")
+        self.assertIn("  pull_request:\n    branches: [develop, main, 'release/**', 'support/**']\n"
+                      "    types: [opened, synchronize, reopened, edited]\n", code)
+        self.assertNotIn("paths", code.split("\njobs:\n", 1)[0])
+        self.assertEqual(set(jobs), {"evaluate"})
+        job = jobs["evaluate"]
+        self.assertEqual(scalar(job.split("    steps:", 1)[0], "if"),
+                         "github.event_name == 'workflow_dispatch' || github.event.workflow_run.event == 'pull_request'")
+        self.assertEqual(scalar(job, "ref"), "${{ github.event.repository.default_branch }}")
+        self.assertEqual(re.findall(r"(?m)^ +(?:- )?uses: (.*)$", job), ["actions/checkout@v7"])
+        self.assertIn("persist-credentials: false", job)
+        self.assertIn('run: python3 .github/scripts/required_ci.py evaluate --github-output "$GITHUB_OUTPUT"\n', job)
+        # The job's own check is not the status: the status is the script's.
+        self.assertNotIn("name: " + command_gate.CONTEXT, workflow)
+
     def test_comment_command_runs_named_profiles_with_minimal_permissions_per_job(self):
         workflow, jobs = self.workflows[self.COMMAND], self.jobs[self.COMMAND]
         self.assertRegex(workflow, r"(?m)^name: CI command$")
@@ -587,15 +801,18 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         # No workflow-level group: a comment that is not a command must never
         # cancel or queue behind a command run.
         self.assertNotRegex(workflow, r"(?m)^concurrency:")
-        self.assertEqual(set(jobs), {"command", "validate", "acknowledge", "runtime", "report", "structural-source", "structural-report"})
+        self.assertEqual(set(jobs), {"command", "validate", "register", "acknowledge", "runtime", "report", "gate",
+                                     "structural-source", "structural-report"})
         permissions = {name: dict(re.findall(r"(?m)^      ([a-z-]+): (read|write)$", re.search(
                            r"(?m)^    permissions:\n((?:      .*\n)+)", job)[1])) for name, job in jobs.items()}
         self.assertEqual(permissions, {
             "command": {"contents": "read", "pull-requests": "read"},
             "validate": {"contents": "read"},
+            "register": {"contents": "read", "pull-requests": "write", "statuses": "write"},
             "acknowledge": {"statuses": "write"},
             "runtime": {"contents": "read"},
             "report": {"contents": "read", "pull-requests": "write", "statuses": "write"},
+            "gate": {"contents": "read", "pull-requests": "write", "statuses": "write"},
             "structural-source": {"actions": "read"},
             "structural-report": {"contents": "read", "actions": "read", "pull-requests": "write"}})
         self.assertEqual(scalar(jobs["command"], "if"),
@@ -603,7 +820,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         # Only Validate checks out the head commit, beside the default
         # branch's scripts; no checkout keeps credentials.
         self.assertEqual(workflow.count("uses: actions/checkout@v7"), workflow.count("persist-credentials: false"))
-        for name in ("command", "report"):
+        for name in ("command", "register", "report", "gate"):
             self.assertNotIn("ref:", jobs[name])
             self.assertNotIn("head/", jobs[name])
         self.assertEqual(scalar(jobs["validate"], "ref"), "${{ needs.command.outputs.sha }}")
@@ -612,7 +829,14 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
                       jobs["validate"])
         runtime = jobs["runtime"]
         self.assertEqual(scalar(runtime, "uses"), "./.github/workflows/tagged-runtime.yml")
-        self.assertEqual(scalar(runtime, "if"), "needs.validate.outputs.accepted == 'true'")
+        # An advisory run starts once its names resolve. A command that
+        # changes the requirements starts only as the attempt that Register
+        # recorded, and Acknowledge marks exactly the commands that start.
+        starts = ("    if: >-\n      !cancelled() && needs.validate.outputs.accepted == 'true'\n"
+                  "      && (needs.command.outputs.verb == 'run' || needs.register.outputs.run == 'true')\n")
+        for name in ("acknowledge", "runtime"):
+            self.assertIn(starts, jobs[name])
+            self.assertIn("    needs: [command, validate, register]\n", jobs[name])
         self.assertEqual(scalar(runtime, "category"), "selected")
         self.assertEqual(scalar(runtime, "profiles"), "${{ needs.validate.outputs.profiles }}")
         self.assertEqual(scalar(runtime, "ref"), "${{ needs.command.outputs.sha }}")
@@ -635,6 +859,27 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertIn("if: steps.reply.outputs.state != ''\n", jobs["report"])
         self.assertEqual(scalar(jobs["report"].split("    steps:", 1)[0], "if"),
                          "always() && needs.command.outputs.command == 'true'")
+        self.assertIn("        if: steps.reply.outputs.post == 'true'\n", jobs["report"])
+        self.assertIn("    needs: [command, validate, register, acknowledge, runtime]\n", jobs["report"])
+        # drop is not validated: its names may be gone from the head.
+        self.assertEqual(scalar(jobs["validate"], "if"),
+                         "needs.command.outputs.accepted == 'true' && needs.command.outputs.verb != 'drop'")
+        # Register records drop always, require only with resolved names,
+        # and retry whenever Validate decided, resolved or not.
+        self.assertIn("    if: >-\n      !cancelled() && needs.command.outputs.accepted == 'true'\n"
+                      "      && (needs.command.outputs.verb == 'drop'\n"
+                      "      || (needs.command.outputs.verb == 'require' && needs.validate.outputs.accepted == 'true')\n"
+                      "      || (needs.command.outputs.verb == 'retry' && needs.validate.result == 'success'))\n",
+                      jobs["register"])
+        self.assertIn("python3 .github/scripts/required_ci.py register\n", jobs["register"])
+        self.assertEqual(scalar(jobs["register"], "RESOLVED"), "${{ needs.validate.outputs.accepted == 'true' }}")
+        # Gate evaluates after the result is recorded, also after a failed
+        # or cancelled run.
+        self.assertIn("    needs: [command, register, report]\n", jobs["gate"])
+        self.assertEqual(scalar(jobs["gate"].split("    steps:", 1)[0], "if"),
+                         "always() && needs.register.outputs.run == 'true'")
+        self.assertIn('run: python3 .github/scripts/required_ci.py evaluate --github-output "$GITHUB_OUTPUT"\n',
+                      jobs["gate"])
         self.assertNotIn("rerun", workflow)
         # A comment reaches scripts only through the event file and env.
         self.assertNotIn("github.event.comment.body }}", workflow)
@@ -650,6 +895,35 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertEqual(len(runtime), len(set(runtime)))
         selected = engine.select_profiles_plan(self.plan, self.optional, ",".join(runtime))
         self.assertEqual(sorted(profile["id"] for profile in selected["include"]), sorted(runtime))
+
+    def test_block_io_comment_selection_prepares_the_helper_before_native_execution(self):
+        vocabulary = engine.vocabulary(self.plan, self.optional)
+        for verb in ("run", "require"):
+            with self.subTest(verb=verb):
+                request = {**ci_command.parse(verb + " optional/block_io recovery/scratch_tmpfs on all"),
+                           "sha": "a" * 40, "pull": 1, "comment_id": 1}
+                selection = ci_command.select(request, vocabulary)
+                self.assertTrue(selection["accepted"])
+                plan = engine.select_profiles_plan(self.plan, self.optional, selection["profiles"])
+                self.assertEqual({(job["category"], job["batch"])
+                                  for job in engine.network_matrix(plan["include"], "default")},
+                                 {("optional", "block_io"), ("recovery", "scratch_tmpfs")})
+        runtime = steps(self.jobs["tagged-runtime.yml"]["runtime"])
+        checkout = next(step for step in runtime if "sparse-checkout: .github/actions/block-io-helper" in step)
+        prepare = next(step for step in runtime if "uses: ./block-io-workflow-source/.github/actions/block-io-helper" in step)
+        self.assertEqual(scalar(checkout, "ref"), "${{ github.workflow_sha }}")
+        for step in (checkout, prepare):
+            self.assertEqual(scalar(step, "if"), "matrix.category == 'optional' && matrix.batch == 'block_io'")
+            self.assertNotIn("continue-on-error", step)
+        self.assertEqual(scalar(prepare, "prepare_kernel"), "'true'")
+        self.assertEqual(scalar(prepare, "directory"), "artifacts/scenario/blockio-helper")
+        baseline, native, cleanup = (next(i for i, step in enumerate(runtime) if "        id: " + phase + "\n" in step)
+                                     for phase in ("docker_baseline", "native", "cleanup"))
+        self.assertLess(baseline, runtime.index(checkout))
+        self.assertLess(runtime.index(checkout), runtime.index(prepare))
+        self.assertLess(runtime.index(prepare), native)
+        self.assertLess(native, cleanup)
+        self.assertIn("always()", scalar(runtime[cleanup], "if"))
 
     def test_entry_categories_partition_source_profiles_without_ci_name_inventories(self):
         categories = [category for _, category in self.ENTRY_POINTS.values()]
@@ -709,8 +983,9 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertEqual(command[command.index("--repetitions") + 1], "$SCENARIO_REPETITIONS")
         self.assertEqual(scalar(plan, "SCENARIO_REPETITIONS"), "${{ inputs.repetitions }}")
         self.assertIn('elif [ "$SCENARIO_CATEGORY" = representative ]; then', plan)
-        # Every checkout takes the pinned commit; empty keeps the caller's.
-        self.assertEqual(reusable.count("uses: actions/checkout@v7"), 2)
+        # Plan and runtime check out the source to test. Block I/O also
+        # checks out the helper action from the workflow's commit.
+        self.assertEqual(reusable.count("uses: actions/checkout@v7"), 3)
         self.assertEqual(reusable.count("          ref: ${{ inputs.ref }}\n"), 2)
         runtime_steps = steps(runtime)
         prepared = next(step for step in runtime_steps if "uses: ./.github/actions/scenario-images" in step)
@@ -1081,32 +1356,114 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
                 self.assertIn({"all"}, tag_sets)
                 self.assertTrue(any({"all", "goceph", "native_regression", "role_images", "ci_optional"} <= tags for tags in tag_sets))
 
-    def test_release_callers_bound_their_runtime_jobs_within_the_runner_budget(self):
-        """Each release caller passes its category's max-parallel, and the
-        callers of each scope together leave PULL_REQUEST_RUNNERS free."""
+    def test_release_matrix_callers_take_every_runner_but_the_other_repositories(self):
+        """Each Release matrix caller passes its category's share, and the
+        callers with the environment caller leave OTHER_REPOSITORY_RUNNERS."""
         runtime = self.jobs["tagged-runtime.yml"]["runtime"]
         self.assertEqual(scalar(runtime, "max-parallel"), "${{ inputs.max_parallel }}")
         self.assertIn("fail-fast: false", runtime)
-        for scope, prefix in (("all", "Periodic"), ("others", "Release matrix")):
+        caps = engine.release_max_parallel()
+        share = engine.RUNNER_LIMIT - engine.OTHER_REPOSITORY_RUNNERS
+        for scope in ("all", "others"):
             with self.subTest(scope=scope):
-                entries = engine.release_matrix(scope, prefix)
-                self.assertEqual({entry["category"]: entry["max_parallel"] for entry in entries},
-                                 engine.RELEASE_MAX_PARALLEL)
-                report = engine.releases_report(self.plan, scope, prefix)
+                entries = engine.release_matrix(scope, "Release matrix")
+                self.assertEqual({entry["category"]: entry["max_parallel"] for entry in entries}, caps)
+                report = engine.releases_report(self.plan, scope, "Release matrix")
+                self.assertEqual(report["allocation"], "release")
+                self.assertEqual(report["runner_budget"]["available"], share)
                 self.assertTrue(report["runner_budget"]["passed"], report["runner_budget"])
-        self.assertLessEqual(engine.runner_budget(engine.release_matrix("all", "Periodic"))["runners"],
-                             engine.RUNNER_LIMIT - engine.PULL_REQUEST_RUNNERS)
-        periodic_budget = engine.periodic_runner_budget(engine.release_matrix("all", "Periodic"))
-        self.assertTrue(periodic_budget["passed"], periodic_budget)
-        for workflow in (self.PERIODIC, self.RELEASE_MATRIX):
-            self.assertEqual(scalar(self.jobs[workflow]["runtime"], "max_parallel"), "${{ matrix.max_parallel }}")
-        periodic = self.jobs[self.PERIODIC]
-        self.assertEqual(scalar(periodic["environment"], "max_parallel"), str(engine.ENVIRONMENT_MAX_PARALLEL))
-        self.assertEqual(scalar(periodic["representative"], "max_parallel"), str(engine.CAMPAIGN_MAX_PARALLEL))
-        # The pull request entry points stay unbounded: they use the runners
-        # that the periodic budget leaves.
-        for workflow in self.ENTRY_POINTS:
-            self.assertNotIn("max_parallel", self.workflows[workflow])
+        used = engine.runner_budget(engine.release_matrix("all", "Release matrix"))["runners"]
+        releases = len(runner.SUPPORTED_RELEASES)
+        self.assertEqual(used, releases * sum(caps.values()) + engine.ENVIRONMENT_MAX_PARALLEL)
+        # The share is used: one more runner for each release would not fit.
+        self.assertGreater(used + releases, share)
+        release = self.jobs[self.RELEASE_MATRIX]
+        self.assertEqual(scalar(release["runtime"], "max_parallel"), "${{ matrix.max_parallel }}")
+        self.assertNotIn("max-parallel", release["runtime"])
+        self.assertEqual(scalar(release["environment"], "max_parallel"), str(engine.ENVIRONMENT_MAX_PARALLEL))
+
+    def test_release_report_digests_its_cells_and_images(self):
+        """The coverage digest changes with a required cell, with a cell's
+        multiplicity and with an image reference, and with nothing else."""
+        report = engine.releases_report(self.plan, "all", "Release matrix")
+        self.assertEqual(report["coverage"]["cells"], report["cells"])
+        self.assertEqual(report["coverage"]["callers"], len(report["include"]) + 1)
+        self.assertRegex(report["coverage"]["digest"], r"^[a-f0-9]{64}$")
+        self.assertEqual(set(report["images"]), {release for release, _, _ in runner.SUPPORTED_RELEASES})
+        for release, references in report["images"].items():
+            self.assertEqual(references["official"], runner.RELEASES[release])
+            self.assertEqual(references["roles"], runner.image_references("official", "roles", release))
+        # The allocation bounds jobs and is no part of what was covered.
+        self.assertEqual(engine.releases_report(self.plan, "all", "Periodic", "periodic")["coverage"],
+                         report["coverage"])
+        releases = [release for release, _, _ in runner.SUPPORTED_RELEASES]
+        cells, references = engine.required_cells(self.plan, releases), engine.release_images(releases)
+        digest = engine.coverage_digest(cells, references)
+        self.assertEqual(digest, report["coverage"]["digest"])
+        cell = next(iter(cells))
+        fewer = Counter(cells)
+        del fewer[cell]
+        doubled = Counter(cells)
+        doubled[cell] += 1
+        renamed = Counter(fewer)
+        renamed[(cell[0], cell[1] + "x")] = cells[cell]
+        moved = {release: dict(value, official=value["official"] + "-r1") for release, value in references.items()}
+        variants = [engine.coverage_digest(fewer, references), engine.coverage_digest(doubled, references),
+                    engine.coverage_digest(renamed, references), engine.coverage_digest(cells, moved),
+                    engine.coverage_digest(cells, engine.release_images(releases[:-1]))]
+        self.assertEqual(len({digest, *variants}), len(variants) + 1)
+        self.assertEqual(engine.coverage_digest(Counter(dict(reversed(list(cells.items())))), references), digest)
+
+    def test_release_share_follows_each_callers_runner_time(self):
+        """A caller's share is proportional to its category's runner time, so
+        the callers of a run end at about the same time."""
+        minutes = engine.RELEASE_CALLER_RUNNER_MINUTES
+        caps = engine.release_max_parallel()
+        ends = {category: minutes[category] / caps[category] for category in caps}
+        # No caller could give a runner to the slowest one and end sooner
+        # than it does now.
+        slowest = max(ends, key=ends.get)
+        for category in caps:
+            if category != slowest and caps[category] > 1:
+                self.assertGreaterEqual(minutes[category] / (caps[category] - 1), ends[slowest] - 1e-9, category)
+        for releases, share, expected in (
+                (1, 32, {"short": 9, "topology": 10, "multicluster": 6, "recovery": 6}),
+                (2, 32, {"short": 4, "topology": 5, "multicluster": 3, "recovery": 3}),
+                (3, 32, {"short": 3, "topology": 3, "multicluster": 2, "recovery": 2}),
+                (4, 32, {"short": 2, "topology": 2, "multicluster": 1, "recovery": 2}),
+                (7, 32, {"short": 1, "topology": 1, "multicluster": 1, "recovery": 1}),
+                (3, 13, {"short": 1, "topology": 1, "multicluster": 1, "recovery": 1})):
+            with self.subTest(releases=releases, share=share):
+                got = engine.release_max_parallel(releases, share)
+                self.assertEqual(got, expected)
+                self.assertLessEqual(releases * sum(got.values()) + engine.ENVIRONMENT_MAX_PARALLEL, share)
+        # A category that needs almost nothing still keeps one runner, and
+        # the others give it up.
+        skewed = engine.release_max_parallel(1, 9, {"short": 1000, "topology": 1000, "multicluster": 1, "recovery": 1})
+        self.assertEqual(skewed, {"short": 3, "topology": 3, "multicluster": 1, "recovery": 1})
+        for releases, share in ((8, 32), (3, 12), (0, 32)):
+            with self.subTest(releases=releases, share=share), self.assertRaises(ValueError):
+                engine.release_max_parallel(releases, share)
+        for minutes in ({"short": 1}, dict(engine.RELEASE_CALLER_RUNNER_MINUTES, short=0),
+                        dict(engine.RELEASE_CALLER_RUNNER_MINUTES, environment=1)):
+            with self.subTest(minutes=minutes), self.assertRaises(ValueError):
+                engine.release_max_parallel(minutes=minutes)
+
+    def test_release_budget_refuses_callers_that_take_the_other_repositories_runners(self):
+        entries = engine.release_matrix("all", "Release matrix")
+        crowded = [dict(entry, max_parallel=entry["max_parallel"] + 1) for entry in entries]
+        self.assertFalse(engine.runner_budget(crowded)["passed"])
+        # A larger floor for the other repositories with the callers left as
+        # they were: the report refuses what release_max_parallel would not
+        # have allocated.
+        caps = engine.release_max_parallel()
+        with mock.patch.object(engine, "OTHER_REPOSITORY_RUNNERS", engine.OTHER_REPOSITORY_RUNNERS + 2), \
+                mock.patch.object(engine, "release_max_parallel", return_value=caps):
+            report = engine.releases_report(self.plan, "all", "Release matrix")
+        self.assertFalse(report["passed"])
+        self.assertEqual((report["missing"], report["extra"]), ([], []))
+        with self.assertRaisesRegex(ValueError, "unknown runner allocation"):
+            engine.release_matrix("all", "Release matrix", allocation="pull_request")
 
     def periodic_group_keys(self):
         """The concurrency group key of a full and of a representative run of
@@ -1118,58 +1475,103 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         return {"full": "Periodic-refs/heads/main" + match[2],
                 "representative": "Periodic-refs/heads/main" + match[1]}
 
-    def test_full_and_campaign_runs_together_leave_pull_request_runners(self):
+    def test_periodic_stays_within_its_small_fixed_share(self):
+        """Periodic's callers pass PERIODIC_MAX_PARALLEL, the caller matrix
+        runs PERIODIC_CALLERS of them at once, and every mode together holds
+        at most PERIODIC_RUNNERS."""
+        periodic = self.jobs[self.PERIODIC]
+        entries = engine.release_matrix("all", "Periodic", allocation="periodic")
+        self.assertEqual({entry["max_parallel"] for entry in entries}, {engine.PERIODIC_MAX_PARALLEL})
+        self.assertEqual(scalar(periodic["runtime"], "max_parallel"), "${{ matrix.max_parallel }}")
+        self.assertEqual(scalar(periodic["runtime"], "max-parallel"), str(engine.PERIODIC_CALLERS))
+        self.assertEqual(scalar(periodic["environment"], "max_parallel"), str(engine.ENVIRONMENT_MAX_PARALLEL))
+        self.assertEqual(scalar(periodic["representative"], "max_parallel"), str(engine.CAMPAIGN_MAX_PARALLEL))
+        self.assertNotIn("matrix:", periodic["sample"])
+        report = engine.releases_report(self.plan, "all", "Periodic", "periodic")
+        self.assertEqual(report["allocation"], "periodic")
+        budget = report["runner_budget"]
+        self.assertTrue(budget["passed"], budget)
+        self.assertEqual(budget["available"], engine.PERIODIC_RUNNERS)
+        full = engine.PERIODIC_CALLERS * engine.PERIODIC_MAX_PARALLEL + engine.ENVIRONMENT_MAX_PARALLEL
+        self.assertEqual(budget["modes"], {"full": full, "representative": engine.CAMPAIGN_MAX_PARALLEL,
+                                           "storage": engine.STORAGE_MAX_PARALLEL,
+                                           "sample": engine.SAMPLE_MAX_PARALLEL})
+        # Periodic and a pull request beside it leave the other
+        # repositories their runners.
+        self.assertLessEqual(engine.PERIODIC_RUNNERS + engine.pull_request_budget()["runners"],
+                             engine.RUNNER_LIMIT - engine.OTHER_REPOSITORY_RUNNERS)
+        # Without the bound on the caller matrix every caller runs at once.
+        unbounded = engine.periodic_runner_budget(entries, callers=len(entries))
+        self.assertEqual(unbounded["modes"]["full"], len(entries) + engine.ENVIRONMENT_MAX_PARALLEL)
+        self.assertFalse(unbounded["passed"])
+        # The release allocation is not Periodic's.
+        self.assertFalse(engine.periodic_runner_budget(engine.release_matrix("all", "Periodic"))["passed"])
+        with mock.patch.object(engine, "PERIODIC_MAX_PARALLEL", engine.PERIODIC_MAX_PARALLEL + 1):
+            crowded = engine.releases_report(self.plan, "all", "Periodic", "periodic")
+        self.assertFalse(crowded["passed"])
+        self.assertEqual((crowded["missing"], crowded["extra"]), ([], []))
+
+    def test_full_and_campaign_runs_together_stay_within_the_periodic_share(self):
         """A full run and a campaign run in different concurrency groups can
         be in progress at once, so the periodic budget adds both up."""
         keys = self.periodic_group_keys()
         self.assertEqual({mode: key.removeprefix("Periodic-refs/heads/main") for mode, key in keys.items()},
                          {mode: engine.PERIODIC_GROUP_SUFFIX[mode] for mode in keys})
         self.assertNotEqual(keys["full"], keys["representative"])
-        entries = engine.release_matrix("all", "Periodic")
-        full = engine.runner_budget(entries)["runners"]
+        entries = engine.release_matrix("all", "Periodic", allocation="periodic")
         campaign = int(scalar(self.jobs[self.PERIODIC]["representative"], "max_parallel"))
         budget = engine.periodic_runner_budget(entries, campaign)
-        self.assertEqual(budget["modes"], {"full": full, "representative": campaign,
-                                           "storage": engine.STORAGE_MAX_PARALLEL})
+        full = budget["modes"]["full"]
         self.assertEqual(budget["runners"], full + campaign)
-        self.assertLessEqual(budget["runners"], engine.RUNNER_LIMIT - engine.PULL_REQUEST_RUNNERS)
+        self.assertLessEqual(budget["runners"], engine.PERIODIC_RUNNERS)
         self.assertTrue(budget["passed"], budget)
         # A campaign bounded by the whole periodic share, beside a full run,
-        # takes pull request runners.
-        overlapping = engine.periodic_runner_budget(entries, engine.RUNNER_LIMIT - engine.PULL_REQUEST_RUNNERS)
-        self.assertEqual(overlapping["runners"], full + engine.RUNNER_LIMIT - engine.PULL_REQUEST_RUNNERS)
+        # exceeds it.
+        overlapping = engine.periodic_runner_budget(entries, engine.PERIODIC_RUNNERS)
+        self.assertEqual(overlapping["runners"], full + engine.PERIODIC_RUNNERS)
         self.assertFalse(overlapping["passed"])
-        with mock.patch.object(engine, "CAMPAIGN_MAX_PARALLEL",
-                               engine.RUNNER_LIMIT - engine.PULL_REQUEST_RUNNERS - full + 1):
-            report = engine.releases_report(self.plan, "all", "Periodic")
+        with mock.patch.object(engine, "CAMPAIGN_MAX_PARALLEL", engine.PERIODIC_RUNNERS - full + 1):
+            report = engine.releases_report(self.plan, "all", "Periodic", "periodic")
         self.assertFalse(report["passed"])
         self.assertEqual((report["missing"], report["extra"]), ([], []))
         # One shared group would let the runs wait for each other: the
         # budget is then the larger mode's, not the sum.
-        shared = engine.periodic_runner_budget(entries, engine.RUNNER_LIMIT - engine.PULL_REQUEST_RUNNERS,
-                                               {"full": "", "representative": "", "storage": ""})
-        self.assertEqual(shared["runners"], engine.RUNNER_LIMIT - engine.PULL_REQUEST_RUNNERS)
+        shared = engine.periodic_runner_budget(entries, engine.PERIODIC_RUNNERS,
+                                               dict.fromkeys(engine.PERIODIC_GROUP_SUFFIX, ""))
+        self.assertEqual(shared["runners"], engine.PERIODIC_RUNNERS)
         self.assertTrue(shared["passed"])
 
-    def test_storage_dispatch_waits_in_the_full_matrix_group(self):
-        """A storage dispatch is neither the campaign schedule nor the
-        representative mode, so the group expression gives it the full
-        matrix's key. A group of its own would take pull request runners."""
-        self.assertEqual(engine.PERIODIC_GROUP_SUFFIX["storage"], engine.PERIODIC_GROUP_SUFFIX["full"])
-        entries = engine.release_matrix("all", "Periodic")
+    def test_storage_and_sample_runs_wait_in_the_full_matrix_group(self):
+        """A storage dispatch and the daily sample are neither the campaign
+        schedule nor the representative mode, so the group expression gives
+        them the full matrix's key. A group of their own would add up."""
+        entries = engine.release_matrix("all", "Periodic", allocation="periodic")
         self.assertTrue(engine.periodic_runner_budget(entries)["passed"])
-        separate = engine.periodic_runner_budget(entries, groups=dict(engine.PERIODIC_GROUP_SUFFIX, storage="-storage"))
-        self.assertEqual(separate["runners"], engine.periodic_runner_budget(entries)["runners"] + engine.STORAGE_MAX_PARALLEL)
-        self.assertFalse(separate["passed"])
+        for mode, runners in (("storage", engine.STORAGE_MAX_PARALLEL), ("sample", engine.SAMPLE_MAX_PARALLEL)):
+            with self.subTest(mode=mode):
+                self.assertEqual(engine.PERIODIC_GROUP_SUFFIX[mode], engine.PERIODIC_GROUP_SUFFIX["full"])
+                separate = engine.periodic_runner_budget(entries, groups=dict(engine.PERIODIC_GROUP_SUFFIX, **{mode: "-" + mode}))
+                self.assertEqual(separate["runners"], engine.periodic_runner_budget(entries)["runners"] + runners)
+                self.assertFalse(separate["passed"])
 
-    def test_runner_budget_refuses_callers_that_take_pull_request_runners(self):
-        entries = engine.release_matrix("all", "Periodic")
-        crowded = [dict(entry, max_parallel=entry["max_parallel"] + 1) for entry in entries]
-        self.assertFalse(engine.runner_budget(crowded)["passed"])
-        with mock.patch.dict(engine.RELEASE_MAX_PARALLEL, short=engine.RELEASE_MAX_PARALLEL["short"] + 1):
-            report = engine.releases_report(self.plan, "all", "Periodic")
-        self.assertFalse(report["passed"])
-        self.assertEqual((report["missing"], report["extra"]), ([], []))
+    def test_pull_request_callers_bound_one_pull_request(self):
+        """Every pull request entry point passes its category's bound, and a
+        pull request that runs them all leaves room for another beside it."""
+        for workflow, (_, category) in self.ENTRY_POINTS.items():
+            with self.subTest(workflow=workflow):
+                self.assertEqual(scalar(self.jobs[workflow]["scenarios"], "max_parallel"),
+                                 str(engine.PULL_REQUEST_MAX_PARALLEL[category]))
+        self.assertEqual(sorted(category for _, category in self.ENTRY_POINTS.values()),
+                         sorted(engine.PULL_REQUEST_MAX_PARALLEL))
+        budget = engine.pull_request_budget()
+        self.assertTrue(budget["passed"], budget)
+        self.assertLessEqual(engine.PULL_REQUESTS_AT_ONCE * budget["runners"] + engine.OTHER_REPOSITORY_RUNNERS,
+                             engine.RUNNER_LIMIT)
+        crowded = dict(engine.PULL_REQUEST_MAX_PARALLEL, short=engine.PULL_REQUEST_MAX_PARALLEL["short"] + 1)
+        self.assertFalse(engine.pull_request_budget(crowded)["passed"])
+        self.assertFalse(engine.pull_request_budget(dict(engine.PULL_REQUEST_MAX_PARALLEL, short=0))["passed"])
+        unbound = {key: value for key, value in engine.PULL_REQUEST_MAX_PARALLEL.items() if key != "recovery"}
+        self.assertFalse(engine.pull_request_budget(unbound)["passed"])
 
     def test_plan_fills_one_build_cache_that_every_runtime_job_restores_before_compiling(self):
         plan_steps = steps(self.jobs["tagged-runtime.yml"]["plan"])
@@ -1383,6 +1785,50 @@ class ChangedSelectionIdentityWorkflowTests(unittest.TestCase):
                     self.assertEqual(interpolate(folded(caller, "changed_head"), context), head if selected else "")
         for filename in ("short.yml", "periodic.yml", "release-matrix.yml"):
             self.assertNotIn("changed_head", (ROOT / (".github/workflows/" + filename)).read_text())
+
+
+class RequiredShortTests(unittest.TestCase):
+    def test_required_batch_is_removed_from_the_advisory_pr_matrix(self):
+        # Both calls share the source batch, including when declaration
+        # selection would otherwise omit it or schedule it in ordinary Short.
+        workflows = ROOT / ".github/workflows"
+        required = (workflows / "required-short.yml").read_text()
+        short = (workflows / "short.yml").read_text()
+        names = scalar(required, "include_batches")
+        self.assertEqual(names, "daemon_basics")
+        self.assertEqual(scalar(short, "exclude_batches"),
+                         "${{ github.event_name == 'pull_request' && '" + names + "' || '' }}")
+        profiles = [{"batch": "daemon_basics"}, {"batch": "basic"}]
+        plan = {"include": profiles}
+        core = engine.partition_runtime_batches(plan, profiles, names, "")
+        self.assertEqual(core["include"], [profiles[0]])
+        for ordinary in (profiles, profiles[1:]):
+            with self.subTest(ordinary=ordinary):
+                remaining = engine.partition_runtime_batches({"include": ordinary}, profiles, "", names)
+                self.assertEqual(remaining["include"], [profiles[1]])
+        with self.assertRaisesRegex(ValueError, "unknown runtime batch"):
+            engine.partition_runtime_batches(plan, profiles, "renamed", "")
+
+    def test_only_successful_required_native_work_or_confirmed_docs_passes(self):
+        workflow = (ROOT / ".github/workflows/required-short.yml").read_text()
+        jobs = dict(blocks(workflow.split("\njobs:\n", 1)[1], r"^  ([\w-]+):$"))
+        self.assertNotIn("paths", workflow.split("\njobs:", 1)[0])
+        self.assertEqual(scalar(jobs["scenarios"], "if"), "needs.changes.outputs.docs_only != 'true'")
+        self.assertIn("    needs: [changes, scenarios]\n", jobs["required"])
+        self.assertEqual(scalar(jobs["required"].split("    steps:", 1)[0], "if"), "always()")
+        command = run_command(steps(jobs["required"])[0])
+        for changes, docs, native, expected in (
+                ("success", "false", "success", 0),
+                ("success", "true", "skipped", 0),
+                ("success", "false", "failure", 1),
+                ("success", "false", "cancelled", 1),
+                ("success", "false", "skipped", 1),
+                ("failure", "true", "skipped", 1)):
+            with self.subTest(changes=changes, docs=docs, native=native):
+                result = subprocess.run(["sh", "-e", "-c", command], env={
+                    "CHANGES_RESULT": changes, "DOCS_ONLY": docs, "BATCH_RESULT": native,
+                }, timeout=10)
+                self.assertEqual(result.returncode, expected)
 
 
 class OptInDeclarationSelectionTests(unittest.TestCase):

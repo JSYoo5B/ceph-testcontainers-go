@@ -10,12 +10,11 @@ import (
 
 // Run starts a disposable cluster for RBD clients. It accepts every ceph.Run
 // option and the options of other service packages. When no WithPools option is given,
-// it creates and initializes a replicated pool named rbd.
-// Bootstrap options that leave the cluster without OSDs for the pool, such as
-// ceph.ClusterConfig.WithNoInitialOSDs, are rejected; use ceph.Run for those stages.
+// it creates and initializes a replicated pool named rbd. WithPools() selects
+// no pools for RBD bootstrap. A nonempty pool selection requires initial OSDs.
 // A non-nil Container returned with an error must still be terminated.
 //
-// Run returns after the pools exist and their RBD metadata is initialized.
+// Run returns after the selected pools exist and their RBD metadata is initialized.
 // PG peering may still be finishing, so call ceph.Observer.WaitForClean
 // (ceph.Observe(c.Container)) before the first client I/O.
 //

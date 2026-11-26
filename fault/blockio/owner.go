@@ -31,8 +31,8 @@ type ownerReply struct {
 	LoopMajor, LoopMinor  uint32
 	Bytes                 int64 `json:"bytes"`
 	Detached, FileRemoved bool
-	Started               bool `json:"started"`
-	BuildNotLaunched      bool `json:"build_not_launched"`
+	Started               *bool `json:"started"`
+	BuildNotLaunched      bool  `json:"build_not_launched"`
 }
 
 func (b *Container) owner(ctx context.Context, action string) (ownerReply, error) {
@@ -57,6 +57,9 @@ func (b *Container) owner(ctx context.Context, action string) (ownerReply, error
 	}
 	if detachAction && reply.Attempt != b.detachID {
 		return reply, failure(ceph.ErrNativeFailure, "detach receipt belongs to another invocation; resources retained")
+	}
+	if (action == "build-started" || action == "detach-started") && reply.Started == nil {
+		return reply, failure(ceph.ErrNativeFailure, "owner %s receipt lacks explicit started evidence; resources retained", action)
 	}
 	if reply.ErrorKind != "" {
 		kind := ceph.ErrNativeFailure
@@ -91,14 +94,14 @@ func (b *Container) withdrawUnstarted(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		b.creationSent, b.creationStopped = r.Started, false
+		b.creationSent, b.creationStopped = *r.Started, false
 	}
 	if b.detachSent && b.detachStopped {
 		r, err := b.owner(ctx, "detach-started")
 		if err != nil {
 			return err
 		}
-		b.detachSent, b.detachStopped = r.Started, false
+		b.detachSent, b.detachStopped = *r.Started, false
 	}
 	return nil
 }
@@ -241,8 +244,9 @@ elif action=="detach":
         if loops!=[m["loop"]]: raise RuntimeError("loop association changed before detach")
         holders=os.listdir("/sys/block/%s/holders"%os.path.basename(m["loop"]))
         if holders: raise RuntimeError("loop still has mapping holders")
+        # The receipt records the detach command's completion. Polling
+        # reads association separately, so a failed read cannot reset it.
         command("losetup","--detach",m["loop"])
-        r["Detached"]=not associated(m["file"])
     except Exception as e:r["Error"]=str(e)
     r["done"]=True;save(detach_path,r)
 elif action=="detached":

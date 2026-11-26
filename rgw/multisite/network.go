@@ -47,12 +47,17 @@ func (f *Fixture) InterruptZoneLink(ctx context.Context, zoneName string) (*faul
 // are untouched. It is fault.ApplyLinkProfile with the opt-in netem helper:
 // delay names the helper and shaping fields, and leaves Plane,
 // Peer, PeerPort and Peers empty, which the fixture fills in. The fixture
-// restores the lease when it terminates; restore it earlier to end the fault.
+// accepts only Direction Outbound; applying Inbound or BothDirections would
+// shape the peer endpoint instead of the named zone's outbound requests. The
+// fixture restores the lease when it terminates; restore it earlier to end the fault.
 //
 //purpose:condition
 func (f *Fixture) ApplyZoneLinkProfile(ctx context.Context, zoneName, peerZone string, delay fault.NetworkProfile) (*fault.NetworkProfileLease, error) {
 	if f == nil {
 		return nil, errors.New("RGW multisite is unavailable")
+	}
+	if delay.Direction != fault.Outbound {
+		return nil, multisiteInvalid(errors.New("RGW zone link profiles shape only the named zone's outbound traffic; Direction must be Outbound"))
 	}
 	if delay.Plane != "" || delay.Peer.IsValid() || delay.PeerPort != 0 || delay.Peers != nil {
 		return nil, multisiteInvalid(errors.New("a zone link delay selects its own network and peer; leave Plane, Peer, PeerPort and Peers empty"))

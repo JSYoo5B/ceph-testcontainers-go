@@ -154,10 +154,10 @@ func TestRGWFailureDiagnosticsReportEveryUnavailableField(t *testing.T) {
 	}
 }
 
-// A failed stats synchronization names how it ended; an unconfirmed stop and
+// A failed native command step names how it ended; an unconfirmed stop and
 // the supervisor's own stop are not the test's deadline, and a native exit
 // keeps its code and errno.
-func TestRGWSyncStatsEndClassifiesTheEnd(t *testing.T) {
+func TestRGWAdminStepEndClassifiesTheEnd(t *testing.T) {
 	stopped := &ceph.OperationError{Kind: ceph.ErrNativeFailure, Op: "radosgw-admin", Err: errors.New("radosgw-admin still ran after 105s and was stopped")}
 	exited := fmt.Errorf("radosgw-admin command failed: %w", &ceph.NativeFailure{Program: "radosgw-admin", ExitCode: 2, Errno: "ENOENT"})
 	for _, tc := range []struct {
@@ -171,7 +171,7 @@ func TestRGWSyncStatsEndClassifiesTheEnd(t *testing.T) {
 		{exited, nil, nil, `radosgw-admin exited 2 (errno "ENOENT")`},
 		{errors.New("inspect failed"), nil, nil, "before a native result"},
 	} {
-		if got := rgwSyncStatsEnd(tc.err, tc.test, tc.phase); !strings.Contains(got, tc.want) {
+		if got := rgwAdminStepEnd(tc.err, tc.test, tc.phase); !strings.Contains(got, tc.want) {
 			t.Errorf("%v: %q, want %q", tc.err, got, tc.want)
 		}
 	}

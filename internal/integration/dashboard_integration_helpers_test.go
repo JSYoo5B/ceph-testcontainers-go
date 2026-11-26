@@ -454,6 +454,8 @@ func testDashboardOwnedHTTPS(t *testing.T, opts ...testcontainers.ContainerCusto
 	t.Logf("DASHBOARD host-side failover mgr.%s -> mgr.%s: %s -> %s, login and summary from the test process", active, promoted, hostEndpoint, hostFailover)
 
 	// An outside edit of the certificate is refused and left as it is.
+	const multiclusterEntry = "mgr mgr/dashboard/MULTICLUSTER_CONFIG"
+	hadLoginRecord := slices.Contains(readDashboardState(t, ctx, cluster).Options, multiclusterEntry)
 	other := ca.leaf(t, 3)
 	runDashboardCommand(t, ctx, cluster, other.CertificatePEM, "dashboard", "set-ssl-certificate", "-i", "-")
 	if err := d.Restore(ctx); !errors.Is(err, ceph.ErrInvalidRequest) {
@@ -462,8 +464,15 @@ func testDashboardOwnedHTTPS(t *testing.T, opts ...testcontainers.ContainerCusto
 	if current := harness.MustCeph(t, ctx, cluster, "config-key", "get", "mgr/dashboard/crt"); !bytes.Equal(bytes.TrimSpace(current), bytes.TrimSpace(other.CertificatePEM)) {
 		t.Fatal("the refused Restore changed the outside certificate")
 	}
-	if !readDashboardState(t, ctx, cluster).Enabled {
+	afterRefusal := readDashboardState(t, ctx, cluster)
+	if !afterRefusal.Enabled {
 		t.Fatal("the refused Restore disabled the module")
+	}
+	if hadLoginRecord {
+		if slices.Contains(afterRefusal.Options, multiclusterEntry) {
+			t.Fatal("Restore left the fixture account's multi-cluster login record")
+		}
+		t.Log("DASHBOARD restored the observed owned multi-cluster login record to absence")
 	}
 	// The outside TLS edit keeps the module available after its account
 	// cleanup, so the original username can be queried directly.
@@ -694,7 +703,8 @@ func testDashboardRGWGateway(t *testing.T) {
 		t.Fatal("the refused Remove changed the outside access key")
 	}
 	runDashboardCommand(t, ctx, cluster, []byte(linkAccess), "dashboard", "set-rgw-api-access-key", "-i", "-")
-	if err := link.Remove(ctx); err != nil {
+	copied := *link
+	if err := copied.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if err := link.Check(ctx); !errors.Is(err, ceph.ErrInvalidRequest) {
@@ -712,6 +722,22 @@ func testDashboardRGWGateway(t *testing.T) {
 	}
 	if got := s3.Request(t, ctx, "GET", "/"+bucket+"/object", nil, 200); !bytes.Equal(got, payload) {
 		t.Fatalf("S3 read back after Remove %q", got)
+	}
+	successor, err := d.AddGateway(ctx, gateway)
+	if err != nil {
+		t.Fatalf("add a successor after removing through a copy: %v", err)
+	}
+	if err := copied.Remove(ctx); err != nil {
+		t.Fatalf("repeat removal through the old copy: %v", err)
+	}
+	if duplicate, err := d.AddGateway(ctx, gateway); duplicate != nil || !errors.Is(err, ceph.ErrInvalidRequest) {
+		t.Fatalf("the old copy released the successor's slot: %v", err)
+	}
+	if err := successor.Check(ctx); err != nil {
+		t.Fatalf("successor after stale removal: %v", err)
+	}
+	if err := successor.Remove(ctx); err != nil {
+		t.Fatal(err)
 	}
 	t.Run("unconfirmed-user", func(t *testing.T) {
 		testDashboardUnconfirmedGatewayUser(t, ctx, d, gateway)

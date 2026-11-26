@@ -36,7 +36,7 @@ type helperState struct {
 //testdouble:dependency-port
 type backend interface {
 	// target inspects id and its endpoint on network. A removed container
-	// returns an error for which errdefs.IsNotFound is true.
+	// returns an error for which nshelper.ContainerNotFound is true.
 	target(ctx context.Context, id, network string) (nshelper.Target, error)
 	// probe runs argv in a helper from image in networkMode until it exits.
 	// It returns the probe container's ID, also with an error, and does not

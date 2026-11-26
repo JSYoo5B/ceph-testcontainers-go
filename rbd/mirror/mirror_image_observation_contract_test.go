@@ -3,6 +3,7 @@ package mirror
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -120,6 +121,37 @@ func TestImageObserversRequireSelectedReceiverGeneration(t *testing.T) {
 				want := fault == "unrelated-stopped" || fault == "no-election"
 				if err != nil || status.ReplayReady != want {
 					t.Fatalf("receiver attribution: %+v %v", status, err)
+				}
+			})
+		}
+	}
+}
+
+func TestImageObserversRequireOriginalReceiverAuthority(t *testing.T) {
+	for _, scoped := range []bool{false, true} {
+		for _, fault := range []string{"handle substitution", "unconfirmed startup", "native peer replaced", "native cluster replaced", "peer changed during read"} {
+			t.Run(fmt.Sprintf("scoped=%t/%s", scoped, fault), func(t *testing.T) {
+				h, observer := contractImageObserver(t, scoped)
+				status, err := observer.ImageStatus(t.Context(), "volume")
+				if err != nil || !status.ReplayReady {
+					t.Fatalf("positive control: %+v %v", status, err)
+				}
+				switch fault {
+				case "handle substitution":
+					replacement := *h.daemons[0]
+					h.m.roster.daemons[0].Container = &replacement
+				case "unconfirmed startup":
+					h.m.roster.daemons[0].receiverStartupConfirmed = false
+				case "native peer replaced":
+					h.destination.peers[0].UUID = receiverReplacementUUID
+				case "native cluster replaced":
+					h.destination.fsid = receiverSourceFSID
+				case "peer changed during read":
+					h.daemons[0].hook = func(context.Context, int) { h.destination.peers[0].UUID = receiverReplacementUUID }
+				}
+				status, err = observer.ImageStatus(t.Context(), "volume")
+				if status.ReplayReady || (fault != "unconfirmed startup" && !scopedRBDImagePermanent(err)) {
+					t.Fatalf("unconfirmed original receiver became ready: %+v %v", status, err)
 				}
 			})
 		}

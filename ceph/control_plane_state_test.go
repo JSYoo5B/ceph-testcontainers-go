@@ -39,8 +39,8 @@ func TestControlPlaneStateWithoutAHandleIsInert(t *testing.T) {
 	if ctr, err := s.currentContext(t.Context()); ctr != nil || err != nil {
 		t.Fatalf("currentContext = %v, %v", ctr, err)
 	}
-	if ctr, err := s.diagnosticHandle(t.Context()); ctr != nil || err != nil {
-		t.Fatalf("diagnosticHandle = %v, %v", ctr, err)
+	if ctr, pending, err := s.diagnosticHandles(t.Context()); ctr != nil || pending != nil || err != nil {
+		t.Fatalf("diagnosticHandles = %v, %v, %v", ctr, pending, err)
 	}
 	if owned, err := s.owns(t.Context(), ""); owned || err != nil {
 		t.Fatalf("an empty control plane owns the empty ID: %v, %v", owned, err)
@@ -53,20 +53,94 @@ func TestControlPlaneStateWithoutAHandleIsInert(t *testing.T) {
 func TestControlPlaneStatePublishAndOwns(t *testing.T) {
 	var s controlPlaneState
 	fake := &controlStateFake{id: "control-1"}
-	s.publish(fake)
+	s.publish(fake, nil)
 	if s.current() != fake {
 		t.Fatal("publish did not store the handle")
 	}
 	if ctr, err := s.currentContext(t.Context()); ctr != fake || err != nil {
 		t.Fatalf("currentContext = %v, %v", ctr, err)
 	}
-	if ctr, err := s.diagnosticHandle(t.Context()); ctr != fake || err != nil {
-		t.Fatalf("diagnosticHandle = %v, %v", ctr, err)
+	if ctr, pending, err := s.diagnosticHandles(t.Context()); ctr != fake || pending != nil || err != nil {
+		t.Fatalf("diagnosticHandles = %v, %v, %v", ctr, pending, err)
 	}
 	for id, want := range map[string]bool{"control-1": true, "control-2": false, "": false} {
 		if got, err := s.owns(t.Context(), id); got != want || err != nil {
 			t.Fatalf("owns(%q) = %v, %v, want %v", id, got, err, want)
 		}
+	}
+}
+
+func TestControlPlaneStartFailureLeavesMonitorAvailableForRetry(t *testing.T) {
+	monitor := &controlStateFake{id: "mon-a"}
+	pending := &controlStateFake{id: "incomplete"}
+	ready := &controlStateFake{id: "ready"}
+	cluster := &Container{Container: monitor}
+	state := &cluster.controlPlane
+	ctx := t.Context()
+
+	// Topology serializes creation and cleanup around this transition.
+	cluster.mu.Lock()
+	defer cluster.mu.Unlock()
+	if err := state.ensure(ctx, func() (testcontainers.Container, error) {
+		return pending, context.DeadlineExceeded
+	}); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("start error = %v", err)
+	}
+	assertControl := func(want testcontainers.Container) {
+		t.Helper()
+		if got, err := cluster.ControlContainer(ctx); got != want || err != nil {
+			t.Fatalf("ControlContainer = %v, %v, want %v", got, err, want)
+		}
+		if got := cluster.conn().cliContainer(); got != want {
+			t.Fatalf("cliContainer = %v, want %v", got, want)
+		}
+	}
+	assertControl(monitor)
+	if active, incomplete, err := state.diagnosticHandles(ctx); active != nil || incomplete != pending || err != nil {
+		t.Fatalf("failed start inventory = %v, %v, %v", active, incomplete, err)
+	}
+	pending.terminateErr = errors.New("Docker removal failed")
+	startReady := func() (testcontainers.Container, error) {
+		if pending.terminations != 2 {
+			t.Fatalf("replacement start before pending cleanup was confirmed: %d attempts", pending.terminations)
+		}
+		assertControl(monitor)
+		return ready, nil
+	}
+	if err := state.ensure(ctx, startReady); !errors.Is(err, pending.terminateErr) {
+		t.Fatalf("retry removal error = %v", err)
+	}
+	assertControl(monitor)
+	pending.terminateErr = errdefs.ErrNotFound
+	if err := state.ensure(ctx, startReady); err != nil {
+		t.Fatalf("retry start = %v", err)
+	}
+	assertControl(ready)
+	if active, incomplete, err := state.diagnosticHandles(ctx); active != ready || incomplete != nil || err != nil {
+		t.Fatalf("retry inventory = %v, %v, %v", active, incomplete, err)
+	}
+}
+
+func TestControlPlaneTerminateRetainsFailedStartUntilRemoved(t *testing.T) {
+	pending := &controlStateFake{id: "incomplete", terminateErr: errors.New("Docker removal failed")}
+	var state controlPlaneState
+	if err := state.ensure(t.Context(), func() (testcontainers.Container, error) {
+		return pending, context.DeadlineExceeded
+	}); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("start error = %v", err)
+	}
+	if err := state.terminate(t.Context()); !errors.Is(err, pending.terminateErr) {
+		t.Fatalf("terminate error = %v", err)
+	}
+	if ready, incomplete, err := state.diagnosticHandles(t.Context()); ready != nil || incomplete != pending || err != nil {
+		t.Fatalf("failed removal inventory = %v, %v, %v", ready, incomplete, err)
+	}
+	pending.terminateErr = nil
+	if err := state.terminate(t.Context()); err != nil || pending.terminations != 2 {
+		t.Fatalf("terminate retry = %v, removal attempts %d", err, pending.terminations)
+	}
+	if ready, incomplete, err := state.diagnosticHandles(t.Context()); ready != nil || incomplete != nil || err != nil {
+		t.Fatalf("terminated inventory = %v, %v, %v", ready, incomplete, err)
 	}
 }
 
@@ -76,7 +150,7 @@ func TestControlPlaneStatePublishAndOwns(t *testing.T) {
 func TestControlPlaneStateTerminateKeepsAHandleWhoseRemovalFailed(t *testing.T) {
 	var s controlPlaneState
 	fake := &controlStateFake{id: "c", terminateErr: errors.New("synthetic removal failure")}
-	s.publish(fake)
+	s.publish(fake, nil)
 	if err := s.terminate(t.Context()); !errors.Is(err, fake.terminateErr) || s.current() != fake {
 		t.Fatalf("failed terminate = %v, handle kept %v", err, s.current() == fake)
 	}
@@ -90,7 +164,7 @@ func TestControlPlaneStateTerminateKeepsAHandleWhoseRemovalFailed(t *testing.T) 
 	if err := s.terminate(t.Context()); err != nil || fake.terminations != 2 {
 		t.Fatalf("terminate after forgetting reached Docker: %v, %d", err, fake.terminations)
 	}
-	s.publish(&controlStateFake{id: "ok"})
+	s.publish(&controlStateFake{id: "ok"}, nil)
 	if err := s.terminate(t.Context()); err != nil || s.current() != nil {
 		t.Fatalf("successful terminate = %v, handle %v", err, s.current())
 	}
@@ -101,14 +175,14 @@ func TestControlPlaneStateTerminateKeepsAHandleWhoseRemovalFailed(t *testing.T) 
 // removal, ends in the context error and never blocks.
 func TestControlPlaneStateReadersHonorTheContextWhileTheLockIsHeld(t *testing.T) {
 	var s controlPlaneState
-	s.publish(&controlStateFake{id: "c"})
+	s.publish(&controlStateFake{id: "c"}, nil)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for name, read := range map[string]func(context.Context) error{
 		"currentContext": func(ctx context.Context) error { _, err := s.currentContext(ctx); return err },
 		"owns":           func(ctx context.Context) error { _, err := s.owns(ctx, "c"); return err },
-		"diagnosticHandle": func(ctx context.Context) error {
-			_, err := s.diagnosticHandle(ctx)
+		"diagnosticHandles": func(ctx context.Context) error {
+			_, _, err := s.diagnosticHandles(ctx)
 			return err
 		},
 	} {
@@ -144,7 +218,7 @@ func TestControlPlaneStateConcurrentReadersAndPublisher(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for range 200 {
-			s.publish(&controlStateFake{id: "c"})
+			s.publish(&controlStateFake{id: "c"}, nil)
 			_ = s.terminate(t.Context())
 		}
 	}()
@@ -167,17 +241,18 @@ func TestTestStatePublishesTheControlPlaneLockIdentity(t *testing.T) {
 }
 
 // controlPlaneMethods pins the component: the calls each method makes. Only
-// the lock calls on its own mutex, the handle's Terminate and the two
-// contextual lock helpers appear; none calls into Container or takes another
+// its own methods and lock, the startup and removal boundaries and the
+// contextual lock helpers appear. None calls into Container or takes another
 // lock.
 var controlPlaneMethods = map[string][]string{
-	"current":          {"s.mu.RLock()", "s.mu.RUnlock()"},
-	"currentContext":   {"lockTopologyReadMutex(ctx, &s.mu)", "s.mu.RUnlock()"},
-	"owns":             {"s.currentContext(ctx)", "ctr.GetContainerID()"},
-	"diagnosticHandle": {"diagnosticLock(ctx, s.mu.TryRLock)", "s.mu.RUnlock()"},
-	"publish":          {"s.mu.Lock()", "s.mu.Unlock()"},
-	"terminate":        {"s.mu.Lock()", "s.mu.Unlock()", "s.handle.Terminate(ctx, opts...)", "onlyMissingHostResource(err)"},
-	"mutex":            nil,
+	"current":           {"s.mu.RLock()", "s.mu.RUnlock()"},
+	"currentContext":    {"lockTopologyReadMutex(ctx, &s.mu)", "s.mu.RUnlock()"},
+	"owns":              {"s.currentContext(ctx)", "ctr.GetContainerID()"},
+	"diagnosticHandles": {"diagnosticLock(ctx, s.mu.TryRLock)", "s.mu.RUnlock()"},
+	"ensure":            {"s.current()", "s.terminate(ctx, testcontainers.StopTimeout(terminationStopTimeout))", "testcontainers.StopTimeout(terminationStopTimeout)", `fmt.Errorf("remove incomplete control container: %w", err)`, "start()", "s.publish(ctr, err)"},
+	"publish":           {"s.mu.Lock()", "s.mu.Unlock()"},
+	"terminate":         {"s.mu.Lock()", "s.mu.Unlock()", "ctr.Terminate(ctx, opts...)", "onlyMissingHostResource(err)"},
+	"mutex":             nil,
 }
 
 // controlPlaneCallers lists every function outside the component that calls
@@ -190,13 +265,13 @@ var controlPlaneMethods = map[string][]string{
 //	"identity" returns the lock identity for the test state view
 var controlPlaneCallers = map[string]stateCaller{
 	"terminate":                  {"takes", []string{"terminate"}},
-	"ensureControlPlane":         {"holds", []string{"current", "publish"}},
+	"ensureControlPlane":         {"holds", []string{"ensure"}},
 	"monitorReplacementMaterial": {"holds", nil},
 	"monitorJoinMaterial":        {"holds", nil},
 	"cliContainer":               {"free", []string{"current"}},
 	"controlContainer":           {"free", []string{"currentContext"}},
 	"admitNativeTarget":          {"free", []string{"owns"}},
-	"evidenceInventory":          {"free", []string{"diagnosticHandle"}},
+	"evidenceInventory":          {"free", []string{"diagnosticHandles"}},
 	"UnitState":                  {"identity", []string{"mutex"}},
 }
 
@@ -285,7 +360,7 @@ func TestControlPlaneStateFieldIsOnlyTouchedByItsMethods(t *testing.T) {
 func TestControlPlaneStateMethodsMakeOnlyTheirPinnedCalls(t *testing.T) {
 	methodAudit{label: "controlPlaneState", own: isControlPlaneReceiver, methods: controlPlaneMethods,
 		render:  func(call *ast.CallExpr) string { return types.ExprString(call) },
-		writers: map[string][]string{"handle": {"publish", "terminate"}}, forbidden: []string{"Container", "closed"}}.check(t)
+		writers: map[string][]string{"handle": {"publish", "terminate"}, "pending": {"publish", "terminate"}}, forbidden: []string{"Container", "closed"}}.check(t)
 }
 
 // TestControlPlaneStateWritersAreAudited pins the production writers of the

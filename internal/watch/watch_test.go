@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -121,6 +122,69 @@ func TestFatalBaselineReturnsTheCause(t *testing.T) {
 	if stream, err := Start(t.Context(), spec(s, nil)); stream != nil || err != gone {
 		t.Fatalf("Start = %v, %v", stream, err)
 	}
+}
+
+func TestQueryTimeoutRejectsALateBaseline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		config := spec(nil, nil)
+		config.Read = func(ctx context.Context) (int, error) {
+			<-ctx.Done()
+			return 1, nil
+		}
+		stream, err := Start(t.Context(), config)
+		if stream != nil {
+			_ = stream.Stop()
+		}
+		if stream != nil || !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("late baseline returned a stream %t and error %v", stream != nil, err)
+		}
+	})
+}
+
+func TestQueryTimeoutRejectsALatePoll(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		config := spec(nil, func(v int) bool { return v == 3 })
+		var reads int
+		config.Read = func(ctx context.Context) (int, error) {
+			reads++
+			switch reads {
+			case 1, 3:
+				return 1, nil
+			case 2:
+				<-ctx.Done()
+				return 2, nil
+			default:
+				return 3, nil
+			}
+		}
+		stream, err := Start(t.Context(), config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := drain(t, stream)
+		if err := stream.Stop(); err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 4 || got[0].meta.Kind != Baseline || got[1].meta.Kind != Gap ||
+			got[1].value != 0 || !errors.Is(got[1].err, context.DeadlineExceeded) ||
+			got[2].meta.Kind != Resumed || got[2].value != 1 || got[3].meta.Kind != Changed || got[3].value != 3 {
+			t.Fatalf("unexpected events after late sample: %+v", got)
+		}
+	})
+}
+
+func TestQueryTimeoutPreservesAFatalRead(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		config := spec(nil, nil)
+		gone := errors.New("identity changed")
+		config.Read = func(ctx context.Context) (int, error) {
+			<-ctx.Done()
+			return 0, Fatal(gone)
+		}
+		if stream, err := Start(t.Context(), config); stream != nil || err != gone {
+			t.Fatalf("late fatal baseline returned a stream %t and error %v", stream != nil, err)
+		}
+	})
 }
 
 func TestValidate(t *testing.T) {

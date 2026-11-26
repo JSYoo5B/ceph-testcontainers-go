@@ -14,6 +14,7 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -50,6 +51,22 @@ func TestManagerLifecycle(t *testing.T) {
 			t.Fatalf("native manager map and owned daemon count differ: %+v", owned)
 		}
 	}
+	docker, err := testcontainers.NewDockerClientWithOpts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := docker.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	// Remove reports success only for a container that Docker no longer has.
+	// The engine is asked by the ID recorded before the removal.
+	requireRemoved := func(name, id string) {
+		t.Helper()
+		_, err := docker.ContainerInspect(ctx, id, mobycl.ContainerInspectOptions{})
+		harness.RequireContainerAbsent(t, "manager "+name, id, err)
+	}
 	checkMap("a")
 	managerLifecycleRBDReady(t, ctx, cluster)
 	primary := clusteraccess.InitialManager(t, cluster)
@@ -64,6 +81,7 @@ func TestManagerLifecycle(t *testing.T) {
 	if err := harness.ManagerHandle(t, ctx, cluster, "a").Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
+	requireRemoved("a", primary.GetContainerID())
 	checkMap("b")
 	if clusteraccess.InitialManager(t, cluster) != nil || clusteraccess.Managers(t, cluster)[0] != b {
 		t.Fatal("removing primary a retained its legacy pointer or replaced b's container")
@@ -80,10 +98,14 @@ func TestManagerLifecycle(t *testing.T) {
 	if err := harness.ManagerHandle(t, ctx, cluster, "replacement").Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
+	requireRemoved("replacement", replacement.GetContainerID())
 	checkMap("b")
 	managerLifecycleRBDReady(t, ctx, cluster)
 	if err := harness.ManagerHandle(t, ctx, cluster, "b").Remove(ctx); err == nil {
 		t.Fatal("last manager candidate was removed")
+	}
+	if _, err := docker.ContainerInspect(ctx, b.GetContainerID(), mobycl.ContainerInspectOptions{}); err != nil {
+		t.Fatalf("the refused removal of the last manager candidate did not keep its container: %v", err)
 	}
 	checkMap("b")
 	data, err := cluster.Ceph(ctx, "auth", "ls", "--format", "json")

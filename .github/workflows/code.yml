@@ -142,6 +142,7 @@ jobs:
         run: |
           python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
           python3 -m unittest discover -s scripts/release -p 'test_*.py' -v
+          python3 -m unittest discover -s scripts/desktop -p 'test_*.py' -v
       # Parses every workflow as YAML and resolves reusable-workflow calls,
       # which the regex-based tooling tests above cannot. actionlint does not
       # know job.check_run_id yet.

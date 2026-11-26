@@ -14,9 +14,15 @@ daemons need no privileged mode, host disks, LVM or systemd: each OSD stores
 its data in a sparse BlueStore file inside its container by default. MemStore
 and memory-backed BlueStore are also available for faster disposable fixtures.
 
-Releases follow semantic versioning. Before v1.0.0, a minor release may change
-the API without aliases for the old names. Final release notes are available
-with the [published releases](https://github.com/JSYoo5B/ceph-testcontainers-go/releases).
+Release tags have the semantic versioning form, with one deliberate
+difference from Go module convention: a deprecated public API can be removed
+in a later feature release of the same v1 line once its announced grace
+period has passed, so such a release is a breaking change for code that still
+uses the removed API. The [release guide](docs/contributing/releasing.md#stable-versions-and-public-apis)
+describes the grace period, and the release notes name every removal. Before
+v1.0.0, a minor release may change the API without aliases for the old names.
+Final release notes are available with the
+[published releases](https://github.com/JSYoo5B/ceph-testcontainers-go/releases).
 
 Documentation for a published release is available at its Git tag.
 
@@ -206,6 +212,9 @@ Guides for tasks that span packages:
   full clusters and damaged replicas.
 - [Host network](docs/guides/host-network.md): bridge and host networking, and
   connecting native clients from the test process.
+- [Docker Desktop setup](docs/guides/desktop-setup.md): finding the engine the
+  tests use on macOS and Windows, sizing its VM, and an opt-in script that
+  plans, applies, verifies and undoes the settings.
 - [Regional zones](docs/guides/regional-zones.md): one cluster with logical
   availability zones on a single Docker engine, and delaying or cutting the
   network between the zones.

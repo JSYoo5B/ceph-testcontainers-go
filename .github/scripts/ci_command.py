@@ -6,8 +6,12 @@ A comment line
     /ci run <batch|profile>... [on <release|image set>...]
 
 runs the named runtime batches on the pull request's head commit through
-tagged-runtime.yml. ci-command.yml calls three subcommands, each in its own
-job:
+tagged-runtime.yml. The verbs require, retry and drop take the same
+selection and also change the merge requirements of the pull request, which
+required_ci.py keeps and evaluates: require adds the selection and runs it,
+retry runs a required selection again and drop removes it.
+
+ci-command.yml calls three subcommands, each in its own job:
 
 - authorize reads the issue_comment event and the pull request, and decides
   whether the comment is a command at all, and whether it is accepted: from
@@ -17,7 +21,8 @@ job:
 - select resolves every name against the planner vocabulary of the head
   commit (tag_scenarios.py vocabulary). One unknown name refuses the whole
   command, so a typo never runs a partial selection.
-- report writes the reply and the commit status of the finished run.
+- report writes the reply and the commit status of the finished run. For a
+  required selection the reply starts with the ledger line of its result.
 
 Each command has its own commit status context, named after the comment that
 started it, so a repeated command never shows an earlier command's result.
@@ -45,14 +50,41 @@ FENCE = re.compile(r"[ ]{0,3}(```|~~~)")
 # is refused before it reaches a workflow.
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_./-]{0,127}\Z")
 ALL_RELEASES = "all"
-USAGE = "`/ci run <batch|profile>... [on <release|codename|all>]`"
+# run only adds a run. The other verbs also change what required_ci.py
+# requires of the pull request.
+VERBS = ("run", "require", "retry", "drop")
+REQUIREMENT_VERBS = VERBS[1:]
+USAGE = "`/ci <" + "|".join(VERBS) + "> <batch|profile>... [on <release|codename|all>...]`"
+# A ledger line is the first line of a comment that the workflow's own token
+# wrote. required_ci.py reads the requirements of a pull request from them.
+LEDGER_LINE = re.compile(r"<!-- required-requested-ci (\{.*\}) -->")
+LOGIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}(?:\[bot\])?\Z")
 CONTEXT_PREFIX = "CI command"
 MAX_CONTEXT = 100
 STATES = {"success": "success", "failure": "failure", "cancelled": "error", "skipped": "error"}
+# What a ledger result line may say of a run. Only success satisfies a
+# requirement; a result that is none of the first four is recorded as unknown.
+OUTCOMES = ("success", "failure", "cancelled", "skipped", "unknown")
 
 
 class Refusal(Exception):
     """The comment is a command that is not run; the message is the reply."""
+
+
+def selection_id(names, selectors):
+    """The identity of a selection as it was typed: its names and release
+    selectors, whatever their order. A later head may resolve the same
+    names to other profiles, so the identity never holds resolved ones."""
+    return hashlib.sha256(json.dumps([sorted(set(names)), sorted(set(selectors))]).encode()).hexdigest()[:12]
+
+
+def selection_text(names, selectors):
+    return " ".join(names) + (" on " + " ".join(selectors) if selectors else "")
+
+
+def ledger_line(record):
+    """The comment line that records one change of the requirements."""
+    return "<!-- required-requested-ci " + json.dumps(record, sort_keys=True, separators=(",", ":")) + " -->"
 
 
 def command_lines(body):
@@ -78,9 +110,9 @@ def parse(arguments):
     Names and selectors are separated by blanks or commas. A name or
     selector given twice is kept once and reported."""
     tokens = [token for token in re.split(r"[\s,]+", arguments.strip()) if token]
-    if not tokens or tokens[0] != "run":
+    if not tokens or tokens[0] not in VERBS:
         raise Refusal("Unknown command. Usage: " + USAGE + ".")
-    tokens = tokens[1:]
+    verb, tokens = tokens[0], tokens[1:]
     if tokens.count("on") > 1:
         raise Refusal("`on` may appear only once. Usage: " + USAGE + ".")
     names, selectors = (tokens[:tokens.index("on")], tokens[tokens.index("on") + 1:]) if "on" in tokens else (tokens, [])
@@ -95,14 +127,16 @@ def parse(arguments):
                       + ". Names use letters, digits, `_`, `.`, `/` and `-`.")
     unique = lambda values: list(dict.fromkeys(values))
     duplicates = sorted({token for token in names + selectors if (names + selectors).count(token) > 1})
-    return {"names": unique(names), "selectors": unique(selectors), "duplicates": duplicates}
+    return {"verb": verb, "names": unique(names), "selectors": unique(selectors), "duplicates": duplicates,
+            "id": selection_id(names, selectors)}
 
 
 def authorize(event, pull):
     """Decide what to do with an issue_comment event.
 
     Returns command (whether the comment is a command at all), accepted, and
-    either the request or the refusal reply. Comments that are not commands,
+    either the request or the refusal reply. Every verb has the same
+    authorization. Comments that are not commands,
     edits, comments on issues and comments by bots are ignored silently."""
     ignored = {"command": False, "accepted": False}
     issue, comment = event.get("issue") or {}, event.get("comment") or {}
@@ -138,11 +172,14 @@ def authorize(event, pull):
         sha = (pull.get("head") or {}).get("sha", "")
         if not re.fullmatch(r"[0-9a-f]{40}", sha):
             raise Refusal("The pull request's head commit could not be read.")
+        login = (comment.get("user") or {}).get("login", "")
+        if not isinstance(login, str) or not LOGIN.fullmatch(login):
+            raise Refusal("The comment's author could not be read.")
     except Refusal as refusal:
         decision["reply"] = refusal.args[0]
         return decision
-    decision.update(accepted=True, sha=sha, request={**request, "sha": sha, "pull": issue["number"],
-                                                        "comment_id": comment_id})
+    decision.update(accepted=True, sha=sha, verb=request["verb"],
+                    request={**request, "sha": sha, "pull": issue["number"], "comment_id": comment_id, "by": login})
     return decision
 
 
@@ -201,20 +238,36 @@ def status_context(comment, names, releases, digest):
     return context
 
 
-def report(command, validate, validate_result, runtime_result, run_url):
+def report(command, validate, validate_result, runtime_result, run_url, register=None, register_result=""):
     """The reply and the commit status of a finished command run.
 
-    command and validate are the outputs of those jobs; a status is set only
-    for a request that passed validation."""
+    command, validate and register are the outputs of those jobs; a status is
+    set only for a request that passed validation and ran. An empty reply
+    posts nothing: Register has already answered.
+
+    The reply to a run of a required selection starts with the ledger line of
+    its result, which names the command and the commit that the run tested."""
     run = " ([run](" + run_url + "))"
     if command.get("accepted") != "true":
         return {"reply": json.loads(command.get("reply") or '""') + run, "state": ""}
-    if validate_result != "success":
-        return {"reply": "Nothing runs: the names could not be validated (" + (validate_result or "not run")
-                + ")." + run, "state": ""}
-    if validate.get("accepted") != "true":
-        return {"reply": json.loads(validate.get("reply") or '""') + run, "state": ""}
     request, sha = json.loads(command["request"]), command["sha"]
+    verb = request.get("verb", "run")
+    required = verb in REQUIREMENT_VERBS
+    if verb != "drop":
+        if validate_result != "success":
+            return {"reply": "Nothing runs: the names could not be validated (" + (validate_result or "not run")
+                    + ")." + (" The requirements of this pull request are unchanged." if required else "") + run,
+                    "state": ""}
+        if validate.get("accepted") != "true":
+            return {"reply": json.loads(validate.get("reply") or '""') + run, "state": ""}
+    if required and (register or {}).get("run") != "true":
+        # Register answers what it decides. Without its answer the command
+        # is not acknowledged, whatever it may have recorded.
+        if register_result == "success":
+            return {"reply": "", "state": ""}
+        return {"reply": "`/ci " + verb + "` is not confirmed: the Register job ended as "
+                + (register_result or "not run") + ". Nothing ran. Read the `Required requested CI` summary of "
+                "this pull request before repeating the command." + run, "state": ""}
     batches, releases = json.loads(validate["batches"]), json.loads(validate["releases"])
     state = STATES.get(runtime_result, "error")
     outcome = {"success": "passed", "failure": "failed", "cancelled": "was cancelled"}.get(
@@ -226,6 +279,13 @@ def report(command, validate, validate_result, runtime_result, run_url):
         lines.append("- Given more than once, run once: " + ", ".join("`" + name + "`" for name in request["duplicates"]))
     if runtime_result == "cancelled":
         lines.append("- A cancelled run is not re-run automatically.")
+    if required:
+        lines.append("- Required selection `" + selection_text(request["names"], request["selectors"])
+                     + "`: this result counts only for " + sha[:12] + " and only while this command is the "
+                     "selection's latest accepted `require` or `retry`.")
+        lines.insert(0, ledger_line({"v": 1, "op": "result", "pull": request["pull"], "id": request["id"],
+                                     "comment": request["comment_id"], "sha": sha, "run": run_url,
+                                     "outcome": runtime_result if runtime_result in OUTCOMES else "unknown"}))
     return {"reply": "\n".join(lines), "state": state,
             "description": ("CI command " + outcome + ": " + str(len(batches)) + " batch(es)")[:140]}
 
@@ -252,6 +312,8 @@ def main(argv=None):
     command.add_argument("--command-outputs", required=True, help="toJSON(needs.command.outputs)")
     command.add_argument("--validate-outputs", default="{}", help="toJSON(needs.validate.outputs)")
     command.add_argument("--validate-result", default="")
+    command.add_argument("--register-outputs", default="{}", help="toJSON(needs.register.outputs)")
+    command.add_argument("--register-result", default="")
     command.add_argument("--runtime-result", default="")
     command.add_argument("--run-url", required=True)
     command.add_argument("--body", required=True, type=Path)
@@ -263,6 +325,7 @@ def main(argv=None):
         decision = authorize(event, pull)
         outputs = {"command": str(decision["command"]).lower(), "accepted": str(decision["accepted"]).lower(),
                    "reply": json.dumps(decision.get("reply", "")), "sha": decision.get("sha", ""),
+                   "verb": decision.get("verb", ""),
                    "request": decision.get("request", {})}
     elif args.command == "select":
         if args.vocabulary.exists():
@@ -275,9 +338,11 @@ def main(argv=None):
                       for key in ("profiles", "releases", "batches", "key", "context")}}
     else:
         decision = report(json.loads(args.command_outputs), json.loads(args.validate_outputs),
-                          args.validate_result, args.runtime_result, args.run_url)
+                          args.validate_result, args.runtime_result, args.run_url,
+                          json.loads(args.register_outputs or "{}"), args.register_result)
         args.body.write_text(decision["reply"] + "\n")
-        outputs = {"state": decision["state"], "description": decision.get("description", "")}
+        outputs = {"state": decision["state"], "description": decision.get("description", ""),
+                   "post": str(bool(decision["reply"])).lower()}
     print(json.dumps(decision, indent=2, sort_keys=True))
     if args.github_output is not None:
         write_outputs(args.github_output, outputs)

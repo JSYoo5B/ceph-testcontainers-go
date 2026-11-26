@@ -51,7 +51,9 @@ Integration tests also need:
   images, and the Ryuk image.
 - The suite is sized for a 4 GiB Docker VM. Tests run one at a time unless
   `CEPH_TEST_PARALLEL` is set (see
-  [Running tests in parallel](#running-tests-in-parallel)).
+  [Running tests in parallel](#running-tests-in-parallel)). To find the engine
+  your tests use, size a Docker Desktop VM and verify it, see
+  [Docker Desktop setup](../guides/desktop-setup.md).
 
 If testcontainers-go cannot find the Docker Desktop socket:
 
@@ -1036,6 +1038,143 @@ A double shared across packages lives in a test-only package under
 from a public package. Add it to the inventory in the same change when it is
 in a test-only package or when a runtime file gets a new injection seam
 documented as replaced in tests; `testdoublecheck` fails otherwise.
+
+## Checking that a test rejects a wrong result
+
+A rerun that passes shows that a symptom did not recur. It does not show that
+the test fails when the contract it names is broken. For a test that guards an
+event order, an ownership rule or an evidence rule, check that by hand with one
+deliberate fault. This is a review step on a local checkout, not a CI job, and
+its result is a statement about that one test.
+
+### When to use it
+
+Use it when there is a specific reason to doubt one test:
+
+- the same operation fails again after a fix whose test was green;
+- a regression is reported while the test that names the contract passes;
+- a fake, a retry or the final cleanup may produce the result that the test
+  reads: a fake that commits every command before it fails the reply, a poll
+  that repeats until it succeeds, a teardown that removes whatever the
+  operation left behind.
+
+In these cases, check the test before relying on another narrow fix or on a
+clean rerun. First write the contract in one sentence and the suspected blind
+spot in another, for example "a successful `Remove` leaves no container of
+that daemon" and "the test reads only the manager map, and teardown removes
+every container with the owner label". While the blind spot cannot be stated,
+there is nothing to inject: keep diagnosing from the failure message.
+
+The scope is that one suspected gap, at the investigator's discretion.
+Mutation runs over the repository, a kept list of faults, a registration per
+test, a CI job or gate and a periodic audit of every test are not part of it.
+
+### Procedure
+
+1. Name the invariant and the assertion that must fail when it breaks. Run the
+   selected test unmodified with `-count=1` first; a failing baseline ends the
+   check.
+2. Break one thing at a time: a fault that an existing fake offers, an event
+   barrier, or a temporary change of the production check (drop a guard, use a
+   failed read as an empty value, skip a removal). Add a `println` on the
+   changed line, so that the run shows whether the test reached it.
+3. Force the order instead of waiting for it. Hold a callback behind a channel,
+   use a fake's hook at the boundary (`stateHook` of the native target fake
+   fences an instance between its validation and its admission), and run code
+   that only waits on timers and channels in `testing/synctest`. A sleep, or a
+   loop that repeats until a branch was taken, does not select an order. Bound
+   every wait and release every barrier when the test fails.
+4. Classify the run:
+
+   | Result | Condition |
+   | --- | --- |
+   | Detected | The marker was printed and the selected test failed at the assertion of step 1. |
+   | Surviving | The marker was printed and the selected test passed. Run the packages that call the changed code before calling it a gap: a consumer's test may hold the assertion. |
+   | Not reached | The marker was not printed. No selected test drives that path; the fake usually lacks the state that leads there. |
+   | Inconclusive | A build failure, a test that was not selected, another assertion, the deadline of the operation or of the whole test, or a guard test that fails on the marker itself (the lock-contract guards list every call of the functions they cover). |
+
+5. For a gap, add the focused test or the fake state, apply the same fault
+   again and require the failure of step 1. Then remove the fault:
+   `git diff` shows no change outside test files, and the temporary change is
+   never committed.
+6. In a native run, put the fault behind a condition that the test observed
+   on its own (an owned container exists, a daemon generation changed), and
+   make sure a bounded outer cleanup exists before the fault: the cluster's
+   `testcontainers.CleanupContainer` removes every container that carries its
+   owner label. Check the physical effect without the fixture method that
+   reported it, by the identity recorded before the operation
+   (`docker inspect` of a container ID, `docker events` for the order of
+   `create`, `die` and `destroy`). Only Docker's not-found answer is absence;
+   a failed inspection observes neither state. Run the baseline once without
+   and once with the extra recorder, and compare the order of events, not
+   only the verdict.
+
+### What makes a verdict meaningful
+
+A verdict counts only together with its evidence:
+
+- **A passing baseline** of the same selection on the same source, images and
+  engine. Without it a failure under the fault may be the test's own.
+- **Reach evidence.** The marker line of the run shows that the changed line
+  ran. A test that passes without the marker did not exercise the fault; that
+  is "not reached", never "surviving".
+- **The intended assertion.** The failure message is the one named in step 1.
+  A failure elsewhere (a later operation that trips over what the fault left
+  behind, a deadline, a counter on a wrapped handle) shows that something
+  fails; name the assertion that failed and decide whether it states the
+  contract or only happens to depend on it.
+- **One fault per run**, so that the failure belongs to it.
+- **An independent observation at the operation boundary** for a native
+  effect. Ask the engine right after the operation returns and before
+  anything else can remove the resource. An observation after teardown, or
+  one that goes through the fixture method under test, cannot tell a removal
+  by the operation from a removal by the cleanup.
+
+### From the verdict to the fix
+
+The check is part of the ordinary fix, not a separate deliverable.
+
+| Verdict | What follows |
+| --- | --- |
+| Detected | The test guards the contract. Look for the cause of the failure elsewhere; add nothing. |
+| Surviving, not reached | The test has a gap. Add the focused assertion or the fake state (step 5), show with the same fault that it fails at that assertion, and remove the fault. |
+| Inconclusive | Change the fault or the fake until a run can end at the assertion, or record that the fault has no verdict. |
+
+A gap is closed in the pull request of the product fix when there is one. It
+is also worth closing alone: the check can expose a test gap while the
+original intermittent failure stays unexplained. Say so then, and do not
+close the diagnosis of that failure with the new assertion.
+
+### What to keep
+
+Keep the regression assertion or the fake state, committed, and the record of
+the check in the issue or pull request it belongs to: the source commit, the
+selected test and tags, the fault as a diff, the marker line, the expected
+assertion, the verdict and the cleanup result. The fault, the marker and the
+recorder's output are not kept, and the repository holds no list of faults.
+One checked test says nothing about how often other tests miss a defect.
+
+### Example: a removal that leaves its container
+
+The contract is that a successful `ManagerContainer.Remove` leaves no
+container of that manager. The suspected blind spot is that a test which
+reads the manager map, the owned handles and the identities never asks the
+engine, and that the cluster's teardown removes every container with its
+owner label.
+
+- Fault: in `retireManager`, stop the manager's container instead of
+  terminating it, with a marker that prints the container ID. The daemon
+  stops, the map update, the identity deletion and the roster drop proceed,
+  and `Remove` returns nil.
+- Without an engine check, `TestManagerLifecycle` prints the marker and
+  passes. `docker events` shows the removed manager's `die` during the
+  operation and its `destroy` only at teardown: surviving.
+- The assertion that closes the gap is `harness.RequireContainerAbsent` on a Docker
+  inspection by the container ID recorded before `Remove`. Only Docker's
+  not-found answer passes; `TestContainerAbsenceRejectsPresentAndFailedInspection`
+  pins that without Docker.
+- With the same fault the test fails at `still exists after its removal`,
+  and without it the test passes. The fault is then removed.
 
 ## Package layout and the export inventory
 

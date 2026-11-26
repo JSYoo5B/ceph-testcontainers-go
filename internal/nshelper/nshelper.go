@@ -7,10 +7,12 @@ package nshelper
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/netip"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -54,12 +56,27 @@ type Inspector interface {
 	NetworkInspect(context.Context, string, mobycl.NetworkInspectOptions) (mobycl.NetworkInspectResult, error)
 }
 
+// ContainerInspectError identifies an error from the container lookup.
+type ContainerInspectError struct {
+	Err error
+}
+
+func (e *ContainerInspectError) Error() string { return e.Err.Error() }
+func (e *ContainerInspectError) Unwrap() error { return e.Err }
+
+// ContainerNotFound requires a missing-container response from the container
+// lookup itself, independently of subsequent network inspection.
+func ContainerNotFound(err error) bool {
+	var inspection *ContainerInspectError
+	return errors.As(err, &inspection) && errdefs.IsNotFound(inspection.Err)
+}
+
 // Inspect reads container id and its endpoint on network. The network is
 // inspected only when the container has an endpoint on it.
 func Inspect(ctx context.Context, docker Inspector, id, network string) (Target, error) {
 	inspection, err := docker.ContainerInspect(ctx, id, mobycl.ContainerInspectOptions{})
 	if err != nil {
-		return Target{}, err
+		return Target{}, &ContainerInspectError{Err: err}
 	}
 	var target Target
 	if current := inspection.Container.State; current != nil {

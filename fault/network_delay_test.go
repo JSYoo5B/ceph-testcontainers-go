@@ -1387,3 +1387,31 @@ func TestNetworkDelayRefusesMalformedPreflightReports(t *testing.T) {
 		})
 	}
 }
+
+func TestNetworkProfileRestoreUsesOriginalEndpointIdentity(t *testing.T) {
+	for _, loseHelper := range []bool{false, true} {
+		t.Run(map[bool]string{false: "live helper", true: "replace helper"}[loseHelper], func(t *testing.T) {
+			netem := newFakeNetem()
+			cluster, osd := delayCluster(netem)
+			lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, testDelay)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if loseHelper {
+				lease.helper.(*fakeNetemHelper).removed = true
+			}
+			lease.ContainerID, lease.NetworkName, lease.SandboxID = "unrelated", "foreign-network", "another-sandbox"
+			lease.Namespace, lease.Interface, lease.InterfaceIndex = "another-namespace", "other", 999
+			lease.HelperImageID = "sha256:unverified"
+			if status, err := lease.Status(t.Context()); err != nil || !status.Applied || status.Gone || status.Interface != "eth0" {
+				t.Fatalf("edited descriptors changed status: %+v, %v", status, err)
+			}
+			if err := cluster.Terminate(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if netem.root("osd-0") != nil || netem.liveHelpers() != 0 || len(cluster.faultsOf(faulthook.NetworkDelay)) != 0 {
+				t.Fatal("cluster teardown left the original profile or helper")
+			}
+		})
+	}
+}

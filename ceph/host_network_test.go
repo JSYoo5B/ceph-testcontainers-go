@@ -341,6 +341,59 @@ func TestVerifyHostMonitorWrapsSentinel(t *testing.T) {
 	}
 }
 
+func TestVerifyHostMonitorReadHonorsCallerDeadline(t *testing.T) {
+	hold := make(chan struct{})
+	defer close(hold)
+	endpoint := bannerListener(t, func(net.Conn) { <-hold })
+	_, portText, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	err = verifyHostMonitor(ctx, "127.0.0.1", port)
+	if !errors.Is(err, ErrHostNetworkUnavailable) || !errors.Is(err, context.DeadlineExceeded) || time.Since(start) >= time.Second {
+		t.Fatalf("silent MON returned %v after %s", err, time.Since(start))
+	}
+}
+
+func TestProbeBannerRejectsValidResponseAfterCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	accepted := make(chan struct{})
+	send := make(chan struct{})
+	endpoint := bannerListener(t, func(conn net.Conn) {
+		close(accepted)
+		select {
+		case <-send:
+			_, _ = io.WriteString(conn, monitorBanner)
+		case <-t.Context().Done():
+		}
+	})
+	done := make(chan error, 1)
+	go func() { done <- probeBanner(ctx, endpoint, monitorBanner, 5*time.Second) }()
+	select {
+	case <-accepted:
+	case <-time.After(time.Second):
+		t.Fatal("probe never connected")
+	}
+	cancel()
+	close(send)
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("probe accepted a canceled response: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("probe did not return promptly after cancellation")
+	}
+}
+
 func TestDescribeHostNetworkFailureNamesTheLikelyCause(t *testing.T) {
 	for _, test := range []struct{ name, os, daemon, address, want string }{
 		{"Docker Desktop", "Docker Desktop", "unix:///Users/u/.docker/run/docker.sock", "127.0.0.1", "host networking enabled"},

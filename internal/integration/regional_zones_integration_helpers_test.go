@@ -706,6 +706,19 @@ func requirePartitionStat(t *testing.T, ctx context.Context, client testcontaine
 func regionalPartition(t *testing.T, ctx context.Context, top *regionalTopology, paths []regionalPath, base map[string]harness.ZoneRTT) regionalObject {
 	t.Helper()
 	requirePartitionStat(t, ctx, top.clientB, regionalPool, "regional-object-1", regionalObjectSize, false)
+	// The router each cross-zone path leaves through, read before the cut:
+	// CheckZoneCut accepts a failed neighbour resolution of that router only.
+	gateways := map[string]netip.Addr{}
+	for _, p := range paths {
+		if !p.Cross {
+			continue
+		}
+		lookup, err := top.probes[p.From].RouteGet(ctx, p.To.Addr())
+		if err != nil || !lookup.Via.IsValid() {
+			t.Fatalf("%s before the partition: route %+v, %v", p.Name, lookup, err)
+		}
+		gateways[p.Name] = lookup.Via
+	}
 	leases := regionalShape(t, ctx, top, []string{"a", "b"}, fault.NetworkProfile{HelperImage: top.helper, Loss: 100})
 	cutAt := time.Now()
 	regionalLeaseStatus(t, ctx, "partitioned", leases)
@@ -719,7 +732,7 @@ func regionalPartition(t *testing.T, ctx context.Context, top *regionalTopology,
 			t.Fatal(err)
 		}
 		if p.Cross {
-			err = harness.CheckZoneCut(s)
+			err = harness.CheckZoneCut(s, gateways[p.Name])
 		} else {
 			err = harness.CheckZoneControl(base[p.Name], s)
 		}
@@ -1277,6 +1290,68 @@ func regionalContainerName(t *testing.T, ctx context.Context, ctr testcontainers
 		t.Fatal(err)
 	}
 	return strings.TrimPrefix(info.Name, "/")
+}
+
+func testRegionalZoneAttachmentDrift(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
+	defer cancel()
+	cluster := harness.NewRegionalCluster(t, ceph.Run,
+		ceph.WithZoneConfig(harness.RegionalZoneConfig(t)),
+		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithSeparateClusterNetwork()),
+		ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()))
+	client := harness.RegionalClient(t, ctx, cluster, "b")
+	facts, err := ceph.FactsOf(cluster)
+	if err != nil {
+		t.Fatal(err)
+	}
+	docker, err := testcontainers.NewDockerClientWithOpts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = docker.Close() }()
+	id := client.GetContainerID()
+	inspection, err := docker.ContainerInspect(ctx, id, mobycl.ContainerInspectOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inspection.Container.State.Running || inspection.Container.NetworkSettings.Networks[facts.ClusterNetworkName] != nil {
+		t.Fatal("the control needs a running client attached only to the public plane")
+	}
+	profile := fault.NetworkProfile{Plane: ceph.PublicNetworkPlane, HelperImage: harness.NetemImage(t), Delay: regionalOneWay}
+	control := func() {
+		t.Helper()
+		lease, err := fault.ApplyZoneProfile(ctx, cluster, "a", profile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := lease.Restore(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	control()
+	if _, err := docker.NetworkConnect(ctx, facts.ClusterNetworkName, mobycl.NetworkConnectOptions{Container: id}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := docker.ContainerInspect(ctx, id, mobycl.ContainerInspectOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	added := current.Container.NetworkSettings.Networks[facts.ClusterNetworkName]
+	if !current.Container.State.Running || current.Container.State.StartedAt != inspection.Container.State.StartedAt ||
+		added == nil || !added.IPAddress.IsValid() {
+		t.Fatal("the new plane needs an IPv4 endpoint with the original start time")
+	}
+	lease, err := fault.ApplyZoneProfile(ctx, cluster, "a", profile)
+	if lease != nil || err == nil || !strings.Contains(err.Error(), "would bypass the boundary") {
+		t.Fatalf("profile on the public plane after the client joined the cluster plane: lease %v, error %v", lease != nil, err)
+	}
+	if err := client.Stop(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	control()
 }
 
 func testRegionalZonePoolAndVolumeMonitor(t *testing.T) {

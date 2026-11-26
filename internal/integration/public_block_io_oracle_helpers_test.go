@@ -25,6 +25,10 @@ func blockIOExpectedFailure(r ceph.NativeCommandResult) bool {
 		strings.Contains(stderr, "operation timed out")
 }
 
+func blockIORecoveryReadRetryable(r ceph.NativeCommandResult) bool {
+	return r.Complete() && r.ExitCode != 0 && strings.Contains(string(r.Stderr), "(110) Connection timed out")
+}
+
 func checkBlockIOLogWindow(logs io.Reader, prefixBytes int64, prefixHash []byte) error {
 	digest := sha256.New()
 	if _, err := io.CopyN(digest, logs, prefixBytes); err != nil {

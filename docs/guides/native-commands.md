@@ -168,6 +168,10 @@ if err != nil || result.ExitCode != 0 {
   before returning, within `ceph.NativeCommandStopTimeout` (15 seconds)
   independent of `ctx`. A start that Docker delivers after the stop runs
   nothing.
+- If an attached command's output closes first, Docker exit inspection has
+  a separate budget of up to 10 seconds before any stop attempt. Inspection
+  can continue after the caller's context ends. A confirmed terminal exit
+  can settle the command without a separate stop.
 - When the stop cannot be confirmed (container paused or stopped, Docker not
   answering, supervisor killed, for example by the OOM killer), the error is a
   `*ceph.NativeCommandUnstoppedError` and the command may still run. Keep it
@@ -412,7 +416,10 @@ with `override.SetOSDFlag` meanwhile. `TestRADOSErasureCodedOutcomes` in
 
 - `override.SetConfig` writes a central entry with a `Section` and optional
   `Mask` (such as `class:ssd`), including MGR module options such as
-  `mgr/volumes/max_concurrent_clones`.
+  `mgr/volumes/max_concurrent_clones`. For a write, success means Ceph
+  acknowledged it and the exact entry was found at readback. Ceph does not
+  include the normalized request in its acknowledgement. To verify a known
+  native spelling, check the stored value with `Observer.Configuration`.
 - A running MGR keeps a module option whose entry is removed with
   `config rm` until it restarts; only a set, including an empty value, reaches
   its modules. `Restore` of a `mgr/` option that was absent therefore stores
@@ -687,6 +694,36 @@ stats, err := gateways[0].Admin(ctx, "bucket", "stats", "--bucket", "photos")
   `reshard process`, a deadline that fits it. When the deadline is near, the
   gateway's supervisor stops `radosgw-admin` and Admin reports that it was
   stopped; the command is never repeated.
+- A command that hangs uses its whole deadline, so give each command a
+  context with its own bound instead of the test's. The supervisor stops the
+  command with SIGABRT, and the error then says where it waited: `radosgw-admin
+  still ran after 105s and was stopped; when it was stopped, thread
+  radosgw-admin was in ...`, followed by the first frames of that thread
+  (function names of the binary, without arguments or addresses).
+- The same error says what that thread had asked of RADOS and did not get,
+  from the events of the command's RADOS client that Ceph dumps on the
+  signal. `through client.4440 the signalled thread submitted 12 requests in
+  them, 1 without a reply: tid 12 [call rgw.bucket_list] of .dir.<id>.3 in
+  @6 to pg 6.2 on osd.0 at 04:33:24.801` names each request that has no
+  reply (`to no OSD` is one without a target in the command's OSD map; after a
+  resend the placement group and OSD are those of the latest send);
+  `0 without a reply` means that the thread waits for something else. Then
+  come the thread's last events, which give the OSD map epoch each request
+  was computed for, and what the other threads logged for these requests
+  (the reply with its result, a laggy mark) and the OSD maps received
+  since. The latest events alone would be the five-second watch pings. All
+  parts are bounded. The name of an object in an access key or Swift key
+  namespace is the key's identifier, and many events name an object without
+  its namespace. So an event's text is shown only when it cannot name a key
+  object: a kind of event without an object name, one that has the locator
+  next to the name, or a reply to a request whose submission is among the
+  events. Any other event reads `an event whose text may name an object`,
+  `an event of a key object` or `an event of request N, which was submitted
+  before these events`. To have this, every `radosgw-admin` of the gateway
+  runs with `--debug-objecter=0/20` and `--log-max-recent=10000`: the events
+  stay in the command's memory, and a command that ends normally writes none
+  of them. An argument of yours for one of these options comes later and
+  wins.
 
 Commands that RGW tests commonly need:
 

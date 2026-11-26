@@ -255,7 +255,7 @@ var bootstrapRecordCallers = map[string]stateCaller{
 	"adminClient":                      {"free", []string{"clones"}},
 	"currentMonitorBootstrapAddresses": {"free", []string{"templateAndConfirmed"}},
 	"newOSDLaunchRecipe":               {"free", []string{"launchStrings"}},
-	"refreshMonitorConfigAfterRemoval": {"free", []string{"publishConfig", "template"}},
+	"refreshMonitorConfigAfterRemoval": {"free", []string{"publishConfig", "templateAndConfirmed"}},
 	"configureDefaultCRUSHRoot":        {"free", []string{"applyDefaultCRUSHRule"}},
 	"evidenceInventory":                {"free", []string{"diagnosticKeyring"}},
 	"fullRatiosSession":                {"free", []string{"identity"}},

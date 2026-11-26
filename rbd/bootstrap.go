@@ -54,7 +54,8 @@ func (b *poolsBootstrap) Start(ctx context.Context, c *ceph.Container) error {
 // initializes their RBD metadata. Application defaults to rbd and must not be
 // another application; erasure-coded data pools are created with
 // ceph.ClusterConfig.WithPools and referenced as an image's data pool. Repeated options replace the list, and
-// passing the option replaces the default rbd pool of Run. The other
+// passing the option replaces the default rbd pool of Run. An empty list
+// selects no pools for RBD bootstrap. The other
 // ceph.PoolConfig fields keep their ceph meaning: a zero PGNum selects 8 PGs
 // with the autoscaler off, zero Replicas and MinSize select the cluster
 // defaults (2/1, or 1/1 with one OSD), and the placement fields are

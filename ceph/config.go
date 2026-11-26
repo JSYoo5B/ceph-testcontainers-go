@@ -94,16 +94,21 @@ func findConfigEntry(entries []ConfigEntry, setting ConfigSetting) *ConfigEntry 
 
 // decodeConfiguration decodes the output of config dump.
 func decodeConfiguration(data []byte) ([]ConfigEntry, error) {
-	var entries []ConfigEntry
-	if err := json.Unmarshal(data, &entries); err != nil || entries == nil {
+	var rows []struct {
+		ConfigEntry
+		StoredValue *string `json:"value"`
+	}
+	if err := json.Unmarshal(data, &rows); err != nil || rows == nil {
 		return nil, errors.New("decode central Ceph configuration")
 	}
+	entries := make([]ConfigEntry, 0, len(rows))
 	seen := make(map[string]bool)
-	for _, entry := range entries {
+	for _, row := range rows {
+		entry := row.ConfigEntry
 		// Native module options contain paths, and arbitrary stored string values
 		// need not satisfy the input restrictions of this fixture's setters.
 		setting, err := normalizeConfigSetting(ConfigSetting{Section: entry.Section, Mask: entry.Mask, Name: entry.Name})
-		if err != nil || setting.Mask != entry.Mask || setting.Name != entry.Name {
+		if err != nil || setting.Mask != entry.Mask || setting.Name != entry.Name || row.StoredValue == nil {
 			return nil, errors.New("invalid stored Ceph configuration entry")
 		}
 		key := configOverrideKey(setting)
@@ -111,6 +116,8 @@ func decodeConfiguration(data []byte) ([]ConfigEntry, error) {
 			return nil, errors.New("duplicate stored Ceph configuration entry")
 		}
 		seen[key] = true
+		entry.Value = *row.StoredValue
+		entries = append(entries, entry)
 	}
 	return entries, nil
 }

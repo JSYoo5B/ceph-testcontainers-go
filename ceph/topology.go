@@ -42,11 +42,12 @@ type MonitorContainer struct {
 // ManagerContainer is an owned active or standby manager.
 type ManagerContainer struct {
 	testcontainers.Container
-	DaemonName string
-	owner      *Container
-	authOwned  bool
-	terminated bool
-	image      string
+	DaemonName  string
+	owner       *Container
+	authOwned   bool
+	authPending bool
+	terminated  bool
+	image       string
 }
 
 var daemonNamePattern = naming.DaemonName
@@ -61,17 +62,16 @@ func daemonName(index int) string {
 // ensureControlPlane is called while topology holds c.mu. Separating CLI from
 // MON a keeps topology operations available when that quorum member is stopped.
 func (c *Container) ensureControlPlane(ctx context.Context) error {
-	if c.controlPlane.current() != nil {
-		return nil
-	}
-	ctr, err := testcontainers.Run(ctx, c.settings.essentialImage, append([]testcontainers.ContainerCustomizer{c.adminClient(), c.quorumMember("control"), c.startup.ownedLabel(),
-		WithIdleEntrypoint(),
-		testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"}))},
-		c.runDir.mounts()...)...)
-	if ctr != nil {
-		c.controlPlane.publish(ctr)
-	}
-	return err
+	return c.controlPlane.ensure(ctx, func() (testcontainers.Container, error) {
+		ctr, err := testcontainers.Run(ctx, c.settings.essentialImage, append([]testcontainers.ContainerCustomizer{c.adminClient(), c.quorumMember("control"), c.startup.ownedLabel(),
+			WithIdleEntrypoint(),
+			testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"}))},
+			c.runDir.mounts()...)...)
+		if ctr == nil {
+			return nil, err
+		}
+		return ctr, err
+	})
 }
 
 // monitorsLocked lists the owned MONs. The caller holds c.mu.
@@ -448,6 +448,11 @@ func (c *Container) lockTopology(ctx context.Context) error {
 // reads are polled here; membership is never mutated or daemons restarted. Each
 // config is read through Docker's archive API, which also works when stopped.
 func (t monitorTopology) refreshMonitorConfigAfterRemoval(ctx context.Context, removedName string) error {
+	template, confirmed := t.bootstrap.templateAndConfirmed()
+	fsid, err := monitorConfigClusterIdentity(template)
+	if err != nil || !confirmed {
+		return errors.New("ceph original bootstrap identity is unavailable")
+	}
 	var status QuorumStatus
 	if err := clusterutil.Poll(ctx, func() (bool, error) {
 		if err := ctx.Err(); err != nil {
@@ -459,6 +464,9 @@ func (t monitorTopology) refreshMonitorConfigAfterRemoval(ctx context.Context, r
 		}
 		if len(current.MonMap.Mons) == 0 || len(current.QuorumNames) <= len(current.MonMap.Mons)/2 {
 			return false, errors.New("monitor membership has no majority quorum")
+		}
+		if current.MonMap.FSID != fsid {
+			return false, errors.New("ceph native monmap FSID differs from the original cluster")
 		}
 		if _, err := monitorBootstrapAddresses(current); err != nil {
 			return false, err
@@ -482,7 +490,6 @@ func (t monitorTopology) refreshMonitorConfigAfterRemoval(ctx context.Context, r
 	if err != nil {
 		return err
 	}
-	template := t.bootstrap.template()
 	template, err = replaceGlobalMonitorHost(template, addresses)
 	if err != nil {
 		return fmt.Errorf("refresh future client configuration: %w", err)
@@ -805,6 +812,11 @@ func monitorConfigComment(line string) (int, error) {
 // created and returns no handle. Options
 // are validated before the topology lock is taken or any identity is created.
 //
+// If identity creation loses its reply, AddManager returns a partial handle.
+// A later call with the same name resumes that owned attempt after checking
+// the native identity; a foreign identity found before the first attempt is
+// still refused. Terminate also owns the partial attempt.
+//
 // It never forces the active role away from a running manager, and success
 // does not mean every MGR module is ready; use Observer.WaitMGRModuleReady or
 // Observer.WaitForClean. On an AddressDualStack cluster it then checks the active MGR's
@@ -852,12 +864,16 @@ func (c *Container) AddManager(ctx context.Context, name string, opts ...DaemonO
 // when the error came before it was owned.
 func (t monitorTopology) startManager(ctx context.Context, name string, launch managerLaunch) (*ManagerContainer, error) {
 	image, daemonImage := launch.image, launch.image
-	if t.roster.manager(name) != nil {
+	mgr := t.roster.manager(name)
+	if mgr != nil && (!mgr.authPending || mgr.Container != nil) {
 		return nil, fmt.Errorf("manager %s is already owned", name)
+	}
+	if mgr != nil && mgr.image != image {
+		return mgr, invalid(fmt.Errorf("manager %s retry must keep its original image", name))
 	}
 	data, err := authStore{t.conn}.clientCommand(ctx, "check manager identity", "auth", "ls", "--format", "json")
 	if err != nil {
-		return nil, err
+		return mgr, err
 	}
 	var identities struct {
 		AuthDump []struct {
@@ -865,31 +881,43 @@ func (t monitorTopology) startManager(ctx context.Context, name string, launch m
 		} `json:"auth_dump"`
 	}
 	if err := json.Unmarshal(data, &identities); err != nil || identities.AuthDump == nil {
-		return nil, errors.New("decode manager identity listing")
+		return mgr, errors.New("decode manager identity listing")
 	}
+	identityPresent := false
 	for _, identity := range identities.AuthDump {
 		if identity.Entity == "mgr."+name {
-			return nil, invalid(fmt.Errorf("manager identity mgr.%s already exists", name))
+			identityPresent = true
+			if mgr == nil {
+				return nil, invalid(fmt.Errorf("manager identity mgr.%s already exists", name))
+			}
 		}
 	}
 	status, err := readManagerStatus(ctx, t.conn.ceph)
 	if err != nil {
-		return nil, err
+		return mgr, err
 	}
 	if _, registered := managerMapGID(status, name); registered {
-		return nil, fmt.Errorf("manager %s is already registered", name)
+		return mgr, fmt.Errorf("manager %s is already registered", name)
 	}
 	if launch.release != "" {
 		if daemonImage, err = t.probeManagerRelease(ctx, launch); err != nil {
-			return nil, err
+			return mgr, err
 		}
 	}
-	key, err := authStore{t.conn}.clientCommand(ctx, "create manager identity", "auth", "get-or-create", "mgr."+name, "mon", "allow profile mgr", "osd", "allow *", "mds", "allow *")
-	if err != nil {
-		return nil, err
+	if mgr == nil {
+		mgr = &ManagerContainer{DaemonName: name, owner: t.owner, authOwned: true, authPending: true, image: image}
+		t.roster.addManager(name, mgr)
 	}
-	mgr := &ManagerContainer{DaemonName: name, owner: t.owner, authOwned: true, image: image}
-	t.roster.addManager(name, mgr)
+	var key []byte
+	if identityPresent {
+		key, err = authStore{t.conn}.clientCommand(ctx, "read manager identity", "auth", "get", "mgr."+name)
+	} else {
+		key, err = authStore{t.conn}.clientCommand(ctx, "create manager identity", "auth", "get-or-create", "mgr."+name, "mon", "allow profile mgr", "osd", "allow *", "mds", "allow *")
+	}
+	if err != nil {
+		return mgr, err
+	}
+	mgr.authPending = false
 	if err := t.osds.clearSocket(ctx, "mgr."+name); err != nil {
 		return mgr, err
 	}

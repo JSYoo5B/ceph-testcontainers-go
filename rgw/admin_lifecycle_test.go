@@ -34,7 +34,8 @@ import (
 type hostGateway struct {
 	testcontainers.Container
 	dir string
-	// ignoreTerm makes radosgw-admin ignore SIGTERM.
+	// ignoreTerm makes radosgw-admin ignore both stop signals: SIGTERM,
+	// and SIGABRT, the first signal at the supervisor's own limit.
 	ignoreTerm bool
 	// launch, when set, holds the start of each supervisor exec until it is
 	// closed, which still starts it after the caller's context ended, as an
@@ -49,7 +50,7 @@ type hostGateway struct {
 }
 
 const hostRadosgwAdmin = `#!/bin/sh
-[ -n "$TC_IGNORE_TERM" ] && trap '' TERM
+[ -n "$TC_IGNORE_TERM" ] && trap '' TERM ABRT
 echo $$ > "$TC_PID_FILE.tmp"
 mv "$TC_PID_FILE.tmp" "$TC_PID_FILE"
 exec sleep 30
@@ -194,7 +195,7 @@ func TestRGWAdminStopsItsCommandWhenTheCallerCancels(t *testing.T) {
 	}
 }
 
-func TestRGWAdminStopsACommandThatIgnoresSIGTERMWithinAShortDeadline(t *testing.T) {
+func TestRGWAdminStopsACommandThatIgnoresItsStopSignalsWithinAShortDeadline(t *testing.T) {
 	gateway, ctr := newHostGateway(t)
 	ctr.ignoreTerm = true
 	ctx, cancel := context.WithTimeout(t.Context(), 1500*time.Millisecond)

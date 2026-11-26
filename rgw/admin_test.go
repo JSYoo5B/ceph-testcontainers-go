@@ -40,6 +40,9 @@ type rgwAdminTestContainer struct {
 	// limits holds the supervisor's own stop limit, in seconds, of each
 	// supervised call in calls.
 	limits []string
+	// signals holds the deadline signal that each supervised call asked
+	// its supervisor for, "" for none.
+	signals []string
 	// stopped makes State report an exited container; paused and restarting
 	// report a container whose Running flag stays true but refuses Exec.
 	stopped, paused, restarting bool
@@ -56,7 +59,7 @@ func (ctr *rgwAdminTestContainer) State(context.Context) (*container.State, erro
 	return &container.State{Running: !ctr.stopped, Paused: ctr.paused, Restarting: ctr.restarting}, nil
 }
 
-func (ctr *rgwAdminTestContainer) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+func (ctr *rgwAdminTestContainer) Exec(_ context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
 	if gwtest.IsCancel(args) {
 		if ctr.stopFailures > 0 {
 			ctr.stopFailures--
@@ -70,6 +73,17 @@ func (ctr *rgwAdminTestContainer) Exec(_ context.Context, args []string, _ ...tc
 			return ctr.supervisorExit, nil, nil
 		}
 		ctr.limits = append(ctr.limits, args[5])
+		options := tcexec.NewProcessOptions(nil)
+		for _, opt := range opts {
+			opt.Apply(options)
+		}
+		signal := ""
+		for _, variable := range options.ExecConfig.Env {
+			if value, ok := strings.CutPrefix(variable, "TC_SUPERVISED_DEADLINE_SIGNAL="); ok {
+				signal = value
+			}
+		}
+		ctr.signals = append(ctr.signals, signal)
 	}
 	args = gwtest.Argv(args)
 	if ctr.onExec != nil {
@@ -129,7 +143,7 @@ func TestRGWAdminPreservesDeclaredScopeAndConnection(t *testing.T) {
 	if _, err := gateway.Admin(t.Context(), "zone", "get"); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"radosgw-admin", "--conf", "/etc/ceph/ceph.conf", "--keyring", "/etc/ceph/ceph.client.admin.keyring",
+	want := []string{"radosgw-admin", "--debug-objecter=0/20", "--log-max-recent=10000", "--conf", "/etc/ceph/ceph.conf", "--keyring", "/etc/ceph/ceph.client.admin.keyring",
 		"--rgw-realm", "realm-a", "--rgw-zonegroup", "group-a", "--rgw-zone", "zone-a", "--osd-pool-default-pg-num", "1", "--osd-pool-default-pgp-num", "0",
 		"--format", "json", "zone", "get"}
 	if !slices.Equal(ctr.calls[0], want) {
@@ -224,7 +238,7 @@ func TestRGWUserCreationRejectsExistingIdentityAndKeepsPartialCapsFailure(t *tes
 			t.Fatal("ordinary user acquired global admin or system permissions")
 		}
 	}
-	ctr.responses = []rgwAdminResponse{{data: `["test-user"]`}, {data: native}, {}}
+	ctr.responses = []rgwAdminResponse{{data: `["test-user"]`}, {data: native}, {}, {data: `[]`}}
 	if err := user.Remove(t.Context()); err != nil || !user.base().State.Removed {
 		t.Fatal("capability setup failure prevented removing a confirmed owned identity")
 	}
@@ -407,7 +421,7 @@ func TestRGWRemovalRetainsUserOnFailureAndNeverPurgesData(t *testing.T) {
 	native := rgwAdminFixture("test-user", "PRIVATE-SECRET", false, Quota{MaxSizeBytes: -1, MaxObjects: -1})
 	gateway, ctr := newRGWAdminTestGateway(Config{},
 		rgwAdminResponse{data: `["test-user"]`}, rgwAdminResponse{data: native}, rgwAdminResponse{data: "user still owns buckets PRIVATE-SECRET", code: 1}, rgwAdminResponse{data: `["test-user"]`},
-		rgwAdminResponse{data: native}, rgwAdminResponse{data: `["test-user"]`}, rgwAdminResponse{data: native}, rgwAdminResponse{})
+		rgwAdminResponse{data: native}, rgwAdminResponse{data: `["test-user"]`}, rgwAdminResponse{data: native}, rgwAdminResponse{}, rgwAdminResponse{data: `[]`})
 	user := rgwAdminOwnedTestUser(gateway)
 	if err := user.Remove(t.Context()); err == nil || user.base().State.Removed {
 		t.Fatal("failed user removal lost its handle")
@@ -418,7 +432,7 @@ func TestRGWRemovalRetainsUserOnFailureAndNeverPurgesData(t *testing.T) {
 	if err := user.Remove(t.Context()); err != nil || !user.base().State.Removed {
 		t.Fatal("empty owned user could not be removed")
 	}
-	if err := user.Remove(t.Context()); err != nil || len(ctr.calls) != 8 {
+	if err := user.Remove(t.Context()); err != nil || len(ctr.calls) != 9 {
 		t.Fatal("repeat removal was not idempotent")
 	}
 	for _, args := range ctr.calls {
@@ -457,5 +471,57 @@ func TestRGWUserConfigRejectsInvalidIdentityAndCapabilities(t *testing.T) {
 		if _, err := normalizeRGWUserConfig(config); err == nil {
 			t.Fatalf("invalid user configuration accepted: %v", config)
 		}
+	}
+}
+
+func TestRGWRemovalWaitsForUnstoppedDeletion(t *testing.T) {
+	for _, present := range []bool{false, true} {
+		t.Run(fmt.Sprintf("present after settle=%t", present), func(t *testing.T) {
+			native := rgwAdminFixture("test-user", "PRIVATE-SECRET", false, Quota{MaxSizeBytes: -1, MaxObjects: -1})
+			responses := []rgwAdminResponse{{data: `["test-user"]`}, {data: native}, {err: errors.New("lost remove reply")}}
+			if present {
+				responses = append(responses, rgwAdminResponse{data: `["test-user"]`}, rgwAdminResponse{data: native}, rgwAdminResponse{})
+			}
+			responses = append(responses, rgwAdminResponse{data: `[]`})
+			gateway, ctr := newRGWAdminTestGateway(Config{}, responses...)
+			ctr.stopFailures = 2
+			user := rgwAdminOwnedTestUser(gateway)
+			var pending *ceph.NativeCommandUnstoppedError
+			if err := user.Remove(t.Context()); !errors.As(err, &pending) || user.base().State.Removed || len(ctr.calls) != 3 {
+				t.Fatalf("initial deletion: %v, commands: %v", err, ctr.calls)
+			}
+			copy := *user
+			if err := copy.Remove(t.Context()); err == nil || len(ctr.calls) != 3 {
+				t.Fatalf("issued an observation or deletion before settlement: %v, commands: %v", err, ctr.calls)
+			}
+			if err := copy.Remove(t.Context()); err != nil || !user.base().State.Removed || len(ctr.calls) != len(responses) ||
+				!slices.Contains(ctr.calls[len(ctr.calls)-1], "list") {
+				t.Fatalf("settled deletion: %v, commands: %v", err, ctr.calls)
+			}
+		})
+	}
+}
+
+func TestRGWRemovalRequiresAbsenceAfterSuccessfulReply(t *testing.T) {
+	native := rgwAdminFixture("test-user", "PRIVATE-SECRET", false, Quota{MaxSizeBytes: -1, MaxObjects: -1})
+	gateway, ctr := newRGWAdminTestGateway(Config{},
+		rgwAdminResponse{data: `["test-user"]`}, rgwAdminResponse{data: native}, rgwAdminResponse{}, rgwAdminResponse{data: `["test-user"]`},
+		rgwAdminResponse{data: `[]`})
+	user := rgwAdminOwnedTestUser(gateway)
+	if err := user.Remove(t.Context()); err == nil || !strings.Contains(err.Error(), "without removing") || user.base().State.Removed || len(ctr.calls) != 4 {
+		t.Fatalf("accepted a false success: %v, commands: %v", err, ctr.calls)
+	}
+	if err := user.Remove(t.Context()); err != nil || !user.base().State.Removed || len(ctr.calls) != 5 {
+		t.Fatalf("did not accept confirmed absence on retry: %v, commands: %v", err, ctr.calls)
+	}
+}
+
+func TestRGWRemovalRejectsIncompleteListingAfterMutation(t *testing.T) {
+	native := rgwAdminFixture("test-user", "PRIVATE-SECRET", false, Quota{MaxSizeBytes: -1, MaxObjects: -1})
+	gateway, _ := newRGWAdminTestGateway(Config{},
+		rgwAdminResponse{data: `["test-user"]`}, rgwAdminResponse{data: native}, rgwAdminResponse{}, rgwAdminResponse{data: `[null]`})
+	user := rgwAdminOwnedTestUser(gateway)
+	if err := user.Remove(t.Context()); err == nil || !strings.Contains(err.Error(), "decode RGW user listing") || user.base().State.Removed {
+		t.Fatalf("incomplete listing was accepted as absence: %v", err)
 	}
 }

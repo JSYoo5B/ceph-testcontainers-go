@@ -32,12 +32,15 @@ func readStatus(ctx context.Context, run cliQuery) (Status, error) {
 }
 
 func readManagerStatus(ctx context.Context, run cliQuery) (ManagerStatus, error) {
-	var status ManagerStatus
 	data, err := run(ctx, "mgr", "dump", "--format", "json")
-	if err == nil {
-		err = json.Unmarshal(data, &status)
+	if err != nil {
+		return ManagerStatus{}, err
 	}
-	return status, err
+	sample, err := decodeManagerMap(data)
+	if err != nil {
+		return ManagerStatus{}, err
+	}
+	return sample.status, nil
 }
 
 func readDaemonAddresses(ctx context.Context, run cliQuery) (DaemonAddresses, error) {

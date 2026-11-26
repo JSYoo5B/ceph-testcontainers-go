@@ -136,7 +136,7 @@ func TestRBDImageWatchIgnoresStatusProseAndReportsAssignment(t *testing.T) {
 	}
 	other := &rbdImageStatusDaemon{running: true, status: receiverTestStatus(link.pair.config.DestinationNamespace, link.pair.config.SourceNamespace, "300", "300", true, []string{"300"})}
 	changeMirror(link, func() {
-		link.roster.daemons = append(link.roster.daemons, &Daemon{Container: other, DaemonName: "b", ClientName: "client.rbd-mirror.tc-other"})
+		link.roster.daemons = append(link.roster.daemons, confirmedRBDImageTestDaemon(other, "b", "client.rbd-mirror.tc-other"))
 		destination.imageStatus = rbdWatchImageStatus("300", "tc-other", "up+replaying", "2026-10-07 00:02:00")
 	})
 	moved := nextImageEvent(t, w)

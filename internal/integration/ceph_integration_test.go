@@ -16,6 +16,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/finalize"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -42,6 +43,23 @@ func TestClusterLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("bootstrap: %s", time.Since(started).Round(time.Millisecond))
+	docker, err := testcontainers.NewDockerClientWithOpts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := docker.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	// Remove reports success only for a container that Docker no longer has.
+	// The engine is asked by the ID recorded before the removal, before the
+	// cluster's teardown can remove a leftover.
+	requireRemoved := func(osd, id string) {
+		t.Helper()
+		_, err := docker.ContainerInspect(ctx, id, mobycl.ContainerInspectOptions{})
+		harness.RequireContainerAbsent(t, osd, id, err)
+	}
 	version, err := cluster.Ceph(ctx, "--version")
 	if err != nil {
 		t.Fatal(err)
@@ -109,9 +127,11 @@ func TestClusterLifecycle(t *testing.T) {
 	if addedPGs.PoolBefore.ID != originalPGs.PoolBefore.ID {
 		t.Fatal("OSD addition replaced original pool")
 	}
+	originalID := original.GetContainerID()
 	if err := original.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
+	requireRemoved(fmt.Sprintf("osd.%d", original.ID), originalID)
 	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -129,9 +149,11 @@ func TestClusterLifecycle(t *testing.T) {
 	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
+	readdedID := readded.GetContainerID()
 	if err := readded.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
+	requireRemoved(fmt.Sprintf("osd.%d", readded.ID), readdedID)
 	if err := harness.ObserveCluster(cluster).WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}

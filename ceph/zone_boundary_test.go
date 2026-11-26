@@ -2,6 +2,7 @@ package ceph
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -208,6 +209,73 @@ func TestZoneBoundaryLeavesOutContainersItNeverEnrolled(t *testing.T) {
 		if err != nil || admitted {
 			t.Errorf("%s: admitted %v, %v; want not admitted without an error", id, admitted, err)
 		}
+	}
+}
+
+func TestZoneBoundaryRejectsAttachmentDriftWithoutRestart(t *testing.T) {
+	for _, tc := range []struct {
+		name, publicAddress, publicEndpoint string
+		clusterPlane                        bool
+		want                                bool
+	}{
+		{"unchanged", "10.0.0.2", "public-old", false, true},
+		{"new address", "10.0.0.7", "public-old", false, false},
+		{"reconnected at the same address", "10.0.0.2", "public-new", false, false},
+		{"additional plane", "10.0.0.2", "public-old", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const id = "member"
+			docker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || !strings.HasSuffix(r.URL.Path, "/containers/"+id+"/json") {
+					t.Errorf("unexpected Docker call %s %s", r.Method, r.URL.Path)
+					http.NotFound(w, r)
+					return
+				}
+				networks := map[string]any{
+					"public": map[string]string{"IPAddress": tc.publicAddress, "EndpointID": tc.publicEndpoint},
+				}
+				if tc.clusterPlane {
+					networks["cluster"] = map[string]string{"IPAddress": "10.1.0.2", "EndpointID": "cluster-new"}
+				}
+				w.Header().Set("Content-Type", "application/json")
+				if err := json.NewEncoder(w).Encode(map[string]any{
+					"Id": id, "Name": "/client",
+					"State":           map[string]any{"Running": true, "StartedAt": "same-start"},
+					"Config":          map[string]any{"Labels": map[string]string{zoneLabel: "a"}},
+					"NetworkSettings": map[string]any{"Networks": networks},
+				}); err != nil {
+					t.Error(err)
+				}
+			}))
+			defer docker.Close()
+			client, err := mobycl.New(mobycl.WithHost("tcp://"+strings.TrimPrefix(docker.URL, "http://")), mobycl.WithAPIVersion("1.51"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = client.Close() }()
+			member := &zoneMemberState{
+				startedAt: "same-start", complete: true, agent: &testcontainers.DockerContainer{},
+				endpoint:    zoneEndpoint{id: id, name: "client", zone: "a", addrs: zoneAddrs("10.0.0.2", "")},
+				endpointIDs: map[NetworkPlane]string{PublicNetworkPlane: "public-old"},
+			}
+			b := &zoneBoundary{
+				settings: zoneSettings{names: []string{"a", "b"}},
+				planes:   map[NetworkPlane]string{PublicNetworkPlane: "public", ClusterNetworkPlane: "cluster"},
+				docker:   &testcontainers.DockerClient{Client: client},
+				enrolled: map[string]*zoneMemberState{id: member},
+			}
+			if admitted, err := b.admittedLocked(t.Context(), id); err != nil || admitted != tc.want {
+				t.Fatalf("admitted %t, err %v, want %t", admitted, err, tc.want)
+			}
+			ctr := &testcontainers.DockerContainer{ID: id}
+			err = b.enroll(t.Context(), ctr)
+			if tc.want && err != nil || !tc.want && (err == nil || !strings.Contains(err.Error(), "stop and start it")) {
+				t.Fatalf("same-start enrollment error %v, want success %t", err, tc.want)
+			}
+			if b.enrolled[id] != member || member.endpoint.addrs[PublicNetworkPlane].String() != "10.0.0.2" {
+				t.Fatal("same-start inspection replaced original cleanup state")
+			}
+		})
 	}
 }
 

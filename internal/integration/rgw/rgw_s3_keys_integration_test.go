@@ -74,7 +74,7 @@ func TestRGWS3KeyRotation(t *testing.T) {
 
 	// A key the test adds natively is not the fixture's: it is never
 	// checked, adopted or removed.
-	data, err := gateway.Admin(ctx, "key", "create", "--uid", owner.ID(), "--key-type", "s3", "--gen-access-key", "--gen-secret")
+	data, err := rgwAdminStep(ctx, gateway, "key", "create", "--uid", owner.ID(), "--key-type", "s3", "--gen-access-key", "--gen-secret")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +210,7 @@ func TestRGWS3KeyRotation(t *testing.T) {
 	remaining.Request(t, ctx, http.MethodDelete, "/"+bucket+"/"+object, nil, http.StatusNoContent)
 	remaining.Request(t, ctx, http.MethodDelete, "/"+bucket+"/after-rotation", nil, http.StatusNoContent)
 	remaining.Request(t, ctx, http.MethodDelete, "/"+bucket, nil, http.StatusNoContent)
-	if _, err := gateway.Admin(ctx, "metadata", "get", "user:"+owner.ID()); err != nil {
+	if _, err := rgwAdminStep(ctx, gateway, "metadata", "get", "user:"+owner.ID()); err != nil {
 		t.Fatalf("read user metadata before removal: %v", err)
 	}
 	if err := owner.Remove(ctx); err != nil {
@@ -219,7 +219,7 @@ func TestRGWS3KeyRotation(t *testing.T) {
 	if err := second.Revoke(ctx); err != nil {
 		t.Fatalf("revoking a key of a removed user: %v", err)
 	}
-	if _, err := gateway.Admin(ctx, "metadata", "get", "user:"+owner.ID()); !errors.Is(err, fs.ErrNotExist) {
+	if _, err := rgwAdminStep(ctx, gateway, "metadata", "get", "user:"+owner.ID()); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("removed user metadata: got %v, want ENOENT", err)
 	}
 	rgwFixtureWaitStatus(t, ctx, nativeS3, "/", http.StatusForbidden)

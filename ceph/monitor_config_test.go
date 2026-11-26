@@ -164,6 +164,34 @@ func TestRefreshMonitorConfigUpdatesEveryOwnedRoleWhileStopped(t *testing.T) {
 	}
 }
 
+func TestRefreshMonitorConfigRejectsUnconfirmedOrForeignIdentityBeforeCopies(t *testing.T) {
+	for _, mutation := range []struct {
+		name  string
+		apply func(*Container, *monitorConfigArchive)
+	}{
+		{"missing original keyring", func(c *Container, _ *monitorConfigArchive) { c.bootstrap.keyring = nil }},
+		{"invalid original fsid", func(c *Container, _ *monitorConfigArchive) { c.bootstrap.config = []byte(monitorConfigOld) }},
+		{"missing native fsid", func(_ *Container, a *monitorConfigArchive) { a.native = []byte(monitorConfigQuorum) }},
+		{"foreign native fsid", func(_ *Container, a *monitorConfigArchive) {
+			a.native = bytes.Replace(a.native, []byte(clientMonitorFSID), []byte(clientMonitorForeignFSID), 1)
+		}},
+	} {
+		t.Run(mutation.name, func(t *testing.T) {
+			cluster, control := newMonitorConfigFixture()
+			daemon := newMonitorConfigArchive("mgr-a", "")
+			cluster.members.roster.addManager("a", &ManagerContainer{Container: daemon, DaemonName: "a"})
+			mutation.apply(cluster, control)
+			before := bytes.Clone(cluster.bootstrap.config)
+			if err := cluster.RefreshMonitorConfig(t.Context()); err == nil {
+				t.Fatal("refresh accepted unconfirmed or foreign identity")
+			}
+			if control.reads != 0 || control.writes != 0 || daemon.reads != 0 || daemon.writes != 0 || !bytes.Equal(cluster.bootstrap.config, before) {
+				t.Fatal("refresh copied configuration or published a template before confirming identity")
+			}
+		})
+	}
+}
+
 func TestMonitorConfigInventorySkipsRemovedAndRetiredHandles(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
@@ -407,11 +435,11 @@ func newMonitorConfigArchive(id, private string) *monitorConfigArchive {
 
 func newMonitorConfigFixture() (*Container, *monitorConfigArchive) {
 	control := newMonitorConfigArchive("control", "[client.admin]\ncontrol_private = retained-only-on-control\n")
-	control.native = []byte(monitorConfigQuorum)
+	control.native = []byte(strings.Replace(monitorConfigQuorum, `"monmap":{`, `"monmap":{"fsid":"`+clientMonitorFSID+`",`, 1))
 	cluster := &Container{
 		Container: control,
 		settings:  options{startupTimeout: time.Second},
-		bootstrap: bootstrapRecord{config: []byte(monitorConfigOld), keyring: []byte("retained-admin-keyring")},
+		bootstrap: bootstrapRecord{config: []byte(strings.Replace(monitorConfigOld, "retained-fsid", clientMonitorFSID, 1)), keyring: []byte("retained-admin-keyring")},
 		fleet:     osdFleetState{osdHandles: osdRegistry{owned: make(map[int]*OSDContainer)}},
 	}
 	return cluster, control

@@ -71,7 +71,7 @@ func (mirror *Container) DirectoryStatus(ctx context.Context, directory string) 
 // directoryStatus is one DirectoryStatus observation of a normalized
 // directory under Container.mu, bounded by ctx including the lock wait. admit,
 // when set, runs first under the lock and refuses the observation with its
-// error; WatchDirectory checks its pinned identities there. Every lock is
+// error; a watch or wait checks its pinned identities there. Every lock is
 // released before it returns.
 func (mirror *Container) directoryStatus(ctx context.Context, directory string, admit func(context.Context) error) (DirectoryStatus, error) {
 	var result DirectoryStatus
@@ -299,16 +299,13 @@ func (mirror *Container) confirmDirectoryUnchanged(ctx context.Context, director
 //
 // It polls for at most four minutes or the caller's deadline and returns the
 // last status with the last query error on timeout (errors.Is(err,
-// context.DeadlineExceeded) holds). A changed filesystem or peer identity fails
-// at once; after recreating the peer, start a new wait.
+// context.DeadlineExceeded) holds). A changed filesystem, peer or directory
+// registration fails at once. Start a new wait after re-registering the path
+// or recreating the peer.
 //
 //purpose:observation
 func (mirror *Container) WaitDirectoryReady(ctx context.Context, directory string) (DirectoryStatus, error) {
-	ctx, cancel := context.WithTimeout(ctx, 4*time.Minute)
-	defer cancel()
-	return waitCephFSObservedDirectory(ctx, time.Second, func(attempt context.Context) (DirectoryStatus, error) {
-		return mirror.DirectoryStatus(attempt, directory)
-	}, func(status DirectoryStatus) bool { return status.Ready })
+	return mirror.waitDirectory(ctx, directory, func(status DirectoryStatus) bool { return status.Ready })
 }
 
 // WaitSnapshotSynced waits for the selected live process to report exactly the
@@ -322,20 +319,40 @@ func (mirror *Container) WaitDirectoryReady(ctx context.Context, directory strin
 // Read the source ID with libcephfs, such as
 // snap_info('/data/.snap/<name>')['id']; the destination's own snapshot ID is a
 // different number, and taking the expected value from LastSyncedSnapshot tests
-// nothing. It waits at most four minutes.
+// nothing. It waits at most four minutes and fails if the directory
+// registration, filesystem or peer is replaced during the wait.
 //
 //purpose:observation
 func (mirror *Container) WaitSnapshotSynced(ctx context.Context, directory string, checkpoint Snapshot) (DirectoryStatus, error) {
 	if checkpoint.ID == 0 || checkpoint.ID > cephFSObservationMaxSnapshotID || checkpoint.Name == "" || checkpoint.Name == "." || checkpoint.Name == ".." || strings.ContainsAny(checkpoint.Name, "/\x00\r\n") {
 		return DirectoryStatus{}, cephFSObserveGuard("CephFS mirror checkpoint requires a source snapshot ID and valid name")
 	}
-	ctx, cancel := context.WithTimeout(ctx, 4*time.Minute)
-	defer cancel()
-	return waitCephFSObservedDirectory(ctx, time.Second, func(attempt context.Context) (DirectoryStatus, error) {
-		return mirror.DirectoryStatus(attempt, directory)
-	}, func(status DirectoryStatus) bool {
+	return mirror.waitDirectory(ctx, directory, func(status DirectoryStatus) bool {
 		return status.Ready && status.LastSyncedSnapshot != nil && *status.LastSyncedSnapshot == checkpoint
 	})
+}
+
+func (mirror *Container) waitDirectory(ctx context.Context, directory string, ready func(DirectoryStatus) bool) (DirectoryStatus, error) {
+	directory, err := normalizeMirrorDirectory(directory)
+	if err != nil {
+		return DirectoryStatus{}, cephFSObserveGuard("CephFS mirror directory must be an absolute path")
+	}
+	if mirror == nil {
+		return DirectoryStatus{}, cephFSObserveGuard("CephFS mirror fixture is unavailable")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 4*time.Minute)
+	defer cancel()
+	pin := directoryObservationPin{mirror: mirror, directory: directory}
+	return waitCephFSObservedDirectory(ctx, time.Second, func(attempt context.Context) (DirectoryStatus, error) {
+		attempt, cancel := context.WithTimeout(attempt, 30*time.Second)
+		defer cancel()
+		return mirror.directoryStatus(attempt, directory, func(ctx context.Context) error {
+			if mirror.closed {
+				return cephFSObserveGuard("the CephFS mirror has been terminated")
+			}
+			return pin.admit(ctx)
+		})
+	}, ready)
 }
 
 func waitCephFSObservedDirectory(ctx context.Context, interval time.Duration, observe func(context.Context) (DirectoryStatus, error), ready func(DirectoryStatus) bool) (DirectoryStatus, error) {
@@ -600,14 +617,17 @@ func decodeCephFSObservedReplay(data []byte, directory string) (cephFSObservedRe
 // own both texts so each caller's diagnostics stay its own; the source is
 // always checked first and a failure stops before the destination is read.
 func (mirror *Container) checkCephFSOriginalFilesystemIdentities(ctx context.Context, readOperation, mismatch string) error {
+	if !mirror.originalDirectoryFilesystemNames() {
+		return cephFSObserveGuard(mismatch)
+	}
 	for _, site := range []struct {
 		name   string
 		id     int
 		poolID int64
 		read   func(context.Context, ...string) ([]byte, error)
 	}{
-		{mirror.SourceFilesystem, mirror.filesystemID, mirror.metadataPoolID, mirror.source.Ceph},
-		{mirror.DestinationFilesystem, mirror.destinationFilesystemID, mirror.destinationMetadataPoolID, mirror.destination.Ceph},
+		{mirror.sourceFilesystem, mirror.filesystemID, mirror.metadataPoolID, mirror.source.Ceph},
+		{mirror.destinationFilesystem, mirror.destinationFilesystemID, mirror.destinationMetadataPoolID, mirror.destination.Ceph},
 	} {
 		data, err := site.read(ctx, "fs", "get", site.name, "--format", "json")
 		if err != nil {

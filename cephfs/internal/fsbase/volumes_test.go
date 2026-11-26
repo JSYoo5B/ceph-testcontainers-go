@@ -33,3 +33,26 @@ func TestVolumeQuotaDecodeAndNativeNameListing(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestVolumeUsageRequiresAMeasuredNumber(t *testing.T) {
+	base := `{"path":"/volumes/owned","created_at":"2026-10-03 00:00:00","data_pool":"data"}`
+	for _, test := range []struct {
+		name, usage string
+		valid       bool
+	}{
+		{"missing", "", false}, {"null", `,"bytes_used":null`, false},
+		{"zero", `,"bytes_used":0`, true}, {"positive", `,"bytes_used":8192`, true},
+		{"negative", `,"bytes_used":-1`, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var raw rawVolumeInfo
+			data := base[:len(base)-1] + test.usage + "}"
+			if err := json.Unmarshal([]byte(data), &raw); err != nil {
+				t.Fatal(err)
+			}
+			if err := validateVolumeInfo(raw); (err == nil) != test.valid {
+				t.Fatalf("usage %s validation error: %v", data, err)
+			}
+		})
+	}
+}

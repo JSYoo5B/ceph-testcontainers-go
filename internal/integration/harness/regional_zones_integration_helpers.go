@@ -108,11 +108,22 @@ func ZoneRouter(t *testing.T, layout ceph.ZoneLayout, zone string) ceph.ZoneEndp
 	return ceph.ZoneEndpoint{}
 }
 
-// zoneProbeScript measures TCP connection setup to a host and port: one SYN
+// ZoneProbeScript measures TCP connection setup to a host and port: one SYN
 // and its SYN-ACK, so each sample is one round trip of the same small packets.
-const zoneProbeScript = `import json, socket, sys, time
+// For an attempt that fails with anything but a timeout it also records, at
+// that moment and in the same network namespace, the errno name, the kernel's
+// route to the host and its neighbour table: what CheckZoneCut needs to tell
+// a failed neighbour resolution from an answer that came over the wire. The
+// record is taken by ip, and stays empty where ip is missing.
+const ZoneProbeScript = `import errno, json, socket, subprocess, sys, time
 host, port, count, timeout, gap = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), float(sys.argv[4]), float(sys.argv[5])
-samples, errors = [], []
+samples, errors, failures = [], [], []
+def ip(*args):
+    try:
+        done = subprocess.run(("ip",) + args, capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError) as e:
+        return "ip did not run: " + str(e)
+    return done.stdout if done.returncode == 0 else "ip exited %d: %s" % (done.returncode, done.stderr.strip())
 for _ in range(count):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.settimeout(timeout)
@@ -122,10 +133,13 @@ for _ in range(count):
         samples.append((time.perf_counter() - start) * 1000.0)
     except OSError as e:
         errors.append(type(e).__name__ + ": " + str(e))
+        if not isinstance(e, TimeoutError):
+            failures.append({"error": len(errors) - 1, "errno": errno.errorcode.get(e.errno, ""),
+                             "route": ip("route", "get", host), "neighbours": ip("neigh", "show")})
     finally:
         s.close()
     time.sleep(gap)
-print(json.dumps({"samples_ms": samples, "errors": errors}))
+print(json.dumps({"samples_ms": samples, "errors": errors, "failures": failures}))
 `
 
 // ZoneProbe is a test helper without capabilities in the network namespace of
@@ -255,16 +269,57 @@ func (p *ZoneProbe) InterfaceBytes(ctx context.Context, addr netip.Addr) (string
 	return "", 0, fmt.Errorf("no counters for %s in /proc/net/dev", iface)
 }
 
+// ParseNeighbour returns the state (REACHABLE, STALE, FAILED and so on) that
+// `ip neigh show` printed for addr on dev, or "" when out has no such entry.
+func ParseNeighbour(out string, addr netip.Addr, dev string) string {
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 4 || fields[1] != "dev" || fields[2] != dev {
+			continue
+		}
+		if entry, err := netip.ParseAddr(fields[0]); err != nil || entry != addr {
+			continue
+		}
+		return fields[len(fields)-1]
+	}
+	return ""
+}
+
+// ZoneConnectFailure is what the probe's kernel reported right after one
+// attempt failed with something other than a timeout. Error is the attempt's
+// index in ZoneRTT.Errors and Errno the errno's name. Route is what
+// `ip route get` printed for the target, Via and Dev its gateway (invalid for
+// an on-link target or when there is no route) and device, and Neighbour the
+// state of the gateway's neighbour entry on Dev, "" without one.
+type ZoneConnectFailure struct {
+	Error     int
+	Errno     string
+	Route     string
+	Via       netip.Addr
+	Dev       string
+	Neighbour string
+}
+
+func (f ZoneConnectFailure) String() string {
+	route, _, _ := strings.Cut(strings.TrimSpace(f.Route), "\n")
+	return fmt.Sprintf("%s, route %q, gateway neighbour %q", f.Errno, strings.TrimSpace(route), f.Neighbour)
+}
+
 // ZoneRTT summarizes one probe run: requested and completed round trips,
 // their median and 10th and 90th percentiles (nearest rank) in
-// milliseconds, and the errors of the failed attempts.
+// milliseconds, the errors of the failed attempts and, for those that did
+// not time out, the kernel state recorded with them.
 type ZoneRTT struct {
 	Requested, OK    int
 	Median, P10, P90 float64
 	Errors           []string
+	Failures         []ZoneConnectFailure
 }
 
 func (s ZoneRTT) String() string {
+	if s.OK == 0 && len(s.Failures) > 0 {
+		return fmt.Sprintf("0/%d %v %v", s.Requested, s.Errors, s.Failures)
+	}
 	if s.OK == 0 {
 		return fmt.Sprintf("0/%d %v", s.Requested, s.Errors)
 	}
@@ -273,7 +328,7 @@ func (s ZoneRTT) String() string {
 
 // ConnectRTT measures count TCP connection setups to target.
 func (p *ZoneProbe) ConnectRTT(ctx context.Context, target netip.AddrPort, count int, timeout time.Duration) (ZoneRTT, error) {
-	out, err := p.Exec(ctx, "python3", "-c", zoneProbeScript, target.Addr().String(), strconv.Itoa(int(target.Port())),
+	out, err := p.Exec(ctx, "python3", "-c", ZoneProbeScript, target.Addr().String(), strconv.Itoa(int(target.Port())),
 		strconv.Itoa(count), strconv.FormatFloat(timeout.Seconds(), 'f', 3, 64), "0.05")
 	if err != nil {
 		return ZoneRTT{}, err
@@ -284,8 +339,14 @@ func (p *ZoneProbe) ConnectRTT(ctx context.Context, target netip.AddrPort, count
 // SummarizeZoneProbe reads the probe script's output for count attempts.
 func SummarizeZoneProbe(count int, out string) (ZoneRTT, error) {
 	var raw struct {
-		Samples []float64 `json:"samples_ms"`
-		Errors  []string  `json:"errors"`
+		Samples  []float64 `json:"samples_ms"`
+		Errors   []string  `json:"errors"`
+		Failures []struct {
+			Error      int    `json:"error"`
+			Errno      string `json:"errno"`
+			Route      string `json:"route"`
+			Neighbours string `json:"neighbours"`
+		} `json:"failures"`
 	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &raw); err != nil {
 		return ZoneRTT{}, fmt.Errorf("probe output %q: %w", out, err)
@@ -294,6 +355,20 @@ func SummarizeZoneProbe(count int, out string) (ZoneRTT, error) {
 		return ZoneRTT{}, fmt.Errorf("probe reported %d samples and %d errors for %d attempts", len(raw.Samples), len(raw.Errors), count)
 	}
 	s := ZoneRTT{Requested: count, OK: len(raw.Samples), Errors: raw.Errors}
+	for i, f := range raw.Failures {
+		if f.Error < 0 || f.Error >= len(raw.Errors) || (i > 0 && f.Error <= raw.Failures[i-1].Error) {
+			return ZoneRTT{}, fmt.Errorf("probe failure record %d names error %d of %d", i, f.Error, len(raw.Errors))
+		}
+		failure := ZoneConnectFailure{Error: f.Error, Errno: f.Errno, Route: f.Route}
+		// A target without a route has no lookup; the record keeps Route.
+		if lookup, err := ParseRouteGet(f.Route); err == nil {
+			failure.Via, failure.Dev = lookup.Via, lookup.Dev
+			if lookup.Via.IsValid() {
+				failure.Neighbour = ParseNeighbour(f.Neighbours, lookup.Via, lookup.Dev)
+			}
+		}
+		s.Failures = append(s.Failures, failure)
+	}
 	for _, sample := range raw.Samples {
 		if sample < 0 || math.IsNaN(sample) || math.IsInf(sample, 0) {
 			return ZoneRTT{}, fmt.Errorf("probe sample %v is not a duration", sample)
@@ -360,17 +435,61 @@ func CheckZoneShaped(base, observed ZoneRTT, added time.Duration) error {
 	return nil
 }
 
-// CheckZoneCut requires one timeout per probe, a result compatible with
-// packet loss. Refusals, resets and routing errors do not show that the
-// partition dropped packets.
-func CheckZoneCut(observed ZoneRTT) error {
+// CheckZoneCut says whether a probe run shows that no packet crossed a
+// boundary that drops: no attempt completed, and each one either timed out or
+// failed because the sender could not resolve its gateway. gateway is the
+// router that the sender's route to the target went through before the cut;
+// the zero Addr accepts timeouts only.
+//
+// A boundary that drops everything a router sends also drops the router's
+// ARP replies. The sender keeps the router's link address until the neighbour
+// entry needs confirming, which no reply can do, so some tens of seconds into
+// the cut the entry fails. The kernel then answers the SYNs that wait for the
+// address with a host-unreachable error of its own, and that connect returns
+// EHOSTUNREACH shortly before its timeout would. No packet left the sender,
+// so this is the same evidence as a timeout.
+//
+// The errno alone does not show that. A router that answers a SYN with ICMP
+// host-unreachable or host-prohibited, and a sender whose route to the target
+// was replaced by an unreachable one, produce the same errno while packets
+// cross or the path has changed. An EHOSTUNREACH attempt therefore counts
+// only with the state recorded at that moment: the target is still routed
+// through gateway, and gateway's neighbour entry is FAILED or INCOMPLETE. A
+// SYN that drew an answer over the wire left through a resolved gateway, so
+// that entry is neither. Refusals, resets, other routing errors and failures
+// without that record do not show that the partition dropped packets.
+func CheckZoneCut(observed ZoneRTT, gateway netip.Addr) error {
 	if observed.Requested <= 0 || observed.OK != 0 || len(observed.Errors) != observed.Requested {
 		return fmt.Errorf("expected %d probe timeouts across the partition, observed %s", observed.Requested, observed)
 	}
-	for _, failure := range observed.Errors {
-		if detail, ok := strings.CutPrefix(failure, "TimeoutError: "); !ok || detail == "" {
-			return fmt.Errorf("probe returned %q instead of timing out across the partition", failure)
+	for i, failure := range observed.Errors {
+		if detail, ok := strings.CutPrefix(failure, "TimeoutError: "); ok && detail != "" {
+			continue
 		}
+		if err := observed.unresolvedGateway(i, gateway); err != nil {
+			return fmt.Errorf("probe returned %q instead of timing out across the partition: %w", failure, err)
+		}
+	}
+	return nil
+}
+
+// unresolvedGateway says whether the failed attempt i is an EHOSTUNREACH that
+// the sender's kernel raised because it could not resolve gateway.
+func (s ZoneRTT) unresolvedGateway(i int, gateway netip.Addr) error {
+	at := slices.IndexFunc(s.Failures, func(f ZoneConnectFailure) bool { return f.Error == i })
+	if at < 0 {
+		return errors.New("the probe recorded no kernel state for it")
+	}
+	f := s.Failures[at]
+	switch {
+	case f.Errno != "EHOSTUNREACH":
+		return fmt.Errorf("%s is not a failed neighbour resolution", f.Errno)
+	case !gateway.IsValid():
+		return errors.New("the path has no gateway whose neighbour entry could have failed")
+	case f.Via != gateway:
+		return fmt.Errorf("the target is no longer routed through %v: %q", gateway, strings.TrimSpace(f.Route))
+	case f.Neighbour != "FAILED" && f.Neighbour != "INCOMPLETE":
+		return fmt.Errorf("the neighbour entry of the gateway %v is %q, so the error came from elsewhere", gateway, f.Neighbour)
 	}
 	return nil
 }

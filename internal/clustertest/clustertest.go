@@ -368,7 +368,7 @@ func (f *StateFake) apply(words []string) {
 		}
 	case len(words) == 4 && words[0] == "osd" && words[1] == "erasure-code-profile" && words[2] == "rm":
 		f.Profiles = slices.DeleteFunc(f.Profiles, func(profile string) bool { return profile == words[3] })
-	case len(words) == 5 && words[0] == "config" && words[1] == "set" && words[3] == "mon_allow_pool_delete":
+	case (len(words) == 5 || len(words) == 6 && words[5] == "--force") && words[0] == "config" && words[1] == "set" && words[3] == "mon_allow_pool_delete":
 		value := words[4]
 		f.AllowDelete = &value
 	case len(words) == 4 && words[0] == "config" && words[1] == "rm" && words[3] == "mon_allow_pool_delete":

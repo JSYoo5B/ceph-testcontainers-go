@@ -20,7 +20,7 @@ func TestCephConnSelectsTheControlContainerThenTheFirstMON(t *testing.T) {
 	if got, err := c.conn().controlContainer(t.Context()); err != nil || got != mon {
 		t.Fatalf("without a control container: %v, %v", got, err)
 	}
-	c.controlPlane.publish(control)
+	c.controlPlane.publish(control, nil)
 	if got := c.conn().cliContainer(); got != control {
 		t.Fatalf("with a control container: %v", got)
 	}

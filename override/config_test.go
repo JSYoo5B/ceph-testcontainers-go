@@ -58,6 +58,38 @@ func TestSetConfigUsesNativeNormalizedValueAndExistingEntry(t *testing.T) {
 	}
 }
 
+func TestSetConfigAcknowledgedWriteWithUnchangedReadback(t *testing.T) {
+	ctr := &configFixture{entries: []ceph.ConfigEntry{{Section: "osd", Name: "osd_recovery_sleep", Value: "1"}}, normalized: "1"}
+	c := newConfigFixture(ctr)
+	setting := ceph.ConfigSetting{Section: "osd", Name: "osd_recovery_sleep", Value: "2"}
+	change, err := SetConfig(t.Context(), c, setting)
+	if err != nil || !change.state.known || change.state.applied != "1" || len(ctr.writes()) != 1 {
+		t.Fatalf("acknowledged command should retain the observed value and its handle: %v", err)
+	}
+	if err := change.Restore(t.Context()); err != nil || len(ctr.writes()) != 1 || len(heldConfig(c)) != 0 {
+		t.Fatalf("unchanged stored value should need no rollback write: %v", err)
+	}
+	setting.Value = "1"
+	change, err = SetConfig(t.Context(), c, setting)
+	if err != nil || len(ctr.writes()) != 1 {
+		t.Fatalf("already-equal request should need no write: %v", err)
+	}
+	if err := change.Restore(t.Context()); err != nil || len(heldConfig(c)) != 0 {
+		t.Fatalf("release the already-equal lease: %v", err)
+	}
+}
+
+func TestSetConfigRefusesMissingRestorationBaseline(t *testing.T) {
+	for _, value := range []string{"", `,"value":null`} {
+		ctr := &configFixture{raw: `[{"section":"osd","name":"debug_osd"` + value + ` }]`}
+		c := newConfigFixture(ctr)
+		setting := ceph.ConfigSetting{Section: "osd", Name: "debug_osd", Value: "2"}
+		if change, err := SetConfig(t.Context(), c, setting); err == nil || change.state.refused == nil || len(ctr.writes()) != 0 || len(heldConfig(c)) != 0 {
+			t.Fatalf("invalid stored value %q reached the setter: %v", value, err)
+		}
+	}
+}
+
 func TestSetConfigPreservesModuleOptionsAndStoredStrings(t *testing.T) {
 	module := ceph.ConfigEntry{Section: "mgr", Name: "mgr/volumes/pause_cloning", Value: "false"}
 	foreign := ceph.ConfigEntry{Section: "client.example", Name: "key", Value: "stored\nstring"}

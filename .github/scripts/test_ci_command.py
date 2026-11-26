@@ -60,9 +60,45 @@ class AuthorizeTests(unittest.TestCase):
                 decision = command.authorize(event(association=association), self.pull)
                 self.assertTrue(decision["accepted"], decision)
                 self.assertEqual(decision["sha"], HEAD)
+                self.assertEqual(decision["verb"], "run")
                 self.assertEqual(decision["request"], {
-                    "names": ["rbd_mirror_bandwidth", "short/network_delay"], "selectors": ["squid"],
-                    "duplicates": [], "sha": HEAD, "pull": 182, "comment_id": COMMENT})
+                    "verb": "run", "names": ["rbd_mirror_bandwidth", "short/network_delay"], "selectors": ["squid"],
+                    "duplicates": [], "sha": HEAD, "pull": 182, "comment_id": COMMENT, "by": "JSYoo5B",
+                    "id": command.selection_id(["short/network_delay", "rbd_mirror_bandwidth"], ["squid"])})
+
+    def test_every_verb_has_the_authorization_and_the_refusals_of_run(self):
+        for verb in command.VERBS:
+            body = "/ci " + verb + " rbd_mirror_bandwidth on squid"
+            with self.subTest(verb=verb):
+                decision = command.authorize(event(body=body), self.pull)
+                self.assertEqual((decision["accepted"], decision["verb"], decision["request"]["verb"]),
+                                 (True, verb, verb))
+                self.assertEqual(decision["request"]["by"], "JSYoo5B")
+                for association in ("CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "NONE", ""):
+                    self.assertIn("owner, member or collaborator", self.refused(event(body=body, association=association)))
+                self.assertIn("forks", self.refused(event(body=body), load("pull-fork.json")))
+                closed = copy.deepcopy(self.pull)
+                closed["state"] = "closed"
+                self.assertIn("open pull requests", self.refused(event(body=body), closed))
+                bot = event(body=body)
+                bot["comment"]["user"]["type"] = "Bot"
+                self.ignored(bot)
+                self.ignored(event(body=body, action="edited"))
+                self.ignored(event(body="> " + body))
+                for bad, expected in ((verb, "names no batch"), (verb + " x on", "needs a release"),
+                                      (verb + " x`y", "Invalid name(s)"), (verb + " x on a on b", "only once")):
+                    self.assertIn(expected, self.refused(event(body="/ci " + bad)))
+                self.assertIn("only one command", self.refused(event(body=body + "\n/ci run x")))
+        for verb in ("required", "Require", "unrequire", "waive", "approve"):
+            with self.subTest(verb=verb):
+                self.assertIn("Unknown command", self.refused(event(body="/ci " + verb + " x")))
+
+    def test_an_author_that_cannot_be_named_is_refused(self):
+        for login in (None, "", "a b", "x`y", "-->", 7):
+            with self.subTest(login=login):
+                payload = event()
+                payload["comment"]["user"]["login"] = login
+                self.assertIn("author could not be read", self.refused(payload))
 
     def test_a_comment_without_an_id_is_refused(self):
         for value in (None, 0, -1, "4000000001", True):
@@ -261,8 +297,10 @@ class SelectTests(unittest.TestCase):
 class ReportTests(unittest.TestCase):
     RUN = "https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/1"
 
-    def accepted(self, duplicates=()):
-        request = {"names": ["network_delay"], "selectors": [], "duplicates": list(duplicates), "sha": HEAD, "pull": 182}
+    def accepted(self, duplicates=(), verb="run"):
+        request = {"verb": verb, "names": ["network_delay"], "selectors": [], "duplicates": list(duplicates),
+                   "sha": HEAD, "pull": 182, "comment_id": COMMENT, "by": "JSYoo5B",
+                   "id": command.selection_id(["network_delay"], [])}
         return ({"command": "true", "accepted": "true", "sha": HEAD, "reply": '""', "request": json.dumps(request)},
                 {"accepted": "true", "reply": '""', "batches": '["short/network_delay"]', "releases": '["20.2.4"]',
                  "profiles": "short-network_delay-0a1b2c3d",
@@ -301,6 +339,70 @@ class ReportTests(unittest.TestCase):
                 no_command_line_starts_a_reply(self, result["reply"])
 
 
+    def test_the_reply_to_a_required_run_starts_with_the_record_of_its_result(self):
+        for verb in ("require", "retry"):
+            accepted, validated = self.accepted(verb=verb)
+            for runtime_result, outcome in (("success", "success"), ("failure", "failure"), ("cancelled", "cancelled"),
+                                            ("skipped", "skipped"), ("", "unknown"), ("neutral", "unknown")):
+                with self.subTest(verb=verb, runtime_result=runtime_result):
+                    result = command.report(accepted, validated, "success", runtime_result, self.RUN,
+                                            {"attempt": "true", "run": "true"}, "success")
+                    first = result["reply"].splitlines()[0]
+                    self.assertEqual(json.loads(command.LEDGER_LINE.fullmatch(first)[1]), {
+                        "v": 1, "op": "result", "pull": 182, "id": command.selection_id(["network_delay"], []),
+                        "comment": COMMENT, "sha": HEAD, "run": self.RUN, "outcome": outcome})
+                    self.assertIn("Required selection `network_delay`", result["reply"])
+                    self.assertEqual(result["state"], command.STATES.get(runtime_result, "error"))
+                    no_command_line_starts_a_reply(self, result["reply"])
+        # An advisory run never writes a record, whatever Register's outputs say.
+        accepted, validated = self.accepted()
+        for register in ({}, {"attempt": "true", "run": "true"}):
+            result = command.report(accepted, validated, "success", "success", self.RUN, register, "skipped")
+            self.assertTrue(result["reply"].startswith("CI command passed on"))
+            self.assertNotIn("required-requested-ci", result["reply"])
+
+    def test_a_command_that_register_answered_gets_no_second_reply(self):
+        for verb in command.REQUIREMENT_VERBS:
+            accepted, validated = self.accepted(verb=verb)
+            with self.subTest(verb=verb):
+                result = command.report(accepted, {} if verb == "drop" else validated,
+                                        "skipped" if verb == "drop" else "success", "skipped", self.RUN,
+                                        {"attempt": "false", "run": "false"}, "success")
+                self.assertEqual(result, {"reply": "", "state": ""})
+
+    def test_a_command_that_register_did_not_finish_is_reported_as_not_confirmed(self):
+        for verb in command.REQUIREMENT_VERBS:
+            accepted, validated = self.accepted(verb=verb)
+            for register_result in ("failure", "cancelled", "skipped", ""):
+                with self.subTest(verb=verb, register_result=register_result):
+                    result = command.report(accepted, {} if verb == "drop" else validated,
+                                            "skipped" if verb == "drop" else "success", "skipped", self.RUN,
+                                            {"attempt": "", "run": ""}, register_result)
+                    self.assertEqual(result["state"], "")
+                    self.assertTrue(result["reply"].startswith("`/ci " + verb + "` is not confirmed"), result["reply"])
+                    self.assertIn(register_result or "not run", result["reply"])
+                    self.assertNotIn("required-requested-ci", result["reply"])
+                    no_command_line_starts_a_reply(self, result["reply"])
+        # A record that Register wrote before it failed stands, and so does
+        # the result of the run it started.
+        accepted, validated = self.accepted(verb="require")
+        result = command.report(accepted, validated, "success", "success", self.RUN,
+                                {"attempt": "true", "run": "true"}, "failure")
+        self.assertTrue(command.LEDGER_LINE.fullmatch(result["reply"].splitlines()[0]))
+
+    def test_validation_refusals_of_requirement_commands_change_nothing(self):
+        for verb in ("require", "retry"):
+            accepted, _ = self.accepted(verb=verb)
+            with self.subTest(verb=verb):
+                result = command.report(accepted, {}, "failure", "skipped", self.RUN, {}, "skipped")
+                self.assertIn("could not be validated", result["reply"])
+                self.assertIn("requirements of this pull request are unchanged", result["reply"])
+                unknown = {"accepted": "false", "reply": json.dumps("Nothing runs. Unknown name(s): `x`.")}
+                result = command.report(accepted, unknown, "success", "skipped", self.RUN, {}, "skipped")
+                self.assertTrue(result["reply"].startswith("Nothing runs. Unknown name(s)"))
+                self.assertEqual(result["state"], "")
+
+
 class MainTests(unittest.TestCase):
     def run_main(self, arguments):
         with tempfile.TemporaryDirectory() as directory:
@@ -317,7 +419,8 @@ class MainTests(unittest.TestCase):
     def test_the_jobs_pass_single_line_outputs_from_one_to_the_next(self):
         authorized, _ = self.run_main(["authorize", "--event", TESTDATA / "comment-pull-request.json",
                                        "--pull", TESTDATA / "pull-same-repository.json"])
-        self.assertEqual((authorized["command"], authorized["accepted"], authorized["sha"]), ("true", "true", HEAD))
+        self.assertEqual((authorized["command"], authorized["accepted"], authorized["sha"], authorized["verb"]),
+                         ("true", "true", HEAD, "run"))
         selected, _ = self.run_main(["select", "--request", authorized["request"],
                                      "--vocabulary", TESTDATA / "vocabulary.json"])
         self.assertEqual((selected["accepted"], selected["releases"]), ("true", '["19.2.5"]'))
@@ -327,8 +430,14 @@ class MainTests(unittest.TestCase):
                                          "--validate-outputs", json.dumps(selected), "--validate-result", "success",
                                          "--runtime-result", "success", "--run-url", "https://example.invalid/run",
                                          "--body", "DIR/reply.md"])
-        self.assertEqual(reported["state"], "success")
+        self.assertEqual((reported["state"], reported["post"]), ("success", "true"))
         self.assertIn("passed on " + HEAD, reply)
+        request = {**json.loads(authorized["request"]), "verb": "drop"}
+        reported, reply = self.run_main(["report", "--command-outputs", json.dumps({**authorized, "request": json.dumps(request)}),
+                                         "--register-outputs", '{"attempt":"false","run":"false"}',
+                                         "--register-result", "success", "--run-url", "https://example.invalid/run",
+                                         "--body", "DIR/reply.md"])
+        self.assertEqual((reported["state"], reported["post"], reply), ("", "false", "\n"))
 
     def test_a_missing_pull_request_or_vocabulary_refuses(self):
         authorized, _ = self.run_main(["authorize", "--event", TESTDATA / "comment-pull-request.json",
@@ -337,7 +446,8 @@ class MainTests(unittest.TestCase):
         self.assertIn("could not be read", json.loads(authorized["reply"]))
         ignored, _ = self.run_main(["authorize", "--event", TESTDATA / "comment-issue.json",
                                     "--pull", "DIR/missing.json"])
-        self.assertEqual((ignored["command"], ignored["accepted"], ignored["sha"]), ("false", "false", ""))
+        self.assertEqual((ignored["command"], ignored["accepted"], ignored["sha"], ignored["verb"]),
+                         ("false", "false", "", ""))
         request = json.dumps({"names": ["network_delay"], "selectors": [], "duplicates": [], "sha": HEAD, "pull": 182,
                               "comment_id": COMMENT})
         selected, _ = self.run_main(["select", "--request", request, "--vocabulary", "DIR/missing.json"])

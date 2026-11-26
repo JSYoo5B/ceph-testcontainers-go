@@ -573,7 +573,22 @@ func (f *Fixture) runGateway(ctx context.Context, image string, cluster *ceph.Co
 		Region: f.realm.zoneGroupName(zone), SkipUserCreation: true,
 	}, f.realm.config.Timing.gatewayOptions(moduleOpts, opts)...)
 	if gateway != nil {
-		f.owned.AddContainer(gateway.Container)
+		if cluster == nil {
+			// A caller-supplied starter without a cluster has no registration.
+			f.owned.AddContainer(gateway.Container)
+		} else {
+			f.owned.AddCleanup("remove RGW gateway", func(cleanupCtx context.Context) error {
+				gateways, err := rgw.Gateways(cleanupCtx, cluster)
+				if err != nil {
+					return err
+				}
+				// RemoveZone may already have removed this exact descriptor.
+				if !slices.Contains(gateways, gateway) {
+					return nil
+				}
+				return gateway.Remove(cleanupCtx)
+			})
+		}
 	}
 	if err != nil {
 		return gateway, fmt.Errorf("run RGW zone %s: %w", zone, err)

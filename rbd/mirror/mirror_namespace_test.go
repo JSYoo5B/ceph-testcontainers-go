@@ -286,9 +286,9 @@ func TestRBDMirrorNamespaceReadRequiresNativeModeUUIDAndRemote(t *testing.T) {
 }
 
 func TestRBDMirrorNamespaceImageEnrollmentAndPoolIdentity(t *testing.T) {
-	client := &rbdEnableFixture{info: `{"features":["exclusive-lock"]}`}
+	client := &rbdEnableFixture{info: `{"name":"volume","id":"source","features":["exclusive-lock"]}`, afterEnable: rbdImageStatusInfo("source", "snapshot", "global", true)}
 	link := &Container{pair: rbdMirrorPair{sourceClient: client, config: Config{Pool: "images", SourceNamespace: "ns-a", Mode: ModeSnapshot}}}
-	if err := link.EnableImage(t.Context(), "volume"); err != nil || len(client.calls) != 2 || client.calls[0][2] != "images/ns-a/volume" || client.calls[1][4] != "images/ns-a/volume" {
+	if err := link.EnableImage(t.Context(), "volume"); err != nil || len(client.calls) != 3 || client.calls[0][2] != "images/ns-a/volume" || client.calls[1][4] != "images/ns-a/volume" || !slices.Equal(client.calls[0], client.calls[2]) {
 		t.Fatalf("enrollment lost source namespace: %v error=%v", client.calls, err)
 	}
 	client.calls = nil
@@ -378,6 +378,8 @@ type rbdNamespacePolicyFixture struct {
 	site         string
 	poolID       int64
 	infoOverride string
+	fsid         string
+	peers        []rbdMirrorPeer
 	falseSuccess bool
 	lostReply    bool
 	beforeInfo   func(*rbdNamespacePolicyFixture, string, int)
@@ -399,6 +401,8 @@ func newRBDNamespacePolicyFixture() *rbdNamespacePolicyFixture {
 func (c *rbdNamespacePolicyFixture) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
 	var data []byte
 	switch {
+	case c.fsid != "" && slices.Equal(args, []string{"ceph", "--connect-timeout", "5", "fsid"}):
+		data = []byte(c.fsid)
 	case slices.Equal(args, []string{"rbd", "help", "mirror", "pool", "enable"}):
 		data = []byte("usage: rbd mirror pool enable [--pool <pool>] [--namespace <namespace>] \n  [--site-name <site-name>] \n")
 		if !c.squidRBD {
@@ -425,6 +429,12 @@ func (c *rbdNamespacePolicyFixture) Exec(_ context.Context, args []string, _ ...
 			policy.SiteName = c.site
 		}
 		data, _ = json.Marshal(policy)
+		if c.peers != nil && !strings.Contains(spec, "/") {
+			data, _ = json.Marshal(struct {
+				nativeRBDMirrorPolicy
+				Peers []rbdMirrorPeer `json:"peers"`
+			}{policy, c.peers})
+		}
 		if c.infoOverride != "" {
 			data = []byte(c.infoOverride)
 		}

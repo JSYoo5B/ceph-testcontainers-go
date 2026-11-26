@@ -766,8 +766,8 @@ func (p *Pool) SetReplication(ctx context.Context, replicas, minSize int) error 
 // the pool's tc-<name>-replicated or tc-<name>-ec CRUSH rule, so a pool that
 // SetPlacement moved to another rule is refused until it moves back;
 // placement rules are not removed. A retry after an error finishes removing
-// whichever owned resources remain. External edits to the pool must not race
-// this call.
+// whichever owned resources remain and settles any pending restoration of
+// mon_allow_pool_delete. External edits to either must not race this call.
 //
 // After a complete removal the handle is stale and every operation through
 // it returns an error, so a later pool that reuses the name is not affected.

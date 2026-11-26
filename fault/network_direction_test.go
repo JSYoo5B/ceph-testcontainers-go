@@ -317,3 +317,32 @@ func TestBothDirectionsPeerPublicationRacesWithRestore(t *testing.T) {
 		t.Fatalf("%d helpers left", netem.liveHelpers())
 	}
 }
+
+func TestInboundRestoreUsesOwnedPeerLeasesAndOriginalFilters(t *testing.T) {
+	netem := newFakeNetem()
+	cluster, osd := directionCluster(netem)
+	delay := testDelay
+	delay.Peer, delay.PeerPort, delay.Direction, delay.Phase = directionPeer, 6800, Inbound, ConnectionSetup
+	lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, delay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer := lease.PeerLeases[0]
+	unrelated, err := cluster.ApplyNetworkProfile(t.Context(), osd, testDelay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = unrelated.Restore(t.Context()) }()
+	lease.PeerLeases[0] = unrelated
+	peer.Peers[0].Port = 7777
+	peer.SourcePorts, peer.Phase = false, AllPackets
+	if status, err := peer.Status(t.Context()); err != nil || !status.Applied {
+		t.Fatalf("edited filter descriptors displaced the native policy: %+v, %v", status, err)
+	}
+	if err := lease.Restore(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if netem.root("osd-1") != nil || netem.root("osd-0") == nil || netem.liveHelpers() != 1 || !peer.complete || unrelated.complete {
+		t.Fatal("edited peer slice changed which profile was restored")
+	}
+}

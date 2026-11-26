@@ -138,14 +138,32 @@ type UserInfo struct {
 // The call is bounded by ctx alone, like Container.Ceph: the cluster's startup
 // timeout bounds bootstrap, readiness and the typed operations, not a native
 // command whose duration the caller chooses, so give ctx the deadline the
-// command needs. No radosgw-admin outlives the call: a small sh supervisor in
-// the gateway container stops the command with SIGTERM, then SIGKILL after
-// 2 s, 15 s before ctx's deadline (at half the remaining time for a short one;
-// ceph.ErrNativeFailure, "radosgw-admin still ran after Ns and was stopped"),
-// when ctx ends first (Admin then stops
-// it under its own budget of about 10 s and returns ctx's error only after the
+// command needs. No radosgw-admin outlives the call: a supervisor in the
+// gateway container stops the command 15 s before ctx's deadline (at half the
+// remaining time for a short one; ceph.ErrNativeFailure, "radosgw-admin still
+// ran after Ns and was stopped"), when ctx ends first (Admin then stops it
+// under its own budget of about 10 s and returns ctx's error only after the
 // command is gone; a call that ends before Docker started the command makes
-// sure it never starts), or when the cluster's Terminate starts. When Admin
+// sure it never starts), or when the cluster's Terminate starts. The stop is
+// SIGTERM, then SIGKILL after 2 s. At the supervisor's own limit the first
+// signal is SIGABRT instead, which makes radosgw-admin report its main
+// thread's backtrace; the error text then also says "when it was stopped,
+// thread radosgw-admin was in" and names the first frames, functions of the
+// binary without arguments or addresses, so that a command that hung says
+// where. It then also says what that thread had asked of RADOS, from the
+// events of the command's RADOS client that Ceph dumps on the signal: how
+// many requests the thread submitted and which have no reply ("through
+// client.N the signalled thread submitted S requests in them, U without a
+// reply: tid T [operations] of OBJECT in LOCATOR to pg PG on osd.M at
+// TIME"), the thread's last events, which give the OSD map epoch of each
+// request, and what the other threads logged for those requests (a reply
+// with its result, a laggy mark) and the OSD maps received since, all
+// bounded in number and length. For that every radosgw-admin of the gateway
+// runs with its RADOS client's events kept in memory at level 20 and with
+// room for 10000 recent events; a command that ends normally writes none of
+// it. The name of an object in an access key or Swift key namespace is left
+// out. Give a command whose normal duration is
+// known a ctx of its own with that bound, not the whole test's. When Admin
 // cannot confirm the stop, for example because the gateway is paused or the
 // engine is unreachable, it returns a *ceph.NativeCommandUnstoppedError whose
 // Stop retries; Terminate retries too. Stopping radosgw-admin does not undo a
@@ -159,7 +177,8 @@ type UserInfo struct {
 // with Exec to see the native text. When radosgw-admin reports a fatal signal, the
 // error text also names the signal, its thread and the first backtrace
 // frames, and says how many bytes of standard output it wrote and whether
-// they are one complete JSON document, never what they say.
+// they are one complete JSON document, never what they say, and ends with
+// the last events of its RADOS client as for a stopped command.
 //
 //purpose:native
 func (g *Gateway) Admin(ctx context.Context, args ...string) ([]byte, error) {
@@ -418,8 +437,9 @@ func (u *User) Suspend(ctx context.Context, suspended bool) error {
 // Ceph refuses ordinary users that still own buckets; remove those through the
 // S3 client first. Account buckets belong to the account and may outlive a root
 // user's removal; removing the account independently refuses a nonempty one.
-// Success is idempotent across copies of a handle. After an uncertain
-// native failure, an absent user is accepted as completed removal; a user still
+// Success requires a native listing that confirms absence and is idempotent
+// across copies of a handle. A removal command that may still be running
+// must stop before a retry can check absence or delete again. A user still
 // present remains tracked and its fixture-created keys are verified before
 // retrying. Removing the user removes all of its keys, so a later Revoke of
 // one of its S3Key handles returns nil.
@@ -447,6 +467,12 @@ func (u *User) Remove(ctx context.Context) error {
 		}
 		user.State.UnstoppedCreate = nil
 	}
+	if pending := user.State.UnstoppedRemove; pending != nil {
+		if err := pending.Stop(ctx); err != nil {
+			return fmt.Errorf("settle the prior RGW user removal: %w", err)
+		}
+		user.State.UnstoppedRemove = nil
+	}
 	g, err := user.Origin.ScopeGateway(ctx)
 	if err != nil {
 		return err
@@ -467,13 +493,21 @@ func (u *User) Remove(ctx context.Context) error {
 	if _, err := g.OwnedUser(ctx, user); err != nil {
 		return err
 	}
-	if _, err := g.UserCommand(ctx, user, "user", "rm", "--uid", user.ID); err != nil {
-		checkCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-		defer cancel()
-		exists, checkErr := g.UserExists(checkCtx, user)
-		if checkErr != nil || exists {
-			return errors.Join(err, checkErr)
+	_, commandErr := g.SupervisedUserCommand(ctx, user, "user", "rm", "--uid", user.ID)
+	if errors.As(commandErr, &user.State.UnstoppedRemove) {
+		return commandErr
+	}
+	checkCtx, cancelCheck := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancelCheck()
+	exists, checkErr := g.UserExists(checkCtx, user)
+	if checkErr != nil {
+		return errors.Join(commandErr, fmt.Errorf("confirm RGW user removal: %w", checkErr))
+	}
+	if exists {
+		if commandErr != nil {
+			return commandErr
 		}
+		return errors.New("RGW answered without removing the user")
 	}
 	user.State.Removed = true
 	return nil

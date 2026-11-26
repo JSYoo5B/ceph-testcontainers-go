@@ -109,7 +109,7 @@ func TestRGWWatchSyncEndsOnPeriodChangeAndTerminate(t *testing.T) {
 
 	f, cli, _, _ = newRGWSyncTestFixture()
 	cli.metadataOutput, cli.humanOutput = rgwReadyMetadata, rgwReadyText
-	w, err = f.WatchSync(t.Context(), syncWatchTestConfig, "destination")
+	w, err = f.WatchSync(t.Context(), syncWatchTestConfig, "source")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,6 +118,28 @@ func TestRGWWatchSyncEndsOnPeriodChangeAndTerminate(t *testing.T) {
 	}
 	if err := w.Stop(); !errors.Is(err, ceph.ErrInvalidRequest) {
 		t.Fatalf("terminated fixture ended with %v", err)
+	}
+}
+
+func TestRGWWatchSyncMetadataMasterSkipsDataComparison(t *testing.T) {
+	f, cli, _, _ := newRGWSyncTestFixture()
+	// A combined sync-status request would fail on this missing data peer.
+	cli.humanOutput = ""
+	w, err := f.WatchSync(t.Context(), syncWatchTestConfig, "source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline := nextSyncEvent(t, w.Events())
+	if !baseline.Ready || !baseline.Status.MetadataMaster || len(baseline.Status.DataSources) != 0 {
+		t.Fatalf("metadata-only baseline: %+v", baseline)
+	}
+	if err := w.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range cli.calls {
+		if syncTestCommand(args, "sync", "status") {
+			t.Fatalf("metadata-only watch read combined data status: %v", args)
+		}
 	}
 }
 

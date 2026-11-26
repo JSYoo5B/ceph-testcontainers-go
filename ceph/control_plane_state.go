@@ -2,6 +2,7 @@ package ceph
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/testcontainers/testcontainers-go"
@@ -22,15 +23,13 @@ import (
 // Container.mu: the only wait inside it is the Docker call that terminate makes
 // for the handle itself, as before.
 //
-// The handle is nil until ensureControlPlane publishes it and after a
-// successful removal in terminate. The guards in control_plane_state_test.go
-// enforce that the field and the lock are used only by this type and the one
-// published lock identity, that the handle has the single production writers
-// publish and terminate, that the methods call only their pinned
-// collaborators, and that the split adds no mutex.
+// The ready handle is used for commands. A handle returned with a start
+// error is retained separately until the retry or cluster termination can
+// remove it. The topology lock serializes ensure and terminate.
 type controlPlaneState struct {
-	mu     sync.RWMutex
-	handle testcontainers.Container
+	mu      sync.RWMutex
+	handle  testcontainers.Container
+	pending testcontainers.Container
 }
 
 // current returns the control container, or nil without one. It takes the
@@ -61,21 +60,39 @@ func (s *controlPlaneState) owns(ctx context.Context, id string) (bool, error) {
 	return ctr != nil && ctr.GetContainerID() == id, nil
 }
 
-// diagnosticHandle returns the control container without ever blocking past
-// ctx, polling the read lock the way the diagnostics snapshot does.
-func (s *controlPlaneState) diagnosticHandle(ctx context.Context) (testcontainers.Container, error) {
+// diagnosticHandles records the CLI and any incomplete startup separately
+// without ever blocking past ctx.
+func (s *controlPlaneState) diagnosticHandles(ctx context.Context) (ready, pending testcontainers.Container, err error) {
 	if err := diagnosticLock(ctx, s.mu.TryRLock); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer s.mu.RUnlock()
-	return s.handle, nil
+	return s.handle, s.pending, nil
 }
 
-// publish stores the control container under the write lock.
-func (s *controlPlaneState) publish(ctr testcontainers.Container) {
+// ensure is called while the topology holds c.mu. Retry removal of any failed
+// start before trying to create another helper.
+func (s *controlPlaneState) ensure(ctx context.Context, start func() (testcontainers.Container, error)) error {
+	if s.current() != nil {
+		return nil
+	}
+	if err := s.terminate(ctx, testcontainers.StopTimeout(terminationStopTimeout)); err != nil {
+		return fmt.Errorf("remove incomplete control container: %w", err)
+	}
+	ctr, err := start()
+	s.publish(ctr, err)
+	return err
+}
+
+// publish stores a ready handle or retains an incomplete one for removal.
+func (s *controlPlaneState) publish(ctr testcontainers.Container, startErr error) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if startErr != nil {
+		s.pending = ctr
+		return
+	}
 	s.handle = ctr
-	s.mu.Unlock()
 }
 
 // terminate removes the control container and forgets it when the removal
@@ -85,13 +102,18 @@ func (s *controlPlaneState) publish(ctr testcontainers.Container) {
 func (s *controlPlaneState) terminate(ctx context.Context, opts ...testcontainers.TerminateOption) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.handle == nil {
+	ctr := s.handle
+	if ctr == nil {
+		ctr = s.pending
+	}
+	if ctr == nil {
 		return nil
 	}
-	if err := s.handle.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
+	if err := ctr.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
 		return err
 	}
 	s.handle = nil
+	s.pending = nil
 	return nil
 }
 

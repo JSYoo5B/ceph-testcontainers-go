@@ -22,6 +22,8 @@ type DirectoryAddition struct {
 	baseGeneration, generation            uint64
 	requestAttempted, requestAcknowledged bool
 	registered, superseded                bool
+	// A lost reply cannot establish that another add is safe.
+	dispatchErr error
 	// A nonzero CLI exit is known even if the following policy read fails.
 	refusal *ceph.NativeFailure
 	// Receipts displaced by this pending add, restored only if the original
@@ -62,6 +64,9 @@ type DirectoryAdditionStatus struct {
 // policy and leaves it unowned. If the read fails, a repeated Begin settles
 // the known refusal without resending the add.
 // A transport error leaves dispatch uncertain and retains the pending receipt.
+// A retry can reconcile the original add once its policy is visible. A still
+// absent policy cannot prove that the native add was never accepted, so the
+// pending receipt remains and no duplicate is dispatched.
 //
 //purpose:construction,condition
 func (mirror *Container) BeginDirectoryAddition(ctx context.Context, directory string) (*DirectoryAddition, error) {
@@ -270,11 +275,14 @@ func (r *DirectoryAddition) resume(ctx context.Context) error {
 		m.registerDirectory(r.directory, true)
 		r.generation = m.directories.generation(r.directory)
 		r.registered = true
-		r.priorAddition, r.priorRemoval, r.refusal = nil, nil, nil
+		r.priorAddition, r.priorRemoval, r.refusal, r.dispatchErr = nil, nil, nil, nil
 		return nil
 	}
 	if r.requestAcknowledged {
 		return cephFSObserveQuery("wait for acknowledged CephFS directory addition policy convergence", nil)
+	}
+	if r.requestAttempted {
+		return cephFSObserveQuery("settle the dispatched CephFS directory addition before another add", r.dispatchErr)
 	}
 	return r.attempt(ctx)
 }
@@ -302,6 +310,8 @@ func (r *DirectoryAddition) attempt(ctx context.Context) error {
 				return r.retireRefused(present)
 			}
 			err = errors.Join(err, readErr)
+		} else {
+			r.dispatchErr = err
 		}
 		return cephFSObserveQuery("add original CephFS mirror directory", err)
 	}

@@ -307,7 +307,7 @@ func checkHostNetworkEngine(ctx context.Context) error {
 func verifyHostMonitor(ctx context.Context, address string, port int) error {
 	endpoint := net.JoinHostPort(address, strconv.Itoa(port))
 	if err := probeBanner(ctx, endpoint, monitorBanner, hostProbeWindow); err != nil {
-		return fmt.Errorf("%w: MON %s: %v; %s", ErrHostNetworkUnavailable, endpoint, err, hostNetworkHint(ctx, address))
+		return fmt.Errorf("%w: MON %s: %w; %s", ErrHostNetworkUnavailable, endpoint, err, hostNetworkHint(ctx, address))
 	}
 	return nil
 }
@@ -322,9 +322,12 @@ func probeBanner(ctx context.Context, endpoint, banner string, window time.Durat
 	for {
 		conn, err := dialer.DialContext(ctx, "tcp", endpoint)
 		if err == nil {
-			last = readBanner(conn, banner)
+			last = readBanner(ctx, conn, banner)
 			_ = conn.Close()
 			if last == nil || errors.Is(last, errForeignResponder) {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
 				return last
 			}
 		} else {
@@ -332,18 +335,34 @@ func probeBanner(ctx context.Context, endpoint, banner string, window time.Durat
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("not reachable within %s: %w", window, last)
+			if errors.Is(last, ctx.Err()) {
+				return fmt.Errorf("not reachable within %s: %w", window, last)
+			}
+			return fmt.Errorf("not reachable within %s: %w (%w)", window, ctx.Err(), last)
 		case <-time.After(hostProbeRetry):
 		}
 	}
 }
 
-func readBanner(conn net.Conn, banner string) error {
-	if err := conn.SetReadDeadline(time.Now().Add(hostProbeDial)); err != nil {
+func readBanner(ctx context.Context, conn net.Conn, banner string) error {
+	deadline := time.Now().Add(hostProbeDial)
+	probeDeadline, bounded := ctx.Deadline()
+	if bounded && probeDeadline.Before(deadline) {
+		deadline = probeDeadline
+	}
+	if err := conn.SetReadDeadline(deadline); err != nil {
 		return err
 	}
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
 	got := make([]byte, len(banner))
 	n, err := io.ReadFull(conn, got)
+	if cause := ctx.Err(); cause != nil {
+		return cause
+	}
+	if bounded && !time.Now().Before(probeDeadline) {
+		return context.DeadlineExceeded
+	}
 	if n > 0 && string(got[:n]) != banner[:n] {
 		return fmt.Errorf("%w: %q", errForeignResponder, got[:n])
 	}

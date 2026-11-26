@@ -37,7 +37,7 @@ func TestManagerRemovalPreflightDoesNotMutate(t *testing.T) {
 			case "stopped replacement":
 				replacement.running = false
 			case "foreign replacement":
-				control.status = `{"active_name":"a","active_gid":101,"available":true,"standbys":[{"name":"external","gid":303}]}`
+				control.status = `{"epoch":1,"active_name":"a","active_gid":101,"available":true,"standbys":[{"name":"external","gid":303}],"services":{}}`
 			}
 			if err := managerHandle(t, t.Context(), cluster, name).Remove(t.Context()); err == nil {
 				t.Fatal("unsafe removal was accepted")
@@ -57,10 +57,10 @@ func TestManagerRemovalPreflightDoesNotMutate(t *testing.T) {
 func TestManagerActiveRemovalWaitsForAvailableReplacement(t *testing.T) {
 	cluster, control, target, replacement := managerLifecycleFixture()
 	control.onFail = func() {
-		control.status = `{"active_name":"b","active_gid":202,"available":false,"standbys":[]}`
+		control.status = `{"epoch":1,"active_name":"b","active_gid":202,"available":false,"standbys":[],"services":{}}`
 		control.onDump = func() {
 			control.onDump = nil
-			control.status = `{"active_name":"b","active_gid":202,"available":true,"standbys":[]}`
+			control.status = `{"epoch":1,"active_name":"b","active_gid":202,"available":true,"standbys":[],"services":{}}`
 		}
 	}
 	if err := managerHandle(t, t.Context(), cluster, "a").Remove(t.Context()); err != nil {
@@ -83,8 +83,10 @@ func TestManagerStandbyRemovalUsesObservedGIDForNumericName(t *testing.T) {
 	cluster.members.roster.manager("42").DaemonName = "42"
 	cluster.members.roster.dropManager("b")
 	replacement.name = "42"
-	control.status = `{"active_name":"a","active_gid":101,"available":true,"standbys":[{"name":"42","gid":202}]}`
-	control.onFail = func() { control.status = `{"active_name":"a","active_gid":101,"available":true,"standbys":[]}` }
+	control.status = `{"epoch":1,"active_name":"a","active_gid":101,"available":true,"standbys":[{"name":"42","gid":202}],"services":{}}`
+	control.onFail = func() {
+		control.status = `{"epoch":1,"active_name":"a","active_gid":101,"available":true,"standbys":[],"services":{}}`
+	}
 	if err := managerHandle(t, t.Context(), cluster, "42").Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +104,9 @@ func TestManagerRemovalFailureRetainsHandleAndAuthForRetry(t *testing.T) {
 				target.terminateErr = errors.New("Docker teardown failed")
 			case "unavailable":
 				cluster.settings.startupTimeout = 20 * time.Millisecond
-				control.onFail = func() { control.status = `{"active_name":"b","active_gid":202,"available":false,"standbys":[]}` }
+				control.onFail = func() {
+					control.status = `{"epoch":1,"active_name":"b","active_gid":202,"available":false,"standbys":[],"services":{}}`
+				}
 			default:
 				control.fail = failure
 			}
@@ -119,7 +123,9 @@ func TestManagerRemovalFailureRetainsHandleAndAuthForRetry(t *testing.T) {
 			previousTerminations := target.terminations
 			target.terminateErr, control.fail = nil, ""
 			cluster.settings.startupTimeout = time.Second
-			control.onFail = func() { control.status = `{"active_name":"b","active_gid":202,"available":true,"standbys":[]}` }
+			control.onFail = func() {
+				control.status = `{"epoch":1,"active_name":"b","active_gid":202,"available":true,"standbys":[],"services":{}}`
+			}
 			if failure == "unavailable" {
 				control.onFail()
 			}
@@ -146,7 +152,7 @@ func TestAddManagerRejectsExistingForeignIdentity(t *testing.T) {
 			case "existing auth":
 				control.authList = `{"auth_dump":[{"entity":"mgr.external","key":"PRIVATE-MANAGER-KEY"}]}`
 			case "existing registration":
-				control.status = `{"active_name":"external","active_gid":303,"available":true,"standbys":[]}`
+				control.status = `{"epoch":1,"active_name":"external","active_gid":303,"available":true,"standbys":[],"services":{}}`
 			case "auth command error":
 				control.fail = "auth ls --format json"
 			case "invalid auth JSON":
@@ -166,7 +172,7 @@ func TestAddManagerRejectsExistingForeignIdentity(t *testing.T) {
 }
 
 func managerLifecycleFixture() (*Container, *managerLifecycleControl, *managerLifecycleDaemon, *managerLifecycleDaemon) {
-	control := &managerLifecycleControl{status: `{"active_name":"a","active_gid":101,"available":true,"standbys":[{"name":"b","gid":202}]}`}
+	control := &managerLifecycleControl{status: `{"epoch":1,"active_name":"a","active_gid":101,"available":true,"standbys":[{"name":"b","gid":202}],"services":{}}`}
 	target := &managerLifecycleDaemon{name: "a", running: true, control: control}
 	replacement := &managerLifecycleDaemon{name: "b", running: true, control: control}
 	cluster := &Container{
@@ -177,7 +183,9 @@ func managerLifecycleFixture() (*Container, *managerLifecycleControl, *managerLi
 			"b": {Container: replacement, DaemonName: "b", authOwned: true},
 		}}},
 	}
-	control.onFail = func() { control.status = `{"active_name":"b","active_gid":202,"available":true,"standbys":[]}` }
+	control.onFail = func() {
+		control.status = `{"epoch":1,"active_name":"b","active_gid":202,"available":true,"standbys":[],"services":{}}`
+	}
 	return cluster, control, target, replacement
 }
 

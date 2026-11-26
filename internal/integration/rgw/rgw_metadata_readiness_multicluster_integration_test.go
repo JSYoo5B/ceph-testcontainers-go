@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
 )
 
@@ -89,6 +90,24 @@ func TestMultiClusterRGWMetadataReadinessDuringDataPeerCut(t *testing.T) {
 		t.Fatalf("metadata-only readiness returned data-source observations: %+v", during.DataSources)
 	}
 	t.Log("metadata-only readiness remained ready with the third zone isolated")
+	watchCtx, watchCancel := context.WithTimeout(ctx, 45*time.Second)
+	watch, err := fixture.WatchSync(watchCtx, ceph.WatchConfig{}, "b")
+	if err != nil {
+		watchCancel()
+		t.Fatalf("metadata-only watch with the data peer cut: %v", err)
+	}
+	select {
+	case baseline := <-watch.Events():
+		if baseline.Kind != ceph.WatchBaseline || !baseline.Ready || len(baseline.Status.DataSources) != 0 {
+			t.Fatalf("metadata-only watch baseline with data peer cut: %+v", baseline)
+		}
+	case <-watchCtx.Done():
+		t.Fatalf("metadata-only watch baseline: %v", watchCtx.Err())
+	}
+	if err := watch.Stop(); err != nil {
+		t.Fatalf("stop metadata-only watch: %v", err)
+	}
+	watchCancel()
 	t.Log("checking selected-source readiness while zone c is isolated")
 	dataCtx, dataCancel := context.WithTimeout(ctx, 15*time.Second)
 	_, err = fixture.WaitSyncReady(dataCtx, "b", "c")

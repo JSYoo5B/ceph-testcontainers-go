@@ -192,6 +192,49 @@ func TestMonitorReplacementPreservesUnconfirmedGenerationForRetry(t *testing.T) 
 	}
 }
 
+func TestMonitorReplacementPreservesPreCreateFailureForRetry(t *testing.T) {
+	failure := errors.New("endpoint hold failed")
+	for _, name := range []string{"a", "b"} {
+		t.Run(name, func(t *testing.T) {
+			original := generationDouble{id: "original"}
+			cluster := &Container{Container: generationDouble{id: "first"}}
+			if name == "a" {
+				cluster.Container = original
+			}
+			topology := cluster.monitorTopology()
+			old := &MonitorContainer{Container: original, DaemonName: name, owner: cluster}
+			if name != "a" {
+				topology.roster.addMonitor(name, old)
+			}
+			next, err := topology.recordMonitorReplacement(old, nil, nil, "new-image", failure)
+			if !errors.Is(err, failure) || next == nil || next.Container != nil || next.image != "new-image" || topology.roster.monitor(name) != next {
+				t.Fatalf("pre-create failure lost retry handle: %+v %v", next, err)
+			}
+			if _, err := topology.currentMonitor(next); err != nil {
+				t.Fatalf("retry handle was not current: %v", err)
+			}
+			if _, err := topology.currentMonitor(old); err == nil {
+				t.Fatal("removed generation retained current ownership")
+			}
+			created := generationDouble{id: "replacement"}
+			recovered, err := topology.recordMonitorReplacement(next, &monstore.Attachment{ID: "replacement"}, created, "new-image", nil)
+			if err != nil || recovered == nil || recovered.Container != created || topology.roster.monitor(name) != recovered {
+				t.Fatalf("retry did not publish replacement: %+v %v", recovered, err)
+			}
+		})
+	}
+}
+
+func TestMonitorReplacementUnknownCreateDoesNotPublishRetryHandle(t *testing.T) {
+	cluster := &Container{Container: generationDouble{id: "first"}}
+	old := &MonitorContainer{Container: generationDouble{id: "original"}, DaemonName: "b", owner: cluster}
+	topology := cluster.monitorTopology()
+	topology.roster.addMonitor("b", old)
+	if next, err := topology.recordMonitorReplacement(old, &monstore.Attachment{}, nil, "new-image", errors.New("creation reply lost")); next != nil || err == nil || topology.roster.monitor("b") != nil {
+		t.Fatalf("unknown create outcome acquired a retry handle: %+v %v", next, err)
+	}
+}
+
 func TestFirstMonitorRecipeEnrollsVolumeAndEphemeralGenerations(t *testing.T) {
 	cluster := &Container{settings: options{zones: zoneSettings{names: []string{"a", "b"}, quorum: "a"}}, boundary: &zoneBoundary{}}
 	cluster.nets.public = &testcontainers.DockerNetwork{Name: "test-public"}

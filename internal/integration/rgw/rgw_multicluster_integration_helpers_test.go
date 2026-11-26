@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
@@ -48,6 +49,12 @@ func testMultiClusterRGWMultisite(t *testing.T, options ...testcontainers.Contai
 			defer cancel()
 			if err := multisite.Terminate(cleanupCtx); err != nil {
 				t.Errorf("terminate RGW multisite: %v", err)
+			}
+			for _, cluster := range []*ceph.Container{source, destination} {
+				gateways, err := rgw.Gateways(cleanupCtx, cluster)
+				if err != nil || len(gateways) != 0 {
+					t.Errorf("multisite cleanup retained RGW gateway registrations: %d, %v", len(gateways), err)
+				}
 			}
 		})
 	}

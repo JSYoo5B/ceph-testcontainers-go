@@ -21,7 +21,8 @@ run tests locally and how to add them is described in [Testing](testing.md).
 | Native regressions | `native-regressions.yml` | manual only | One optional batch chosen from the workflow's `batch` input, taking only its pass or failure: an experiment case, another optional native check or the `failure_archive` proof (see [Native regressions](#native-regressions) for how to list and dispatch the choices) |
 | ARM64 | `arm64.yml` | weekly (Wednesday 05:37 UTC); pull request touching its planner, image, storage, runtime template, bootstrap or helper paths; manual | The source-owned arm64 cohort on a native GitHub-hosted ARM64 runner (see [Native ARM64 cohort](#native-arm64-cohort)); not a required check |
 | Block fault probe | `block-fault-probe.yml` | pull request touching its scripts or workflow, manual | A research probe of delay and I/O-error tables on a scratch loop and device-mapper mapping, without Ceph; manual `public_api` also qualifies the public API on every supported release using a source-pinned helper; not a required check |
-| CI command | `ci-command.yml` | pull request comment `/ci run ...` | The named runtime batches on the pull request's head commit (see [Running chosen batches from a comment](#running-chosen-batches-from-a-comment)) |
+| CI command | `ci-command.yml` | pull request comment `/ci run ...`, `/ci require ...`, `/ci retry ...` or `/ci drop ...` | The named runtime batches on the pull request's head commit (see [Running chosen batches from a comment](#running-chosen-batches-from-a-comment)); the last three also change the pull request's [required requested CI](#requiring-requested-ci-before-a-merge) |
+| Requested CI gate | `requested-ci-gate.yml` | every pull request run of Code checks, when it is requested; manual | Runs no test. Sets the commit status `Required requested CI` on the head of every open pull request (see [Requiring requested CI before a merge](#requiring-requested-ci-before-a-merge)) |
 
 The ordinary runtime workflows and explicit full periodic runs call the reusable template `tagged-runtime.yml`
 (`workflow_call` only). The workflows are independent: none waits for
@@ -74,7 +75,9 @@ continues under ordinary CI while a candidate is frozen.
 
 To run any other batch on a pull request, such as one batch of another
 category or a batch on Squid, use `/ci run <batch>`. The command adds a run
-and never changes the checks above.
+and never changes the checks above. A reviewer who needs that run to pass
+before the merge uses [`/ci require <batch>`](#requiring-requested-ci-before-a-merge)
+instead.
 
 The workflows set `GOPROXY=https://proxy.golang.org|direct`, so a failed
 proxy request falls back to the module's origin. The Go jobs share one module
@@ -139,6 +142,7 @@ lists renames as a deletion and an addition.
 | Topology, Multicluster, Recovery | as above, plus the run ID for a label other than `ci:full` | An unrelated label starts a run that skips its jobs and cancels nothing. |
 | Short | as above, plus the run ID for a label other than `ci:selected-batches` | Adding or removing `ci:selected-batches` replaces the run in progress. |
 | CI command | per caller job: PR number, head commit, selected profiles and release | An identical command waits for the one in progress; a third identical command replaces the waiting one, which ends cancelled. Different selections run independently. |
+| CI command (`Register`, `Gate`), Requested CI gate | the fixed name `required-requested-ci`, per job | Every job that publishes `Required requested CI` waits its turn and none is cancelled while it runs. A waiting job is replaced by a newer one (see [How the status is kept](#how-the-status-is-kept)). |
 | Structural review evidence | workflow name and PR number | A new commit on a PR cancels that PR's previous run. |
 | Native regressions | none | Runs are independent. |
 | ARM64 | workflow name, then the PR number or the run ID | A new commit on a PR cancels that PR's previous run. Scheduled and manual runs are never cancelled. |
@@ -203,7 +207,7 @@ a scan or retain the vulnerability database. Every `setup-go` step sets
 patch release with known standard-library vulnerabilities is not used. The
 weekly scheduled run catches new advisories; the other Code checks jobs skip
 it. Dependabot targets `develop` for version updates. Its security alerts on
-the default branch also need the [supported-line backport procedure](releasing.md#supported-lines-and-backports).
+the default branch also need the [maintained-line patch procedure](releasing.md#maintained-line-and-patches).
 `.github/dependabot.yml` proposes Go module updates daily and GitHub
 Actions updates weekly.
 
@@ -231,6 +235,13 @@ Nothing in the workflows names a test.
 5. **Verification.** `plan --verify` compiles the `all`, category and
    single-batch builds, including every optional batch, with `go test -list`
    and compares the test names with the catalog. Code checks runs it; the runtime workflows do not.
+   It compiles up to four builds at once (half the cores) and writes one
+   line per finished build to standard error, `compiled <n>/<total> <package>
+   tags=<tags> <seconds>s`, so a job that its time limit cuts off shows how
+   far it came and whether every build was slow. The builds are judged in
+   their order: the first one that does not compile or differs is reported.
+   The builds that had not started by then are dropped, and the command
+   waits for those already running before it reports.
 
 Each profile has a stable ID, `<category>-<batch>-<8 hex digits>`, such as
 `short-default-a488da21`, used in artifact names, summaries and annotations.
@@ -366,6 +377,11 @@ batches on Squid 19.2.5 role images. The run is added beside the usual checks.
 - **Validation.** Names are checked against the head commit's planner
   (`tag_scenarios.py vocabulary`). One unknown name refuses the whole command,
   and the reply lists every unknown name.
+- **Block I/O.** Selecting `optional/block_io` prepares `loop` and `dm_delay` on
+  its disposable GitHub-hosted runner, builds and checks the pinned helper,
+  and runs the native batch on each selected release. A helper, native
+  assertion or cleanup failure fails the selection. This applies to both
+  advisory and required runs.
 - **Format.** The command must start its line and appear once per comment;
   quoted or fenced lines are ignored. Editing a comment does not run it.
 - **Authorization.** Only authors with association `OWNER`, `MEMBER` or
@@ -380,9 +396,11 @@ workflow and scripts from the protected default branch:
 | --- | --- | --- |
 | `Command` | `contents: read`, `pull-requests: read` | Runs `ci_command.py authorize` on the default-branch checkout. No pull request code runs. |
 | `Validate` | `contents: read` | Checks out the default branch and the recorded head side by side without credentials; the head's planner lists batches and releases, the default branch's `ci_command.py select` resolves the names. |
+| `Register` | `contents: read`, `pull-requests: write`, `statuses: write` | Only for `/ci require`, `/ci retry` and `/ci drop`: runs `required_ci.py register` on the default-branch checkout (see [Requiring requested CI before a merge](#requiring-requested-ci-before-a-merge)). |
 | `Acknowledge` | `statuses: write` | Sets a pending commit status on the head. |
 | `Scenarios <release>` | `contents: read` | Calls `tagged-runtime.yml` with category `selected` and the resolved profile IDs, once per release. |
 | `Report` | `contents: read`, `pull-requests: write`, `statuses: write` | Sets the final status and replies with the result, run link or refusal. |
+| `Gate` | `contents: read`, `pull-requests: write`, `statuses: write` | Only after the run of a required selection: runs `required_ci.py evaluate` on the default-branch checkout. |
 
 The result appears on the pull request as the commit status
 `CI command <comment-id>: <names> on <releases>` (`success`, `failure`, or
@@ -401,6 +419,231 @@ python3 .github/scripts/ci_command.py select \
   --vocabulary artifacts/vocabulary.json
 ```
 
+### Requiring requested CI before a merge
+
+`/ci run` is advisory: no merge depends on its result. To make a selection
+part of the merge decision of one pull request, a reviewer requires it:
+
+```text
+/ci require <batch|profile>... [on <release|codename|all>...]
+/ci retry <batch|profile>... [on <release|codename|all>...]
+/ci drop <batch|profile>... [on <release|codename|all>...]
+```
+
+The names, releases, format and authorization are those of `/ci run`, and so
+are the refusals: an unknown name, a fork, a closed pull request or an
+unauthorized author changes no requirement.
+
+| Command | Effect |
+| --- | --- |
+| `/ci require` | Adds the selection to the pull request's requirements and runs it on the head commit. Requiring a selection that is already required changes nothing and runs nothing. Different selections add up, and each must pass. |
+| `/ci retry` | Runs a required selection again on the current head commit, after a failure, a cancelled run or a new push. That run replaces the earlier one as the selection's evidence. Its names are resolved again on the new head; if they no longer resolve, the selection is recorded as blocked and fails until the pull request restores the names or the selection is dropped. |
+| `/ci drop` | Removes the selection from the requirements. Its names are not resolved, so a selection whose batch is gone can be dropped. |
+
+A selection is its names and release selectors as typed, in any order.
+`/ci require network_faults` and `/ci require network_faults on tentacle`
+are two selections even while Tentacle is the current release, so `retry` and
+`drop` repeat the selection as it was required. The summary comment lists the
+exact commands.
+
+#### The status
+
+The commit status `Required requested CI` is set on the head commit of
+every open pull request, with or without requirements:
+
+| State | Meaning |
+| --- | --- |
+| `success` | The pull request requires nothing, or every required selection passed on this head commit. |
+| `pending` | A required selection is running, or has no run on this head commit. |
+| `failure` | A required selection failed, its run was cancelled, skipped or ended without a known result, or its names no longer resolve. |
+| `error` | The requirements are not known: a comment of the ledger was edited or cannot be trusted, the comments of a pull request with this head could not be read, or the job that publishes the status did not finish. |
+
+A pull request with requirements has one summary comment, which the status
+links to. It lists every required selection with its state, the commit that
+was tested, the command, run and result that are its evidence, who required
+it, and the `retry` and `drop` commands for it. The comment is updated in
+place.
+
+What satisfies a requirement is narrow on purpose:
+
+- only a successful run of the selection's latest accepted `require` or
+  `retry` command counts. The result of a command that a later `retry`
+  replaced, or of a requirement that was dropped and required again, is
+  ignored whenever it arrives;
+- the run must have tested the pull request's current head commit. After a
+  push the requirement stays and its evidence does not: the new head is
+  `pending` until the selection is retried on it. Nothing starts that run
+  automatically;
+- the run tests the head commit itself, not a merge with the base, so a
+  change of the base branch or of the pull request's target neither
+  satisfies nor invalidates a requirement;
+- a result is recorded on the pull request whose command started the run.
+  The same commit tested for another pull request is no evidence;
+- a run without a recorded result is no evidence. A selection that stays
+  `running` after its run ended lost its result; retry it.
+
+A commit status belongs to a commit, and GitHub evaluates a required status
+on the head commit of the pull request. Pull requests that share a head
+commit therefore share the status, and it is the worst of theirs: none of
+them passes until the requirements of each are met. The description names
+the pull request that decides it.
+
+#### Reviewer steps
+
+1. **Request.** Comment `/ci require <selection>` on the pull request.
+2. **Wait for the acknowledgment.** The comment is processed by a workflow
+   run, seconds to minutes later. Until then nothing is required and the
+   status can still be green, so hold the merge. The acknowledgment is a
+   reply of `github-actions` that starts with `Required:`; the status of the
+   head is set `pending` before that reply is written. A reply that says the
+   command is not confirmed, or no reply at all, means that the command may
+   not have been recorded: read the summary comment and repeat the command.
+3. **Read the result.** `Report` replies with the outcome and the run link,
+   and the status and the summary follow. A failed selection is diagnosed
+   like any failed batch (see [Reading a failing batch](#reading-a-failing-batch)).
+4. **Retry or drop.** `/ci retry <selection>` after a fix was pushed or when
+   the failure was not the change's; `/ci drop <selection>` when the
+   selection is no longer wanted. Both are acknowledged the same way
+   (`Retrying the required selection:`, `No longer required:`), and both stay
+   on the pull request with their author.
+5. **Verify before the merge.** `Required requested CI` is `success` on the
+   exact commit to merge, and the summary comment names that commit as its
+   head and lists every selection that was asked for as `passed`. A summary
+   for another commit means the status was not evaluated for this pull
+   request (see [How the status is kept](#how-the-status-is-kept)):
+
+   ```sh
+   gh api repos/<owner>/<repository>/commits/<head-sha>/status \
+     --jq '.statuses[] | select(.context == "Required requested CI") | {state, description, target_url}'
+   ```
+
+   The status blocks a merge by itself only on a branch whose rule requires
+   the context (see [Enabling the branch rule](#enabling-the-branch-rule)).
+   On any other branch this step is the reviewer's.
+
+Do not edit or delete the replies of `github-actions` that record a
+requirement. An edited one turns the status into `error`; the summary then
+links to it, and deleting it and repeating the commands it stood for
+restores the ledger. GitHub shows the deletion in the pull request's
+timeline.
+
+This is separate from the release gate. A release candidate's own retry
+rule (see [Release candidate validation](#release-candidate-validation))
+decides what a candidate may contain; a required selection is a check of one
+reviewed commit and of exactly the coverage the reviewer asked for, and it
+has no automatic retry.
+
+#### How the status is kept
+
+The requirements of a pull request are a ledger of comments on it. A record
+is the first line of a comment written with the workflow token, an HTML
+comment that `Register` (require, retry, blocked, drop) and `Report`
+(result) write and never change. `required_ci.py` reads the ledgers again on
+every evaluation and derives every status from them; nothing else stores a
+requirement. A comment by anyone else that copies a record is not one.
+
+Three jobs publish the status, all with `required_ci.py` from the default
+branch, and none checks out a pull request:
+
+| Job | When | What it does |
+| --- | --- | --- |
+| `Register` of `ci-command.yml` | an accepted `require`, `retry` or `drop` | Reads the pull request's head and ledger, sets the head `pending` (not for `drop`), writes the record with the acknowledgment, then evaluates. A failure before the record is written records and acknowledges nothing; a failure to write it leaves the head `pending`. |
+| `Gate` of `ci-command.yml` | after `Report` recorded the result of a required selection's run | Evaluates. |
+| `Evaluate` of `requested-ci-gate.yml` | every pull request run of Code checks, when it is requested; manual dispatch | Evaluates. |
+
+Code checks starts for every opened, pushed, reopened or retargeted pull
+request of a maintained branch, documentation-only ones included, so each
+new head gets its status without a command. An evaluation covers every open
+pull request and sets a status only where it changed.
+
+The three jobs share the concurrency group `required-requested-ci`, so no
+evaluation publishes from a ledger that another job is changing. GitHub
+keeps one waiting job per group. A waiting evaluation that a newer one
+replaces loses nothing; a waiting `Register` that is replaced has recorded
+nothing, and `Report` answers that the command is not confirmed.
+
+A failed job does not fail a commit status: a commit keeps the status it
+has until another one is set. The publishing jobs therefore turn what they
+cannot establish into `error` and never leave a head as it was:
+
+- a pull request whose comments cannot be read after two repeated attempts,
+  or cannot be evaluated, makes its head `error`
+  (`The requirements of #N could not be read`), for every pull request that
+  has that head. The others are published and the job fails;
+- a job whose script does not report every head as published, because it
+  failed, was cancelled or timed out, or because the checkout before it
+  failed, ends with a step that sets `error`
+  (`The evaluation did not finish`) on the commit that started it: the head
+  of the Code checks run for `Evaluate`, the commit of the command for
+  `Register` and `Gate`. That step needs only the token and `gh`;
+- a summary comment is not written for a head whose status could not be
+  set, so it never says more than the status.
+
+`error` is cleared by the next evaluation that succeeds: any pull request
+event, any requirement command, or
+`gh workflow run "Requested CI gate"`. A manual dispatch has no commit of
+its own, so a failed one withdraws nothing.
+
+One case is outside what these jobs can do. When the job cannot reach the
+API to list the pull requests or to set a status, or never starts, every
+commit keeps the status it has. That matters for a commit that is already
+green: a pull request pushed to, or opened at, a commit that another pull
+request made green shows that green until an evaluation succeeds. The
+failed `Requested CI gate` or `CI command` run is the signal, and
+[step 5 of the reviewer steps](#reviewer-steps) catches it: the summary
+comment of a pull request with requirements names the head it was written
+for, and a summary that names another commit, or that is missing although
+selections were required, means that the status is not this pull request's.
+Run the gate again before merging.
+
+The jobs that compile and run the pull request (`Validate` and
+`Scenarios`, and every job of the pull request workflows) hold a read-only
+token and can write neither a status nor a comment. Pull requests from forks
+cannot be given requirements, and their heads get the `success` of a pull
+request without any. As for every check of this repository, someone with
+write access can change a workflow on a branch and so set any status; the
+rule that only GitHub Actions may provide the context excludes statuses set
+with a personal token, not that.
+
+#### Enabling the branch rule
+
+The rule is the ruleset `Git Flow / requested CI`, which requires the
+context from GitHub Actions on `main`, `develop` and every release and
+support line. Those are the branches whose pull requests start Code checks,
+and that request is what makes the gate publish the status on a new head.
+The ruleset is optional: `scripts/release/git_flow.py` creates it only when
+asked, beside the other rulesets and without changing them, and `verify`
+checks it only where it is installed. Until then the status is advisory and
+step 5 of the reviewer steps is the reviewer's.
+
+A branch rule must require the context only when every pull request it
+covers gets it, otherwise that pull request waits for a status that no
+event will bring. Install it in this order:
+
+1. Confirm on a Dependabot pull request that `Required requested CI`
+   appears on its head by itself. Its Code checks run is requested by
+   another actor than a maintainer's, and the gate must publish for it as
+   for any other pull request.
+2. Dispatch the gate and check that it succeeded:
+   `gh workflow run "Requested CI gate"`.
+3. Plan. The plan prints the ruleset and names every open pull request to a
+   maintained branch whose head has no status yet:
+
+   ```sh
+   python3 scripts/release/git_flow.py plan --requested-ci
+   ```
+
+4. Apply and verify. `apply` refuses while the plan still names a pull
+   request, and after any drift of the existing rulesets:
+
+   ```sh
+   python3 scripts/release/git_flow.py apply --requested-ci
+   python3 scripts/release/git_flow.py verify
+   ```
+
+After that, a pull request opened or pushed later gets the status from the
+Code checks request of that event.
+
 ## How a batch runs
 
 Each matrix entry is one job on one runner of the plan's target architecture:
@@ -415,7 +658,7 @@ architecture, because it warms the build cache that the jobs restore.
 | Compile selected tagged suite | Compilation | `tag_scenarios.py compile` first refuses a runner whose Go toolchain is not natively the matrix entry's `goarch` (host and target), then runs `go test -c` within 180 seconds with `GOPROXY=off`, writes `compile/<package>.test`, and records in `compile-report.json` the binary's sha256, its build key (package, tags, Go environment, version, `GOOS`, `GOARCH`), the sha256 of every source file read, and the listed tests. It first refuses a recomputed profile whose tags differ from the matrix entry's. |
 | Prepare runner storage | Runner storage preparation | Ceph batches only. `runner_storage.py prepare` skips the existing fixed-directory cleanup only when the exact workload, on its qualified release, roles and platform, and the actual storage layout have a qualification and sufficient headroom. Otherwise it removes the unused runner toolchains. Writes `runner-storage/storage-prepare.json` and, when reclamation ran, `storage-free.json`. Cleanup remains GitHub-hosted-only and never removes Docker resources. |
 | Docker baseline and engine identity | Docker baseline | Records the engine identity and every resource labelled `org.testcontainers=true`. |
-| Resolve native published Ceph roles | Published image preparation | Ceph batches only. Pulls the declared role images from `ghcr.io/jsyoo5b/ceph-testcontainers-images` by their `official-<release>-<role>` tags (see [Role images of a run](#role-images-of-a-run)), for the entry's `linux/<goarch>`, refusing a Docker engine of another platform, records the image ID and the platform child that Docker selected from each index and exports the selected `CEPH_TEST_*_IMAGE` variables, which name the tags. A pull that fails on a registry transport error (TLS handshake or DNS timeout, reset, EOF, 502/503/504) is retried twice, after 10 and 30 seconds; a registry refusal is never retried. Never builds. |
+| Resolve native published Ceph roles | Published image preparation | Ceph batches only. Pulls the declared role images from `ghcr.io/jsyoo5b/ceph-testcontainers-images` by their `official-<release>-<role>` tags (see [Role images of a run](#role-images-of-a-run)), for the entry's `linux/<goarch>`, refusing a Docker engine of another platform, records the image ID and the platform child that Docker selected from each index and exports the selected `CEPH_TEST_*_IMAGE` variables, which name the tags. A pull that fails on a registry transport error (TLS handshake or DNS timeout, reset, EOF, any 5xx answer to a manifest, blob or token request) is retried twice, after 10 and 30 seconds; a registry refusal (unknown manifest, denied, unauthorized, rate limit, any 4xx answer) is never retried. Never builds. |
 | Prepare Ryuk and the test images | Ryuk and test image preparation | Every batch, Docker-only ones included. `in_test_images.py` pulls, with the same bounded retries, the Ryuk image of the `go.mod` version of testcontainers-go (its `ReaperDefaultImage`) and every image that the batch's compiled tests name besides their roles, so that no test pulls an image itself. `batchselect -images` finds those in the source, for the GOOS and GOARCH that the compile receipt records, and the step refuses a Docker engine of another platform: each image reference among the constants of the declarations that the tests reach (constants of other packages included), and a reference prefix that a test completes with the Ceph version at run time (the release's official image, pulled by tag). A published role tag that a test names itself, such as both releases of the rolling upgrade, is one of those constants and is pulled by its tag. With prepared role images, the harness fallback to a published role tag (`ceph.DefaultImage`) is skipped. Writes `test-images/summary.json` and `test-images/pull-<name>[-<attempt>].log`. |
 | Record runner storage with the images | n/a | Ceph batches only. Writes `runner-storage/storage-images.json`. Its failure never changes the job result. |
 | Verify post-image runner headroom | Post-image runner headroom | Ceph batches only. `runner_storage.py ready` refuses the job before the tests when the pulled images left too little headroom for the workload. Writes `runner-storage/storage-ready.json`. |
@@ -533,33 +776,83 @@ process timeout.
 
 ### Runner budget
 
-The account runs at most 40 hosted jobs at once. The constants in
-`tag_scenarios.py` divide them:
+The account runs at most 40 hosted jobs at once, across all of its
+repositories: over three days with 4524 executed jobs in its active
+repositories, 40 jobs ran at once for 48 minutes in total and never more.
+`tag_scenarios.py` allocates them by what a run is for:
+
+| Run | Allocation | Reason |
+| --- | --- | --- |
+| Release matrix | Every runner except `OTHER_REPOSITORY_RUNNERS` | It gates a release during a merge window, when no other work of this repository should be in flight. |
+| Periodic | At most `PERIODIC_RUNNERS`, and nothing while a Release matrix run is in progress | It searches for flaky tests: slow is fine, taking the account is not. |
+| Pull request | No reserved share; each runtime caller is bounded by `PULL_REQUEST_MAX_PARALLEL` | A pull request validates its own change, and several are open at once. |
 
 | Constant | Value | Meaning |
 | --- | --- | --- |
-| `RUNNER_LIMIT` | 40 | The measured limit. |
-| `PULL_REQUEST_RUNNERS` | 16 | Runners that Periodic leaves free for pull requests. |
-| `RELEASE_MAX_PARALLEL` | short 3, topology 1, multicluster 1, recovery 1 | `max-parallel` of each release caller in Periodic and Release matrix. |
-| `ENVIRONMENT_MAX_PARALLEL` | 1 | `max-parallel` of the periodic environment caller. |
+| `RUNNER_LIMIT` | 40 | The measured limit of the account. |
+| `OTHER_REPOSITORY_RUNNERS` | 8 | Runners that the Release matrix leaves to the account's other repositories. |
+| `RELEASE_CALLER_RUNNER_MINUTES` | short 325, topology 335, multicluster 195, recovery 230 | Measured runner time of one release caller of each category. |
+| `ENVIRONMENT_MAX_PARALLEL` | 1 | `max-parallel` of an environment caller. |
+| `PERIODIC_RUNNERS` | 8 | Runners that every mode of Periodic holds together at most. |
+| `PERIODIC_CALLERS` | 4 | Release callers of a full periodic matrix that run at once (`max-parallel` of the caller matrix). |
+| `PERIODIC_MAX_PARALLEL` | 1 | `max-parallel` of each release caller in Periodic. |
 | `CAMPAIGN_MAX_PARALLEL` | 3 | `max-parallel` of the representative campaign. |
+| `STORAGE_MAX_PARALLEL` | 5 | `max-parallel` of a storage qualification dispatch. |
+| `PULL_REQUEST_MAX_PARALLEL` | short 8, topology 3, multicluster 2, recovery 2, environment 1 | `max-parallel` of a pull request's runtime caller of each category. |
+| `PULL_REQUESTS_AT_ONCE` | 2 | Pull requests that can each run every category beside the other repositories' runners. |
 
-An explicit full matrix run holds at most 19 runners and a campaign at most 3; both can
-run at once because their concurrency groups differ.
-`tag_scenarios.py releases --scope all` fails when the two together could
-exceed `RUNNER_LIMIT - PULL_REQUEST_RUNNERS`, and `--scope others` fails when
-the release callers alone could. Pull request workflows are unbounded. A bound
-only delays jobs: every entry still runs with `fail-fast: false`. Batches are
-not packed into shared jobs.
+**Release matrix.** `release_max_parallel` takes the share of 32 runners less
+the environment caller, splits it evenly between the supported releases, and
+splits a release's part between its four callers in proportion to
+`RELEASE_CALLER_RUNNER_MINUTES`, whole runners by largest remainder. With
+three releases that is short 3, topology 3, multicluster 2 and recovery 2 for
+each release: 31 runners with the environment caller. A new supported release
+changes the allocation without an edit here. The runner minutes come from a
+Release matrix run in which every job executed (506 jobs, about 3250 runner
+minutes): one release's callers took about 325 (short, 51 jobs), 335
+(topology, 59), 195 (multicluster, 23) and 230 (recovery, 34) minutes. That
+run was bounded at short 3 and one job for each other caller, held at most 19
+runners and took 5.86 hours, the serial time of one topology caller. With the
+allocation above the callers need about 108, 112, 98 and 115 minutes of
+runtime jobs, so a run is expected to take about two hours. The longest job
+was 19 minutes, so more runners would shorten it little.
+
+The Release matrix leaves no runner for this repository's pull requests. A
+pull request during a merge window is either a mistake or the fix of a defect
+that already blocks the candidate; in the second case the candidate's run is
+cancelled (see [Candidate failures](releasing.md#candidate-failures)), which
+frees its runners.
+
+**Periodic.** The daily sample is one job. A full matrix runs
+`PERIODIC_CALLERS` callers at once with one runtime job each beside the
+environment caller, five runners; a storage qualification dispatch and the
+sample wait in the same concurrency group. The representative campaign has a
+group of its own and can run beside a full matrix, so the two add up to
+eight. Every run of Periodic first asks whether a Release matrix run is
+queued or in progress (`periodic_gate.py --yield-to release-matrix.yml`) and,
+if one is, starts no native work; the skipped run is not repeated. A Release
+matrix run that starts after Periodic did runs beside it.
+
+**Pull requests.** The entry points pass their category's bound, so a pull
+request that runs every category holds at most 16 runners, and two such pull
+requests fit beside the other repositories' eight.
+
+`tag_scenarios.py releases --allocation release` fails when the Release
+matrix callers could exceed `RUNNER_LIMIT - OTHER_REPOSITORY_RUNNERS`, and
+`--allocation periodic` fails when the modes of Periodic together could
+exceed `PERIODIC_RUNNERS`. A bound only delays jobs: every entry still runs
+with `fail-fast: false`. Batches are not packed into shared jobs.
 
 The order of matrix entries is not a start order. GitHub creates a matrix's
 jobs in an order of its own, and while every runner of the account is busy,
 queued jobs start roughly in that creation order, so reordering the planner's
-entries does not move a long batch forward. Periodic's release callers
-are bound by their summed runner time: replaying measured durations onto their
-four slots longest-first shortens the makespan by under 1% and delays the mean
-completion by several minutes. A pull request run ends with its longest batch,
-so the batch layout sets its length, not the dispatch order (issue 388). A
+entries does not move a long batch forward. A release caller is bound by its
+summed runner time: replaying measured durations onto a caller's slots
+longest-first shortens the makespan by under 1% and delays the mean
+completion by several minutes. A pull request run ends with its longest batch
+or, when its callers' bounds hold jobs back, with a caller's summed runner time
+over its bound; the batch layout sets its length, not the dispatch order
+(issue 388). A
 long batch whose tests are independent opts them into
 `harness.ParallelWhenEnabled` rather than adding a job.
 
@@ -593,7 +886,9 @@ read as a hit or a write, and a missing log is `unknown`.
 Periodic primarily searches for flaky tests and patch-dependent differences.
 The daily `04:41 UTC` firing runs one bounded native allocation. Tuesday and
 Friday use `discovery`; the other five days use `rotate`. The scheduled run uses
-the default branch independently of candidate validation.
+the default branch independently of candidate validation. No mode starts
+native work while a Release matrix run is queued or in progress
+([Runner budget](#runner-budget)); that firing is skipped.
 
 | Mode | Selection | Invocation |
 | --- | --- | --- |
@@ -735,8 +1030,8 @@ supported release with its codename and official image tag (Tentacle
 20.2.4, Umbrella 21.2.0 and Squid 19.2.5). The manual-full periodic and candidate `Releases` jobs generate the callers:
 
 ```sh
-python3 .github/scripts/tag_scenarios.py releases --scope all --check-prefix 'Periodic'
-python3 .github/scripts/tag_scenarios.py releases --scope all --check-prefix 'Release matrix'
+python3 .github/scripts/tag_scenarios.py releases --scope all --allocation periodic --check-prefix 'Periodic'
+python3 .github/scripts/tag_scenarios.py releases --scope all --allocation release --check-prefix 'Release matrix'
 ```
 
 Each release and category becomes a `<Codename> <category>` call of
@@ -798,8 +1093,9 @@ here. The next job that pulls the tag uses it.
 
 ### Release candidate validation
 
-The release matrix runs independently for each PR targeting `main`,
-`release/*` or `support/*` and for a push to `main` or `support/*`.
+The release matrix runs for each PR targeting `main`, `release/*` or
+`support/*` and for a push to `main` or `support/*`; a push to `main` that
+is the merge of a validated promotion PR [reuses that PR's run](#promotion-reuse).
 A push to `release/*` runs none: a release line follows `develop`, and
 its candidate is validated once, by its promotion PR to `main`, instead of a
 second time on the same tree.
@@ -813,7 +1109,119 @@ check name. The six Code checks also apply to each candidate.
 For publication, verify the push event, protected branch, candidate SHA,
 workflow identity and successful required jobs. A PR test-merge run
 qualifies that proposed merge. Tag the protected commit only after its own
-validation succeeds. See the [cutover and branch rules](git-flow.md).
+validation succeeds, by its own matrix or by a verified
+[promotion reuse](#promotion-reuse). See the
+[cutover and branch rules](git-flow.md).
+
+### Promotion reuse
+
+A promotion PR to `main` runs the full matrix on GitHub's test merge. The
+protected merge that follows usually has the same tree and the same two
+parents, and a second matrix on its push would test the same content again
+with hundreds of native jobs. The push run therefore asks first whether the
+promotion run already qualifies the pushed commit:
+
+1. `Releases` plans the matrix as always and writes its coverage: the
+   required cells, the image references, and one digest of both.
+2. On a promotion PR to `main`, once `Release candidate validated (main)` has
+   passed, the `Candidate receipt` job writes the artifact
+   `release-candidate-receipt-<attempt>` with two files. The receipt names
+   the commit that the workflow checked out with its tree and parents, the
+   PR, its head and target, the run and attempt, the coverage, the image
+   references and the jobs whose first failure a
+   [release retry](#release-retry) passed. The evidence file holds the
+   history row of every runtime job (what it checked out, built and pulled,
+   the image IDs and digests it resolved, each phase's result, its cleanup
+   check and the hashes of its logs and reports) and the report of each
+   retry. The jobs' own artifacts expire after 7 to 14 days; the receipt and
+   this evidence are kept for 90.
+   The job fetches the rows through the API, page by page, because a
+   release run writes more artifacts than `actions/download-artifact`
+   lists, and it fails when the record does not account for every runtime
+   job or the checked-out commit is not a merge of two parents. The gate's
+   result stays as it is; the failed job says before the merge that the
+   push will run the full matrix.
+3. On a push to `main`, `Promotion reuse` runs
+   `scripts/release/promotion_reuse.py verify` and writes
+   `promotion-reuse-receipt-<attempt>` with its decision and, on a reuse, its
+   own copy of the evidence file.
+
+The push reuses the promotion run only when all of this holds:
+
+| Check | Source |
+| --- | --- |
+| The pushed commit is a merge of two parents, the merge commit of exactly one merged PR that targeted this branch from a branch of this repository, and its second parent is that PR's head. | Repository and PR API |
+| A pull request run of `release-matrix.yml` for that head, of that head branch and repository, passed in its latest attempt, with the target's `Release candidate validated` job and every other job successful. | Actions API |
+| That attempt's candidate receipt exists, is not expired, and names the same run, attempt, PR, target and head. | Artifact |
+| The receipt's tested commit, read from the repository, has the tree and parents that the receipt records, and they equal the pushed merge's tree and parents. | Repository API |
+| The receipt's coverage digest equals the digest that `Releases` computed for the pushed tree. | This run |
+| The evidence file is the one that the receipt records, and it has exactly one unaltered history row for every runtime job of the run. Each row is of this run and the tested commit, has complete records and a passed cleanup check, names the images it ran if it needed Ceph, and either passed or failed only its native phase and passed its one retry, by the retry's own report and the job's retry step. | Artifact and Actions API |
+
+A live receipt therefore never qualifies a run by itself. Without the
+evidence file, or with an entry that is missing, foreign, altered, failed or
+uncleaned, the full matrix runs. The run's shorter-lived artifacts are not
+read, so their expiry changes nothing.
+
+The run's reported head alone proves nothing about what was tested; the
+receipt's tested commit, checked against the repository, does. The receipt
+is trusted because the workflow that wrote it came from the merged PR's head
+merged into the protected branch. A failed retry, a cancelled or incomplete
+run and a skipped job never qualify.
+
+When the push reuses the run, the runtime and environment callers are
+skipped and `Release candidate validated (main)` passes on the reuse receipt.
+In every other case, including an unreadable fact, an expired receipt or a
+failure of the `Promotion reuse` job itself, the full matrix runs and the
+gate needs it to pass; the reuse receipt then lists the reasons. On a reuse
+the receipt also summarizes what the jobs ran: every image reference with
+the image IDs and digests it resolved to, and the Go toolchains. The full
+native logs are not kept beyond their own artifacts' retention; the evidence
+holds their hashes.
+
+#### Rehearsing a promotion
+
+The reuse path only runs for a protected merge, so it cannot be tried on a
+feature branch, and trying it first on a real promotion would make a release
+the test. The branch `rehearsal/promotion` exists for that: `release-matrix.yml`
+treats a PR to it and a push to it as it treats `main`, with the gate
+`Release candidate validated (rehearsal/promotion)`, and
+`promotion_reuse.py` applies the same checks. A receipt names its target, so a
+rehearsal never qualifies a push to `main`, nor the reverse. Nothing is tagged
+or published from the branch, and no other workflow runs for it.
+
+A rehearsal tries the candidate record and the reuse decision, not the
+coverage of a release, so its matrix is small: `tag_scenarios.py releases
+--scope rehearsal` plans one caller, `REHEARSAL_CATEGORY` on the current
+release, beside the environment caller. A run takes minutes instead of
+hours. What only the size of a release run shows (its number of artifacts,
+its runner demand) is not rehearsed: for the runner demand dispatch
+`Release matrix` by hand, and check the record of a large run by recording
+it again from a depth-1 clone of its tested commit with
+`promotion_reuse.py record`.
+
+The branch is not kept. To rehearse a change of the receipts or the reuse
+decision:
+
+1. Create `rehearsal/promotion` at the base to promote onto, with a ruleset
+   for it alone that requires a pull request and forbids deletion and
+   non-fast-forward pushes.
+2. Push the commit under test to a branch of its own and open a PR from it
+   to `rehearsal/promotion`, before that commit is the head of any other
+   open PR. Two open PRs with one head commit make the checks that publish
+   to the PR of a commit (the structural review comment) refuse. When the
+   gate has passed, check that `Candidate receipt` succeeded and wrote
+   `release-candidate-receipt-<attempt>`.
+3. Merge the PR with a merge commit. The push run must end with
+   `Promotion reuse` successful, the runtime and environment callers skipped
+   and the gate passed, and its `promotion-reuse-receipt-<attempt>` must say
+   `reused` and name the PR's run.
+4. For the other path, merge a second PR whose Release matrix has not passed
+   (cancel it first). The push run's receipt must say `full-matrix` with the
+   reason, and the callers must start; cancel that run once they have.
+5. Delete the ruleset and the branch.
+
+A push to `support/*` always runs its full matrix. The six Code checks run
+on the pushed commit in either case.
 
 ### Release retry
 
@@ -998,6 +1406,13 @@ batches are described with their features, for example in
 [Daemon timing](../guides/daemon-timing.md) and the
 [`fault/blockio` README](../../fault/blockio/README.md).
 
+Run the Block I/O batch on a pull request with `/ci run optional/block_io`
+or require it with `/ci require optional/block_io`. To qualify it separately
+on every supported release, dispatch **Block fault probe**
+(`block-fault-probe.yml`) on the pull request branch with `public_api=true`
+and `prepare_kernel=true`. Verify that the run's commit is the pull
+request head. Both routes retain helper, native and cleanup results.
+
 `cephfs_fuse` (`TestCephFSFuseMount`) mounts CephFS with `ceph-fuse` in
 client containers given `/dev/fuse`, `CAP_SYS_ADMIN` and
 `apparmor=unconfined`. It needs a rootful engine whose kernel has FUSE: a
@@ -1133,7 +1548,9 @@ composite action) has already failed at upload time.
 - `completion.errors`, `completion.failed_tests`, `completion.skipped_tests`;
 - `registry_transport`: each failed test with such an error, and its stage
   (`reaper` or `image`), reason, registry phase (`resolve`, `token`,
-  `manifest`, `blob`) and endpoint without query or user information;
+  `manifest`, `blob`, `registry` for another `/v2/` request) and endpoint
+  without query or user information; phase and endpoint are `unknown` for a
+  5xx answer that the daemon reports without its request;
 - `compiled_tests`, `command`, `elapsed_seconds`, `exit_code`,
   `strict_completion`;
 - `test_artifacts`: files left in `native/test-artifacts/` with sizes and the

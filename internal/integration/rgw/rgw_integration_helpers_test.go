@@ -4,6 +4,7 @@ package rgw_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -15,40 +16,63 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/expect"
 )
 
-// rgwSyncStatsBound bounds one explicit stats synchronization of a few small
-// buckets. It is its own phase inside the test's context, so a stalled
-// synchronization fails with its own deadline and leaves the test's remaining
-// time for the failure's evidence.
-const rgwSyncStatsBound = 2 * time.Minute
+// rgwAdminStepBound bounds one radosgw-admin command of a scenario whose
+// whole run, cluster start included, stays under this bound in CI: there a
+// command still running after it hangs. A scenario that runs longer than the
+// bound as a whole says nothing about its commands, so its commands, such as
+// gc process and period update, keep the test's context. The bound is its
+// own phase inside the test's context: a command that hangs fails at it,
+// with the main thread's frames that Gateway.Admin reports for a command its
+// supervisor stopped, and leaves the test's remaining time for the failure's
+// evidence. Under the test's whole context the first such command would use
+// up the budget of every later step.
+const rgwAdminStepBound = 2 * time.Minute
 
-// rgwSyncStats runs one native stats synchronization, user or account stats
-// with --sync-stats, through gateway.Admin under rgwSyncStatsBound. It never
-// repeats the command: a stopped or failed synchronization may have changed
-// native counters, and its outcome is unknown. A failure names how the command
-// ended, its phase deadline and elapsed time, and the gateway container's
-// generation and state and the cluster's OSD map summary, each read once
-// under its own short bound after the failure.
-func rgwSyncStats(t *testing.T, ctx context.Context, cluster *ceph.Container, gateway *rgw.Gateway, args ...string) {
+// rgwAdminStep runs one native command through gateway.Admin under
+// rgwAdminStepBound and returns its result unchanged, for a caller that
+// examines the error. It never repeats the command.
+func rgwAdminStep(ctx context.Context, gateway *rgw.Gateway, args ...string) ([]byte, error) {
+	phase, cancel := context.WithTimeout(ctx, rgwAdminStepBound)
+	defer cancel()
+	return gateway.Admin(phase, args...)
+}
+
+// rgwRequireAdminStep runs one native command as rgwAdminStep does and fails
+// the test when it fails. It never repeats the command: a stopped or failed
+// mutation may have changed native state, and its outcome is unknown. A
+// failure names how the command ended, its phase deadline and elapsed time,
+// and the gateway container's generation and state and the cluster's OSD
+// map summary, pools and placement group states, read once under a short
+// bound after the failure.
+func rgwRequireAdminStep(t *testing.T, ctx context.Context, cluster *ceph.Container, gateway *rgw.Gateway, args ...string) []byte {
 	t.Helper()
-	phase, cancel := context.WithTimeout(ctx, rgwSyncStatsBound)
+	phase, cancel := context.WithTimeout(ctx, rgwAdminStepBound)
 	defer cancel()
 	deadline, _ := phase.Deadline()
 	started := time.Now()
-	_, err := gateway.Admin(phase, args...)
+	data, err := gateway.Admin(phase, args...)
 	if err == nil {
-		return
+		return data
 	}
 	elapsed := time.Since(started)
-	end := rgwSyncStatsEnd(err, ctx.Err(), phase.Err())
+	end := rgwAdminStepEnd(err, ctx.Err(), phase.Err())
 	t.Fatalf("native %s: %s after %s (phase bound %s, deadline %s); %s; %s; error: %v", strings.Join(args, " "), end,
-		elapsed.Round(time.Millisecond), rgwSyncStatsBound, deadline.UTC().Format(time.RFC3339Nano),
+		elapsed.Round(time.Millisecond), rgwAdminStepBound, deadline.UTC().Format(time.RFC3339Nano),
 		rgwSyncStatsGateway(ctx, gateway), rgwSyncStatsOSDs(ctx, cluster), err)
+	return nil
 }
 
-// rgwSyncStatsEnd classifies how a failed synchronization ended: by the
+// rgwSyncStats runs one native stats synchronization, user or account stats
+// with --sync-stats, as rgwRequireAdminStep runs any command.
+func rgwSyncStats(t *testing.T, ctx context.Context, cluster *ceph.Container, gateway *rgw.Gateway, args ...string) {
+	t.Helper()
+	rgwRequireAdminStep(t, ctx, cluster, gateway, args...)
+}
+
+// rgwAdminStepEnd classifies how a failed command ended: by the
 // supervisor at its own limit, by the phase deadline, by the test's context,
 // with a stop that could not be confirmed, or by a native exit.
-func rgwSyncStatsEnd(err, testErr, phaseErr error) string {
+func rgwAdminStepEnd(err, testErr, phaseErr error) string {
 	var unstopped *ceph.NativeCommandUnstoppedError
 	var native *ceph.NativeFailure
 	switch {
@@ -93,7 +117,44 @@ func rgwSyncStatsOSDs(parent context.Context, cluster *ceph.Container) string {
 	if len(text) > 512 {
 		text = text[:512] + " [truncated]"
 	}
-	return "OSD map: " + text
+	return "OSD map: " + text + "; " + rgwSyncStatsPools(ctx, cluster)
+}
+
+// rgwSyncStatsPools names each pool with its ID, placement group count and
+// the OSD map epoch of its last change, and the placement group states. A
+// stopped command's error names the pool and placement group of the request
+// it waited for; this says what state they were in right after.
+func rgwSyncStatsPools(ctx context.Context, cluster *ceph.Container) string {
+	data, err := cluster.Ceph(ctx, "osd", "pool", "ls", "detail", "--format", "json")
+	var pools []struct {
+		ID      int64  `json:"pool_id"`
+		Name    string `json:"pool_name"`
+		PGs     int    `json:"pg_num"`
+		Changed any    `json:"last_change"`
+	}
+	if err == nil {
+		err = json.Unmarshal(data, &pools)
+	}
+	if err != nil {
+		return "pools: unavailable: " + err.Error()
+	}
+	names := make([]string, 0, len(pools))
+	for _, pool := range pools {
+		names = append(names, fmt.Sprintf("%d %s (%d PGs, changed e%v)", pool.ID, pool.Name, pool.PGs, pool.Changed))
+	}
+	text := "pools: " + strings.Join(names, ", ")
+	if len(text) > 1024 {
+		text = text[:1024] + " [truncated]"
+	}
+	states, err := cluster.Ceph(ctx, "pg", "stat")
+	if err != nil {
+		return text + "; PGs: unavailable: " + err.Error()
+	}
+	summary := strings.TrimSpace(string(states))
+	if len(summary) > 256 {
+		summary = summary[:256] + " [truncated]"
+	}
+	return text + "; PGs: " + summary
 }
 
 // Explicit synchronization prepares deterministic native accounting for the

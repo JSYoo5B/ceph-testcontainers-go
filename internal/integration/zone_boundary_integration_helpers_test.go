@@ -3,7 +3,6 @@
 package integration_test
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -249,54 +248,7 @@ func interfaceWithAddress(out string, addr netip.Addr) (string, error) {
 	}
 }
 
-// zoneProbeResult is one probe run: the requested count, the round trips that
-// completed and the attempts that failed.
-type zoneProbeResult struct {
-	Requested int
-	Samples   []float64
-	Errors    []string
-}
-
-func parseZoneProbe(requested int, out string) (zoneProbeResult, error) {
-	var raw struct {
-		Samples []float64 `json:"samples_ms"`
-		Errors  []string  `json:"errors"`
-	}
-	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &raw); err != nil {
-		return zoneProbeResult{}, fmt.Errorf("probe output %q: %w", out, err)
-	}
-	if len(raw.Samples)+len(raw.Errors) != requested {
-		return zoneProbeResult{}, fmt.Errorf("probe reported %d samples and %d errors for %d attempts", len(raw.Samples), len(raw.Errors), requested)
-	}
-	for _, s := range raw.Samples {
-		if s < 0 || math.IsNaN(s) || math.IsInf(s, 0) {
-			return zoneProbeResult{}, fmt.Errorf("probe sample %v is not a duration", s)
-		}
-	}
-	return zoneProbeResult{Requested: requested, Samples: raw.Samples, Errors: raw.Errors}, nil
-}
-
 type zoneRTT = harness.ZoneRTT
-
-func summarizeZoneRTT(r zoneProbeResult) zoneRTT {
-	s := zoneRTT{Requested: r.Requested, OK: len(r.Samples), Errors: r.Errors}
-	if s.OK == 0 {
-		return s
-	}
-	sorted := slices.Clone(r.Samples)
-	slices.Sort(sorted)
-	rank := func(p float64) float64 {
-		i := int(math.Ceil(p*float64(len(sorted)))) - 1
-		return sorted[max(0, min(i, len(sorted)-1))]
-	}
-	if n := len(sorted); n%2 == 1 {
-		s.Median = sorted[n/2]
-	} else {
-		s.Median = (sorted[n/2-1] + sorted[n/2]) / 2
-	}
-	s.P10, s.P90 = rank(0.10), rank(0.90)
-	return s
-}
 
 func zoneComplete(s zoneRTT) error {
 	if s.Requested == 0 || s.OK != s.Requested {
@@ -381,7 +333,7 @@ func classifyTwoSubnetPath(r zoneRTT) string {
 		return "not executed"
 	case r.OK == r.Requested:
 		return "forwarded"
-	case harness.CheckZoneCut(r) == nil:
+	case harness.CheckZoneCut(r, netip.Addr{}) == nil:
 		return "timed out"
 	case r.OK == 0:
 		return "connect failed"

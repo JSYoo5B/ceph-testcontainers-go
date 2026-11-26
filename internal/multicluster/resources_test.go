@@ -7,9 +7,50 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/containerd/errdefs"
+	"github.com/moby/moby/api/types/container"
+	"github.com/testcontainers/testcontainers-go"
 )
+
+type controlInspection struct {
+	testcontainers.Container
+	response *container.InspectResponse
+	err      error
+	calls    int
+}
+
+func (c *controlInspection) IsRunning() bool { return true }
+
+func (c *controlInspection) Inspect(context.Context) (*container.InspectResponse, error) {
+	c.calls++
+	return c.response, c.err
+}
+
+func TestControlAdmissionUsesFreshDockerInspection(t *testing.T) {
+	broken := errors.New("inspect unavailable")
+	for _, test := range []struct {
+		name     string
+		response *container.InspectResponse
+		err      error
+		invalid  bool
+	}{
+		{"running", &container.InspectResponse{State: &container.State{Running: true}}, nil, false},
+		{"stopped despite cached running flag", &container.InspectResponse{State: &container.State{}}, nil, true},
+		{"missing state", &container.InspectResponse{}, nil, true},
+		{"missing inspection", nil, nil, true},
+		{"inspection failure", nil, broken, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			control := &controlInspection{response: test.response, err: test.err}
+			err := inspectControlRunning(t.Context(), "source", control)
+			if control.calls != 1 || (err == nil) != (test.response != nil && test.response.State != nil && test.response.State.Running) || (errors.Is(err, ceph.ErrInvalidRequest)) != test.invalid || (test.err != nil && !errors.Is(err, test.err)) {
+				t.Fatalf("fresh inspection = %v, calls=%d", err, control.calls)
+			}
+		})
+	}
+}
 
 func TestCleanupRetriesOnlyFailedResources(t *testing.T) {
 	var owned Resources

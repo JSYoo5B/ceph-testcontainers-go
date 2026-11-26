@@ -41,6 +41,47 @@ func TestMDSExpectationMatchesPinnedBaseline(t *testing.T) {
 	}
 }
 
+func TestMDSExpectationStandbySelectorsRequireDistinctDaemons(t *testing.T) {
+	for _, replay := range []bool{false, true} {
+		observed := cephfs.FilesystemStatus{FilesystemName: "tc-cephfs", FilesystemID: 1, MaxMDS: 1}
+		list := []cephfs.MDSStatus{
+			{Name: "a", Rank: -1, GID: 7, State: "up:standby", Owned: true},
+			{Name: "b", Rank: -1, GID: 9, State: "up:standby", Owned: true},
+		}
+		if replay {
+			for i := range list {
+				list[i].Rank, list[i].State = 0, "up:standby-replay"
+			}
+			observed.StandbyReplay = list
+		} else {
+			observed.Standby = list
+		}
+		for _, test := range []struct {
+			name      string
+			selectors []MDSDaemon
+			matched   bool
+		}{
+			{"name then alias", []MDSDaemon{{Name: "a"}, {GID: 7}}, false},
+			{"alias then name", []MDSDaemon{{GID: 7}, {Name: "a"}}, false},
+			{"distinct", []MDSDaemon{{Name: "a"}, {GID: 9}}, true},
+			{"absent", []MDSDaemon{{Name: "a"}, {GID: 11}}, false},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				want := MDSs{}
+				if replay {
+					want.StandbyReplay = &MDSStandbys{Count: 2, Daemons: test.selectors}
+				} else {
+					want.Standby = &MDSStandbys{Count: 2, Daemons: test.selectors}
+				}
+				got, err := want.Evaluate(observed)
+				if err != nil || got.Matched != test.matched {
+					t.Fatalf("selectors=%+v matched=%t mismatches=%+v error=%v", test.selectors, got.Matched, got.Mismatches, err)
+				}
+			})
+		}
+	}
+}
+
 func TestMDSExpectationReportsEachFieldFromTheEvaluatedObservation(t *testing.T) {
 	observed := cephfs.FilesystemStatus{
 		FilesystemName: "tc-cephfs", FilesystemID: 2, MaxMDS: 3,

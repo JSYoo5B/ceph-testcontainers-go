@@ -12,6 +12,8 @@ func TestParseRefusesIncompleteControlEvidence(t *testing.T) {
 		{"observe", `{"action":"observe","name":"owned","exists":false,"error":"permission denied"}`},
 		{"observe", `{"action":"observe","name":"owned","exists":true,"state":"ACTIVE","uuid":"owned","open":0,"event":1,"major":253,"minor":1,"live":"0 8 error","in_flight":[0,0]}`},
 		{"observe", `{"action":"observe","name":"owned","exists":true,"state":"ACTIVE","uuid":"owned","open":0,"event":1,"major":253,"minor":1,"live":"0 8 error","inactive":null,"in_flight":[0,null]}`},
+		{"settled", `{"action":"settled","name":"owned","id":"step","done":false}`},
+		{"settled", `{"action":"settled","name":"owned","id":"step","done":false,"started":null}`},
 		{"settled", `{"action":"settled","name":"owned","id":"step","done":true,"error":""}`},
 		{"settled", `{"action":"settled","name":"owned","id":"step","done":true,"rc":null,"error":""}`},
 		{"loopid", `{"action":"loopid","name":"owned","file":"/tc-blk/owned","inode":1}`},
@@ -26,9 +28,14 @@ func TestParseRefusesIncompleteControlEvidence(t *testing.T) {
 }
 
 func TestParseKeepsUnknownStepAndExplicitAbsenceDistinct(t *testing.T) {
-	pending, err := Parse([]byte(`{"action":"settled","name":"owned","id":"step","done":false}`), "settled")
-	if err != nil || pending.Done {
-		t.Fatalf("pending: %+v %v", pending, err)
+	for _, tc := range []struct {
+		value   string
+		started bool
+	}{{"false", false}, {"true", true}} {
+		pending, err := Parse([]byte(`{"action":"settled","name":"owned","id":"step","done":false,"started":`+tc.value+`}`), "settled")
+		if err != nil || pending.Done || pending.Started != tc.started {
+			t.Fatalf("pending: %+v %v", pending, err)
+		}
 	}
 	gone, err := Parse([]byte(`{"action":"observe","name":"owned","exists":false}`), "observe")
 	if err != nil || gone.Exists {

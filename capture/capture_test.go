@@ -15,6 +15,7 @@ import (
 	"sync"
 	"testing"
 	"testing/iotest"
+	"testing/synctest"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -119,7 +120,7 @@ func (f *fakeBackend) target(_ context.Context, id, network string) (nshelper.Ta
 	}
 	if f.targetCalls > 1 {
 		if f.targetGone {
-			return nshelper.Target{}, errdefs.ErrNotFound
+			return nshelper.Target{}, &nshelper.ContainerInspectError{Err: errdefs.ErrNotFound}
 		}
 		if f.targetAfter != nil {
 			return *f.targetAfter, nil
@@ -862,5 +863,114 @@ func TestStopJoinsIndependentCaptureAndTransportFailures(t *testing.T) {
 	report, err := session.Stop(context.Background())
 	if !errors.Is(err, ceph.ErrNativeFailure) || !errors.Is(err, ceph.ErrEnvironmentUnavailable) || !report.HelperRemoved {
 		t.Fatalf("independent failures were not retained: %+v, %v", report, err)
+	}
+}
+
+// slowStopBackend delays only the first inspection after SIGTERM. It can
+// also return a stopped state after the inspection context has expired.
+type slowStopBackend struct {
+	*fakeBackend
+	grace          time.Duration
+	stoppedLate    bool
+	delayed        bool
+	inspectBudget  time.Duration
+	killAttempts   int
+	killContextErr error
+}
+
+func (f *slowStopBackend) state(ctx context.Context, id string) (helperState, error) {
+	if len(f.signals) != 1 || f.delayed {
+		return f.fakeBackend.state(ctx, id)
+	}
+	f.delayed = true
+	if deadline, ok := ctx.Deadline(); ok {
+		f.inspectBudget = time.Until(deadline)
+	}
+	if f.stoppedLate {
+		time.Sleep(2 * f.grace)
+		f.running = false
+		return f.fakeBackend.state(ctx, id)
+	}
+	select {
+	case <-ctx.Done():
+		return helperState{}, ctx.Err()
+	case <-time.After(3 * f.grace):
+		return f.fakeBackend.state(ctx, id)
+	}
+}
+
+func (f *slowStopBackend) signal(ctx context.Context, id, signal string) error {
+	if signal == "SIGKILL" {
+		f.killAttempts++
+		f.killContextErr = ctx.Err()
+	}
+	return f.fakeBackend.signal(ctx, id, signal)
+}
+
+func TestStopBoundsGraceInspectionAndSettlesAfterward(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		stoppedLate bool
+		wantEnd     EndReason
+		wantElapsed time.Duration
+	}{
+		{name: "unresponsive running helper", wantEnd: EndKilled, wantElapsed: time.Second},
+		{name: "late stopped response", stoppedLate: true, wantEnd: EndUnknown, wantElapsed: 2 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := request(t)
+			req.StopGrace = time.Second
+			f := &slowStopBackend{fakeBackend: newFakeBackend(), grace: req.StopGrace, stoppedLate: tc.stoppedLate}
+			f.ignoreTerm = true
+			session, err := start(t.Context(), f, fakeTarget{}, req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			synctest.Test(t, func(t *testing.T) {
+				start := time.Now()
+				report, err := session.Stop(t.Context())
+				if !errors.Is(err, ErrFailed) || report.End != tc.wantEnd || report.EndedAt.IsZero() ||
+					!report.HelperRemoved || !report.Retrieved || report.File.Status != FileValid {
+					t.Fatalf("report = %+v, error = %v", report, err)
+				}
+				if f.inspectBudget != req.StopGrace || time.Since(start) != tc.wantElapsed ||
+					f.killAttempts != 1 || f.killContextErr != nil {
+					t.Fatalf("inspect budget = %v, elapsed = %v, kill attempts = %d, kill context error = %v",
+						f.inspectBudget, time.Since(start), f.killAttempts, f.killContextErr)
+				}
+			})
+		})
+	}
+}
+
+type oneByteReadFailure struct {
+	err error
+}
+
+func (r *oneByteReadFailure) Read(p []byte) (int, error) {
+	if r.err == nil {
+		return 0, io.EOF
+	}
+	p[0] = 0
+	err := r.err
+	r.err = nil
+	return 1, err
+}
+
+func TestStopPreservesDownloadErrorAtFileLimit(t *testing.T) {
+	f := newFakeBackend()
+	req := request(t)
+	data := pcapFile(uint32(req.SnapLen))
+	data = append(data, bytes.Repeat([]byte{0}, int(req.maxBytes())-len(data))...)
+	failure := errors.New("synthetic error on the lookahead byte")
+	f.copyReader = io.NopCloser(io.MultiReader(bytes.NewReader(data), &oneByteReadFailure{err: failure}))
+	session, err := startFake(t, f, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := session.Stop(t.Context())
+	if !errors.Is(err, failure) || errors.Is(err, ErrFailed) || report.Retrieved || report.File.Complete ||
+		report.File.Status != "" || report.RetrievedBytes != req.maxBytes() || !report.HelperRemoved {
+		t.Fatalf("report = %+v, error = %v", report, err)
 	}
 }

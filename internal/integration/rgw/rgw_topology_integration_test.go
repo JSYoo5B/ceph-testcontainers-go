@@ -15,6 +15,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
+	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -31,6 +32,15 @@ func TestRGWTopology(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 			defer cancel()
 			cluster, _ := harness.NewServiceCluster(t, options...)
+			docker, err := testcontainers.NewDockerClientWithOpts(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := docker.Close(); err != nil {
+					t.Error(err)
+				}
+			})
 			initial := clusteraccess.Gateways(t, cluster)
 			if len(initial) != 1 || initial[0].GatewayName != "gateway-a" {
 				t.Fatal("Run did not expose its initially configured gateway")
@@ -104,6 +114,11 @@ func TestRGWTopology(t *testing.T) {
 			if err := second.Remove(ctx); err != nil {
 				t.Fatal(err)
 			}
+			// A removed gateway leaves no container. The engine is asked by
+			// the ID recorded before the removal, before the cluster's
+			// teardown can remove a leftover.
+			_, inspectErr := docker.ContainerInspect(ctx, oldID, mobycl.ContainerInspectOptions{})
+			harness.RequireContainerAbsent(t, "RGW gateway-b", oldID, inspectErr)
 			if len(clusteraccess.Gateways(t, cluster)) != 1 || len(clusteraccess.ServiceContainers(t, cluster)) != 1 {
 				t.Fatal("removed gateway is still owned")
 			}

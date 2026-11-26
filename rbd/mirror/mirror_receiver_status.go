@@ -70,8 +70,10 @@ type rbdReceiverWitness struct {
 // With no names, all current owned daemons (including stopped/partial ones)
 // are expected. Explicit names support waiting for an HA survivor while another
 // owned daemon is stopped. It never adopts a process, bootstraps a peer or
-// creates an image. The observation takes at most 30 seconds, bounded by ctx,
-// including owner/member admission. A partial report may accompany an error.
+// creates an image. The wait for the fixture's gate, behind another observation
+// or a mutation, is bounded by ctx alone. Once the gate is held, the observation
+// takes at most 30 seconds or until ctx ends, including member admission. A
+// partial report may accompany an error.
 //
 // Ready requires that every expected daemon runs, has discovered the pool, peer
 // and exact namespace mapping and reports a unique instance; that exactly one
@@ -208,11 +210,12 @@ func (m *Container) receiverStatusForScope(ctx context.Context, scope *rbdReceiv
 	if m == nil {
 		return result, previous, rbdReceiverGuard("RBD receiver fixture is unavailable")
 	}
-	caller := ctx
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	observation := rbdobservation.Begin(caller, "receiver")
-	defer func() { observation.Finish(ctx, observationErr) }()
+	observation := rbdobservation.Begin(ctx, "receiver")
+	var cancel context.CancelFunc = func() {}
+	defer func() {
+		observation.Finish(ctx, observationErr)
+		cancel()
+	}()
 	if err := multicluster.LockObservation(ctx, &m.mu); err != nil {
 		return result, previous, rbdReceiverQuery(ctx, "admit RBD receiver observation", err)
 	}
@@ -221,6 +224,7 @@ func (m *Container) receiverStatusForScope(ctx context.Context, scope *rbdReceiv
 		m.mu.Unlock()
 	}()
 	observation.Acquired()
+	ctx, cancel = rbdGateContext(ctx)
 	observation.Stage("capture-receiver-witness")
 	if scope == nil {
 		scope = m.pair.originalReceiverScope()
@@ -245,7 +249,7 @@ func (m *Container) receiverStatusForScope(ctx context.Context, scope *rbdReceiv
 	for pass, observations := range []map[string]rbdReceiverNativeObservation{first, second} {
 		for _, name := range w.names {
 			member := w.members[name]
-			observation, err := m.readRBDReceiver(ctx, scope, member)
+			observation, err := m.readRBDReceiver(ctx, scope, member, rbdReceiverRead)
 			observations[name] = observation
 			result.Daemons[name] = observation.report
 			if observation.problem != "" {
@@ -288,11 +292,11 @@ type rbdReceiverNativeObservation struct {
 	problem string
 }
 
-func (m *Container) readRBDReceiver(ctx context.Context, scope *rbdReceiverScope, member rbdReceiverMemberWitness) (rbdReceiverNativeObservation, error) {
+func (m *Container) readRBDReceiver(ctx context.Context, scope *rbdReceiverScope, member rbdReceiverMemberWitness, read rbdNativeRead) (rbdReceiverNativeObservation, error) {
 	var result rbdReceiverNativeObservation
 	result.report.ContainerID, result.report.ClientName = member.cid, member.client
 	if err := multicluster.LockObservation(ctx, &member.daemon.mu); err != nil {
-		return result, rbdReceiverQuery(ctx, "admit RBD receiving process observation", err)
+		return result, read.query(ctx, "admit RBD receiving process observation", err)
 	}
 	defer member.daemon.mu.Unlock()
 	if member.daemon.terminated {
@@ -306,14 +310,15 @@ func (m *Container) readRBDReceiver(ctx context.Context, scope *rbdReceiverScope
 	before, err := member.handle.State(ctx)
 	if err != nil {
 		result.problem = "receiver-state-query-failed"
-		return result, rbdReceiverQuery(ctx, "inspect RBD receiving process", err)
+		return result, read.query(ctx, "inspect RBD receiving process", err)
 	}
 	if !normalRBDReceiverProcess(before) {
 		result.problem = "receiver-not-running"
 		return result, nil
 	}
-	result.report.Running, result.report.StartedAt = true, before.StartedAt
-	data, err := rbdReceiverRead.exec(ctx, member.handle, "read RBD receiving process discovery", "ceph", "--admin-daemon", "/tmp/rbd-mirror.asok", "rbd", "mirror", "status")
+	pid, started := before.Pid, before.StartedAt
+	result.report.Running, result.report.StartedAt = true, started
+	data, err := read.exec(ctx, member.handle, "read RBD receiving process discovery", "ceph", "--admin-daemon", "/tmp/rbd-mirror.asok", "rbd", "mirror", "status")
 	if err != nil {
 		result.problem = "receiver-status-query-failed"
 		return result, err
@@ -321,7 +326,7 @@ func (m *Container) readRBDReceiver(ctx context.Context, scope *rbdReceiverScope
 	selected, present, err := decodeRBDReceiverDiscovery(data, scope.selection[0], m.receiver.peer)
 	if err != nil {
 		result.problem = "receiver-status-invalid"
-		return result, err
+		return result, read.guard(err.Error())
 	}
 	if !present {
 		result.problem = "receiver-scope-undiscovered"
@@ -338,9 +343,9 @@ func (m *Container) readRBDReceiver(ctx context.Context, scope *rbdReceiverScope
 	after, err := member.handle.State(ctx)
 	if err != nil {
 		result.problem = "receiver-state-query-failed"
-		return result, rbdReceiverQuery(ctx, "recheck RBD receiving process", err)
+		return result, read.query(ctx, "recheck RBD receiving process", err)
 	}
-	if !normalRBDReceiverProcess(after) || before.StartedAt != after.StartedAt || before.Pid != after.Pid {
+	if !normalRBDReceiverProcess(after) || started != after.StartedAt || pid != after.Pid {
 		result.problem = "receiver-process-changing"
 		result.report.Running = false
 	}

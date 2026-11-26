@@ -18,6 +18,8 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
+var errBlockIORecoveryRead = errors.New("recovery read did not return acknowledged bytes")
+
 func testBlockIOMainDeviceRecovery(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 18*time.Minute)
 	defer cancel()
@@ -97,15 +99,45 @@ func testBlockIOMainDeviceRecovery(t *testing.T) {
 		}
 		return time.Since(start)
 	}
-	read := func(object string) {
+	read := func(object, phase string) {
 		t.Helper()
 		result := blockIOCommand(t, ctx, cluster, client, "get", object, "-")
 		if !result.Complete() || result.ExitCode != 0 || !bytes.Equal(result.Stdout, payload) {
-			t.Fatalf("acknowledged bytes differ: object=%s exit=%d timeout=%t bytes=%d", object, result.ExitCode, result.TimedOut, len(result.Stdout))
+			blockIOReadDiagnostics(t, ctx, cluster, client, osd, object, phase)
+			t.Fatalf("acknowledged read failed: phase=%s object=%s complete=%t exit=%d timeout=%t bytes=%d stderr=%q", phase, object, result.Complete(), result.ExitCode, result.TimedOut, len(result.Stdout), result.Stderr)
 		}
 	}
+	readAfterRecovery := func(object string) {
+		t.Helper()
+		result, attempt, err := blockIORecoveryRead(ctx, 45*time.Second, 500*time.Millisecond, payload,
+			func(readCtx context.Context) (ceph.NativeCommandResult, error) {
+				return blockIONativeCommand(readCtx, cluster, client, "get", object, "-")
+			},
+			func(readCtx context.Context, attempt int, result ceph.NativeCommandResult) {
+				if attempt == 1 {
+					blockIOReadDiagnostics(t, readCtx, cluster, client, osd, object, "after-recovery-first-timeout")
+				}
+				t.Logf("BLOCKIO_RECOVERY_READ_WAIT attempt=%d stderr=%q", attempt, result.Stderr)
+			})
+		if err != nil {
+			// Final diagnostics have their own short bound after the recovery window.
+			diagnosticCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			blockIOReadDiagnostics(t, diagnosticCtx, cluster, client, osd, object, "after-recovery")
+			t.Fatalf("acknowledged read failed after recovery: attempt=%d error=%v complete=%t exit=%d timeout=%t bytes=%d stderr=%q",
+				attempt, err, result.Complete(), result.ExitCode, result.TimedOut, len(result.Stdout), result.Stderr)
+		}
+		t.Logf("BLOCKIO_RECOVERY_READ attempts=%d bytes=%d", attempt, len(result.Stdout))
+	}
 	baseline := put("acknowledged")
-	read("acknowledged")
+	read("acknowledged", "baseline")
+	// Prove that a native read failure retains its stderr before faulting the OSD.
+	missing := blockIOCommand(t, ctx, cluster, client, "get", "absent-read-control", "-")
+	if !missing.Complete() || missing.ExitCode == 0 || len(missing.Stderr) == 0 {
+		t.Fatalf("missing-object read did not provide a complete failure diagnostic: complete=%t exit=%d timeout=%t stderr=%q",
+			missing.Complete(), missing.ExitCode, missing.TimedOut, missing.Stderr)
+	}
+	t.Logf("BLOCKIO_READ_CONTROL missing_object_exit=%d stderr=%q", missing.ExitCode, missing.Stderr)
 	const delay = 250 * time.Millisecond
 	delayEligible := true
 	if err := backend.Apply(ctx, blockio.Profile{Delay: delay}); err != nil {
@@ -123,7 +155,7 @@ func testBlockIOMainDeviceRecovery(t *testing.T) {
 			t.Fatalf("delay request and observed kernel table differ: %+v", status)
 		}
 		delayed := put("delayed")
-		read("delayed")
+		read("delayed", "delay")
 		if err := backend.Restore(ctx); err != nil {
 			t.Fatal(err)
 		}
@@ -174,12 +206,14 @@ func testBlockIOMainDeviceRecovery(t *testing.T) {
 	if err := osd.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
+	blockIOClusterObservation(t, ctx, cluster, client, "after-osd-start")
 	if err := observer.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	read("acknowledged")
+	blockIOClusterObservation(t, ctx, cluster, client, "after-clean")
+	readAfterRecovery("acknowledged")
 	put("after-recovery")
-	read("after-recovery")
+	read("after-recovery", "after-recovery-write")
 	if err := backend.Terminate(ctx); !errors.Is(err, ceph.ErrNativeFailure) {
 		t.Fatalf("live cluster must retain its backend with ErrNativeFailure: %v", err)
 	}
@@ -206,12 +240,100 @@ func testBlockIOMainDeviceRecovery(t *testing.T) {
 
 func blockIOCommand(t *testing.T, ctx context.Context, cluster *ceph.Container, client testcontainers.Container, args ...string) ceph.NativeCommandResult {
 	t.Helper()
-	argv := []string{"rados", "--client_mount_timeout", "5", "--rados_mon_op_timeout", "5", "--rados_osd_op_timeout", "15", "-p", "blockio-proof"}
-	result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{Argv: append(argv, args...), Timeout: 25 * time.Second, MaxStdout: 2 << 20, MaxStderr: 64 << 10, Label: "block I/O native oracle"})
+	result, err := blockIONativeCommand(ctx, cluster, client, args...)
 	if err != nil && !errors.Is(err, ceph.ErrNativeCommandIncomplete) {
 		t.Fatal(err)
 	}
 	return result
+}
+
+func blockIONativeCommand(ctx context.Context, cluster *ceph.Container, client testcontainers.Container, args ...string) (ceph.NativeCommandResult, error) {
+	argv := []string{"rados", "--client_mount_timeout", "5", "--rados_mon_op_timeout", "5", "--rados_osd_op_timeout", "15", "-p", "blockio-proof"}
+	return cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{Argv: append(argv, args...), Timeout: 25 * time.Second, MaxStdout: 2 << 20, MaxStderr: 64 << 10, Label: "block I/O native oracle"})
+}
+
+func blockIORecoveryRead(ctx context.Context, budget, retryInterval time.Duration, payload []byte,
+	read func(context.Context) (ceph.NativeCommandResult, error),
+	onTimeout func(context.Context, int, ceph.NativeCommandResult),
+) (ceph.NativeCommandResult, int, error) {
+	recoveryCtx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	deadline, _ := recoveryCtx.Deadline()
+	var result ceph.NativeCommandResult
+	for attempt := 1; ; attempt++ {
+		if err := recoveryCtx.Err(); err != nil {
+			return result, attempt - 1, err
+		}
+		var err error
+		result, err = read(recoveryCtx)
+		if err != nil {
+			return result, attempt, err
+		}
+		if err := recoveryCtx.Err(); err != nil {
+			return result, attempt, err
+		}
+		if !time.Now().Before(deadline) {
+			return result, attempt, context.DeadlineExceeded
+		}
+		if result.Complete() && result.ExitCode == 0 && bytes.Equal(result.Stdout, payload) {
+			return result, attempt, nil
+		}
+		if !blockIORecoveryReadRetryable(result) {
+			return result, attempt, errBlockIORecoveryRead
+		}
+		if onTimeout != nil {
+			onTimeout(recoveryCtx, attempt, result)
+		}
+		if err := recoveryCtx.Err(); err != nil {
+			return result, attempt, err
+		}
+		if !time.Now().Before(deadline) {
+			return result, attempt, context.DeadlineExceeded
+		}
+		timer := time.NewTimer(retryInterval)
+		select {
+		case <-recoveryCtx.Done():
+			timer.Stop()
+			return result, attempt, recoveryCtx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func blockIOClusterObservation(t *testing.T, ctx context.Context, cluster *ceph.Container, client testcontainers.Container, phase string) {
+	t.Helper()
+	result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
+		Argv: []string{"ceph", "status", "--format", "json"}, Timeout: 10 * time.Second,
+		MaxStdout: 64 << 10, MaxStderr: 16 << 10, Label: "block I/O cluster observation",
+	})
+	t.Logf("BLOCKIO_CLUSTER phase=%s complete=%t exit=%d timeout=%t error=%v stdout=%q stderr=%q",
+		phase, result.Complete(), result.ExitCode, result.TimedOut, err, result.Stdout, result.Stderr)
+}
+
+func blockIOReadDiagnostics(t *testing.T, ctx context.Context, cluster *ceph.Container, client testcontainers.Container, osd *ceph.OSDContainer, object, phase string) {
+	t.Helper()
+	blockIOClusterObservation(t, ctx, cluster, client, phase+"-read-failure")
+	stat, statErr := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
+		Argv:    []string{"rados", "--client_mount_timeout", "5", "--rados_mon_op_timeout", "5", "--rados_osd_op_timeout", "15", "-p", "blockio-proof", "stat", object},
+		Timeout: 25 * time.Second, MaxStdout: 16 << 10, MaxStderr: 16 << 10, Label: "block I/O object observation",
+	})
+	t.Logf("BLOCKIO_OBJECT phase=%s object=%s complete=%t exit=%d timeout=%t error=%v stdout=%q stderr=%q",
+		phase, object, stat.Complete(), stat.ExitCode, stat.TimedOut, statErr, stat.Stdout, stat.Stderr)
+	logs, err := osd.Logs(ctx)
+	if err != nil {
+		t.Logf("BLOCKIO_OSD_LOG phase=%s error=%v", phase, err)
+		return
+	}
+	defer func() {
+		if err := logs.Close(); err != nil {
+			t.Logf("BLOCKIO_OSD_LOG phase=%s close_error=%v", phase, err)
+		}
+	}()
+	data, err := io.ReadAll(io.LimitReader(logs, 4<<20))
+	if len(data) > 16<<10 {
+		data = data[len(data)-(16<<10):]
+	}
+	t.Logf("BLOCKIO_OSD_LOG phase=%s read_error=%v tail=%q", phase, err, data)
 }
 
 func blockIOStatus(t *testing.T, ctx context.Context, backend *blockio.Container) blockio.Status {

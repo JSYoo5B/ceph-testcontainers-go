@@ -256,3 +256,57 @@ func TestRedactedAdminErrnoRequiresNativeEvidence(t *testing.T) {
 		}
 	}
 }
+
+// stoppedStderr is standard error of a radosgw-admin that waited for an OSD
+// when the supervisor stopped it with SIGABRT: a log line, then the report of
+// Ceph's signal handler for the main thread.
+const stoppedStderr = `2026-11-20T04:33:25.001+0000 7f0e5c0d5980 -1 auth: unable to find a keyring val=AQBsecretsecretsecretsecretsecret==
+*** Caught signal (Aborted) **
+ in thread 7f0e5c0d5980 thread_name:radosgw-admin
+ ceph version 21.2.0 (0123456789abcdef0123456789abcdef01234567) umbrella (dev - RelWithDebInfo)
+ 1: /lib64/libc.so.6(+0x3fc30) [0x7f0e5d03fc30]
+ 2: /lib64/libc.so.6(+0x8b3ba) [0x7f0e5d08b3ba]
+ 3: /lib64/libc.so.6(+0x8dc10) [0x7f0e5d08dc10]
+ 4: pthread_cond_wait()
+ 5: (std::condition_variable::wait(std::unique_lock<std::mutex>&)+0x10) [0x7f0e5d4f1b40]
+ 6: (librados::v14_2_0::IoCtxImpl::operate_read(object_t const&, ObjectOperation*, ceph::buffer::v15_2_0::list*, int)+0x1f4) [0x7f0e5e6d1a14]
+ 7: (librados::v14_2_0::IoCtx::operate(std::__cxx11::basic_string<char> const&, librados::v14_2_0::ObjectReadOperation*, ceph::buffer::v15_2_0::list*)+0x4a) [0x7f0e5e6a2f0a]
+ 8: (rgw_rados_operate(DoutPrefixProvider const*, librados::v14_2_0::IoCtx&, std::__cxx11::basic_string<char> const&, librados::v14_2_0::ObjectReadOperation&&, optional_yield, int)+0x1b7) [0x5560f1c5a2d7]
+ 9: (RGWSI_BucketIndex_RADOS::cls_bucket_head(DoutPrefixProvider const*, RGWBucketInfo const&, int, optional_yield)+0x2e1) [0x5560f1d07e41]
+ 10: (RGWSI_BucketIndex_RADOS::read_stats(DoutPrefixProvider const*, RGWBucketInfo const&, RGWBucketEnt*, optional_yield)+0xd5) [0x5560f1d0a015]
+ 11: (RGWBucketAdminOp::info(rgw::sal::Driver*, RGWBucketAdminOpState&, RGWFormatterFlusher&, optional_yield, DoutPrefixProvider const*)+0x402) [0x5560f1a40bf2]
+ 12: main()
+ 13: /lib64/libc.so.6(+0x295d0) [0x7f0e5d0295d0]
+ 14: __libc_start_main()
+ 15: _start()
+ 16: radosgw-admin(+0x4a1c2f) [0x5560f14a1c2f]
+ 17: (extra()+0x1) [0x1]
+ NOTE: a copy of the executable, or ` + "`objdump -rdS <executable>`" + ` is needed to interpret this.
+`
+
+func TestStopReport(t *testing.T) {
+	const want = "when it was stopped, thread radosgw-admin was in libc.so.6(+0x3fc30) < libc.so.6(+0x8b3ba) < libc.so.6(+0x8dc10) < pthread_cond_wait < " +
+		"std::condition_variable::wait+0x10 < librados::v14_2_0::IoCtxImpl::operate_read+0x1f4 < librados::v14_2_0::IoCtx::operate+0x4a < rgw_rados_operate+0x1b7 < " +
+		"RGWSI_BucketIndex_RADOS::cls_bucket_head+0x2e1 < RGWSI_BucketIndex_RADOS::read_stats+0xd5 < RGWBucketAdminOp::info+0x402 < main < " +
+		"libc.so.6(+0x295d0) < __libc_start_main < _start < radosgw-admin(+0x4a1c2f) < 1 more frames"
+	got := stopReport([]byte(stoppedStderr))
+	if got != want {
+		t.Fatalf("stop report:\n got %q\nwant %q", got, want)
+	}
+	for _, leaked := range []string{"AQBsecret", "0x7f0e5e6d1a14", "/lib64", "0123456789abcdef", "object_t", "std::__cxx11"} {
+		if strings.Contains(got, leaked) {
+			t.Errorf("stop report exposes %q: %s", leaked, got)
+		}
+	}
+	for name, c := range map[string]struct{ stderr, want string }{
+		"no report":    {"ERROR: could not init bucket: (2) No such file or directory\n", ""},
+		"no backtrace": {"*** Caught signal (Aborted) **\n in thread 7f0e5c0d5980 thread_name:radosgw-admin\n", ""},
+		"no thread":    {"*** Caught signal (Aborted) **\n 1: main()\n", "when it was stopped, a thread was in main"},
+		// A crash that the stop found is not where the command waited.
+		"another signal": {crashStderr, fatalSignalReport(strings.Split(crashStderr, "\n"), false)},
+	} {
+		if got := stopReport([]byte(c.stderr)); got != c.want {
+			t.Errorf("%s: %q, want %q", name, got, c.want)
+		}
+	}
+}

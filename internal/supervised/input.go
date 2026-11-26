@@ -55,9 +55,10 @@ type Attachment struct {
 		Close() error
 	}
 	// Output is the exec's stdout and stderr in Docker's multiplexed stream
-	// format; it ends when the exec has ended.
+	// format. EOF can also come from a closed transport.
 	Output io.Reader
-	// ExitCode returns the exit code of the exec after its output ended.
+	// ExitCode returns a terminal exit code or an error if the exec's
+	// completion cannot be confirmed.
 	ExitCode func(context.Context) (int, error)
 	// Release frees what the attachment holds, after Close.
 	Release func()
@@ -100,14 +101,45 @@ func (a dockerAttacher) AttachExec(ctx context.Context, cmd, env []string) (Atta
 		Input:  hijacked{&attached.HijackedResponse},
 		Output: attached.Reader,
 		ExitCode: func(ctx context.Context) (int, error) {
-			inspected, err := docker.ExecInspect(ctx, created.ID, mobycl.ExecInspectOptions{})
-			if err != nil {
-				return 0, fmt.Errorf("container exec inspect: %w", err)
-			}
-			return inspected.ExitCode, nil
+			return inspectAttachedExit(ctx, docker.Client, created.ID)
 		},
 		Release: func() { _ = docker.Close() },
 	}, nil
+}
+
+var errAttachedExecRunning = errors.New("attached exec is still running")
+
+func inspectAttachedExit(ctx context.Context, docker *mobycl.Client, id string) (int, error) {
+	inspected, err := docker.ExecInspect(ctx, id, mobycl.ExecInspectOptions{})
+	if err != nil {
+		return 0, fmt.Errorf("container exec inspect: %w", err)
+	}
+	if !inspected.Running {
+		return inspected.ExitCode, nil
+	}
+
+	// Docker can close the stream before publishing the terminal exec state.
+	// Allow that state to settle briefly before the caller cancels the marker.
+	settle, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	retry := time.NewTicker(100 * time.Millisecond)
+	defer retry.Stop()
+	for {
+		select {
+		case <-settle.Done():
+			return 0, errAttachedExecRunning
+		case <-retry.C:
+		}
+		inspected, err = docker.ExecInspect(settle, id, mobycl.ExecInspectOptions{})
+		switch {
+		case settle.Err() != nil:
+			return 0, errAttachedExecRunning
+		case err != nil:
+			return 0, fmt.Errorf("container exec inspect: %w", err)
+		case !inspected.Running:
+			return inspected.ExitCode, nil
+		}
+	}
 }
 
 // cappedBuffer keeps up to limit bytes and fails a write past it.
@@ -249,11 +281,11 @@ func RunInputWithExecCushion(ctx context.Context, ctr testcontainers.Container, 
 		return Report{}, err
 	}
 	<-pumped
-	// The output ends with the supervisor, also when a signal killed it
-	// before its cleanup; only its exit code tells. It is inspected under a
-	// bounded context of its own, because the run may have ended as the
-	// output did.
-	inspectCtx, inspectCancel := context.WithTimeout(context.WithoutCancel(ctx), CancelTimeout)
+	// EOF alone cannot establish that the supervisor exited or cleaned up.
+	// Inspect its exit under a separate bound because attempt may have ended
+	// as the output did.
+	const attachedExitInspectTimeout = 10 * time.Second
+	inspectCtx, inspectCancel := context.WithTimeout(context.WithoutCancel(ctx), attachedExitInspectTimeout)
 	defer inspectCancel()
 	code, inspectErr := attachment.ExitCode(inspectCtx)
 	if readErr != nil {
@@ -272,8 +304,8 @@ func RunInputWithExecCushion(ctx context.Context, ctr testcontainers.Container, 
 		return Report{}, err
 	}
 	if inspectErr != nil {
-		// Without the exit code the supervisor may have left its command
-		// running, so it is stopped like a run that ended first.
+		// The supervisor or its command may still run without a terminal
+		// inspection. Confirm the invocation stopped through its marker.
 		err := &BackendError{Op: "inspect " + label + " supervisor", Err: inspectErr}
 		if cancelErr := Cancel(ctx, ctr, label, marker); cancelErr != nil {
 			return Report{}, errors.Join(err, &NotStoppedError{Marker: marker, Err: cancelErr}, attempt.Err())

@@ -144,12 +144,52 @@ class Reader:
 github = Reader()
 
 
+def unfinished_releases(workflow, repository):
+    """The runs of the release workflow that have not finished: Periodic
+    yields its runners to them. A finished run, whatever its conclusion,
+    holds no runner.
+
+    The runs are asked for by status and never by creation date: a run can
+    be re-run for weeks after it was created, and its new attempt is as
+    unfinished as a new run."""
+    found = {}
+    for status in UNFINISHED:
+        pages = github("repos/{}/actions/workflows/{}/runs?status={}&per_page=100".format(repository, workflow, status))
+        for run in (run for page in pages for run in page["workflow_runs"]):
+            # The filter is GitHub's; a run it returns in another state has
+            # finished since and holds nothing.
+            if run.get("status") in UNFINISHED:
+                found[run["id"]] = run
+    return [found[number] for number in sorted(found)]
+
+
+def yield_to(workflow, repository, output):
+    """Write clear=false when a run of workflow is in progress, else
+    clear=true. An unreadable run list raises and decides nothing."""
+    waiting = unfinished_releases(workflow, repository)
+    if waiting:
+        print("::notice::Periodic starts no native work: {} run {} is {}".format(
+            workflow, waiting[0]["id"], waiting[0]["status"]))
+    else:
+        print("No run of " + workflow + " is in progress")
+    if output:
+        with open(output, "a", encoding="utf-8") as handle:
+            handle.write("clear=" + ("false" if waiting else "true") + "\n")
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--workflow", required=True, help="Workflow file name, such as periodic.yml")
+    parser.add_argument("--workflow", help="Workflow file name, such as periodic.yml")
     parser.add_argument("--campaign-schedule", default="",
                         help="Cron of the representative campaign; a firing of it runs the campaign")
+    parser.add_argument("--yield-to", default="",
+                        help="Release workflow file name; only report whether a run of it is in progress")
     args = parser.parse_args(argv)
+    if args.yield_to:
+        return yield_to(args.yield_to, os.environ["GITHUB_REPOSITORY"], os.environ.get("GITHUB_OUTPUT"))
+    if not args.workflow:
+        parser.error("--workflow is required without --yield-to")
     repository, run_id = os.environ["GITHUB_REPOSITORY"], int(os.environ["GITHUB_RUN_ID"])
     event, sha = os.environ["GITHUB_EVENT_NAME"], os.environ["GITHUB_SHA"]
     output = os.environ.get("GITHUB_OUTPUT")

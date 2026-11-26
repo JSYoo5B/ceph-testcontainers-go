@@ -49,7 +49,11 @@ jobs:
     uses: ./.github/workflows/tagged-runtime.yml
     with:
       category: short
+      # tag_scenarios.PULL_REQUEST_MAX_PARALLEL: one pull request does not
+      # hold the account's runners.
+      max_parallel: 8
       check_name: Short
+      exclude_batches: ${{ github.event_name == 'pull_request' && 'daemon_basics' || '' }}
       select_declarations: >-
         ${{ github.event_name == 'pull_request' &&
         contains(github.event.pull_request.labels.*.name, 'ci:selected-batches') &&

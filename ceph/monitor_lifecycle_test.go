@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
@@ -345,6 +346,42 @@ func TestMonitorRemovalObservesCommitWhenReplyIsLost(t *testing.T) {
 	}
 }
 
+// While the removal command is pending, only a membership read that lists
+// other members and not the removed one counts as its commit. A failed read
+// and a complete but empty map observe nothing, so the wait keeps the command
+// and the cleanup that follows a commit does not start.
+func TestMonitorRemovalPendingCommandNeedsObservedAbsence(t *testing.T) {
+	for name, read := range map[string]monitorLifecycleRead{
+		"failed read":        {timeout: true},
+		"complete empty map": {members: []string{}, quorum: []string{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				// The deadline leaves room for exactly two observation ticks.
+				control := &monitorLifecycleControl{members: []string{"a", "b", "c"}, quorum: []string{"a", "b", "c"},
+					removalPending: true, afterRemoval: []monitorLifecycleRead{read, read}}
+				cluster := monitorLifecycleFixture(control)
+				cluster.settings.startupTimeout = 2*monitorRemovalObserveInterval + monitorRemovalObserveInterval/2
+				daemon := &monitorLifecycleDaemon{}
+				owned := &MonitorContainer{Container: daemon, DaemonName: "b"}
+				cluster.members.roster.addMonitor("b", owned)
+				before := bytes.Clone(cluster.bootstrap.config)
+				err := monitorHandle(t, t.Context(), cluster, "b").Remove(t.Context())
+				if len(control.afterRemoval) != 0 {
+					t.Fatalf("the pending removal was not observed twice: %d scripted reads left, %v", len(control.afterRemoval), err)
+				}
+				if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "native membership") {
+					t.Fatalf("an unavailable or empty membership read settled the pending removal: %v", err)
+				}
+				if control.removals != 1 || daemon.terminations != 0 || control.copies != 0 || cluster.members.roster.monitor("b") != owned ||
+					!slices.Contains(control.members, "b") || !bytes.Equal(before, cluster.bootstrap.config) {
+					t.Fatalf("missing evidence authorized cleanup or a resend: removals=%d terminations=%d copies=%d", control.removals, daemon.terminations, control.copies)
+				}
+			})
+		})
+	}
+}
+
 func TestMonitorRemovalEmptyPreflightMapRetainsOwnedState(t *testing.T) {
 	control := &monitorLifecycleControl{members: []string{}, quorum: []string{}}
 	cluster := monitorLifecycleFixture(control)
@@ -360,9 +397,9 @@ func TestMonitorRemovalEmptyPreflightMapRetainsOwnedState(t *testing.T) {
 }
 
 func monitorLifecycleFixture(control *monitorLifecycleControl) *Container {
-	control.config = []byte("[global]\nmon host = old\n")
+	control.config = []byte("[global]\nmon host = old\nfsid = " + clientMonitorFSID + "\n")
 	return &Container{Container: control,
-		settings: options{startupTimeout: time.Second}, bootstrap: bootstrapRecord{config: bytes.Clone(control.config)},
+		settings: options{startupTimeout: time.Second}, bootstrap: bootstrapRecord{config: bytes.Clone(control.config), keyring: []byte("owned-admin-keyring")},
 		// The kill is recorded in the CLI call order, so a test sees whether
 		// it came before the membership removal.
 		monitorKiller: func(_ context.Context, ctr testcontainers.Container) error {
@@ -412,6 +449,9 @@ type monitorLifecycleControl struct {
 	// removalReplyLost commits a removal but never answers it, like a
 	// survivor that dropped the CLI's session when its rank changed.
 	removalReplyLost bool
+	// removalPending accepts a removal, counts it and neither commits nor
+	// answers it, like a command that still waits for its monitors.
+	removalPending bool
 }
 
 type monitorLifecycleRead struct {
@@ -474,12 +514,16 @@ func (control *monitorLifecycleControl) exec(ctx context.Context, args []string)
 		for _, name := range nativeMembers {
 			members = append(members, map[string]any{"name": name, "public_addrs": map[string]any{"addrvec": []map[string]string{{"type": "v2", "addr": monitorLifecycleAddress(name) + "/0"}}}})
 		}
-		output, _ = json.Marshal(map[string]any{"quorum_names": nativeQuorum, "monmap": map[string]any{"mons": members}})
+		output, _ = json.Marshal(map[string]any{"quorum_names": nativeQuorum, "monmap": map[string]any{"fsid": clientMonitorFSID, "mons": members}})
 	case strings.HasPrefix(call, "-m ") && strings.Contains(call, " mon remove "):
 		hosts, name, _ := strings.Cut(strings.TrimPrefix(call, "-m "), " mon remove ")
 		// The removal must be sent only to surviving members.
 		if hosts == "" || strings.Contains(hosts, monitorLifecycleAddress(name)) {
 			return 0, nil, errors.New("monitor removal was not limited to survivors: " + call)
+		}
+		if control.removalPending {
+			control.removals++
+			return 0, nil, errMonitorLifecycleBlock
 		}
 		control.members = slices.DeleteFunc(control.members, func(member string) bool { return member == name })
 		control.quorum = slices.DeleteFunc(control.quorum, func(member string) bool { return member == name })

@@ -31,9 +31,11 @@ import (
 // Container is then gone and whose fixture commands use the control container.
 //
 // If removal of the old container is unconfirmed, retry on this handle or
-// terminate the cluster. When the old container is gone and the new one fails, the error comes with
-// the new handle if a container exists: the store and its volume stay owned,
-// nothing is formatted, and Replace on that handle or Terminate continues.
+// terminate the cluster. When the old container is gone and address acquisition
+// fails before creation, the error comes with a new handle without a container;
+// Replace on that handle retries the bound store and pinned address. When a
+// new container exists, the error comes with its handle. In both cases the
+// store and its volume stay owned and nothing is formatted.
 // A creation whose reply was lost is never replayed; only Terminate settles it.
 //
 //purpose:condition,lifetime
@@ -67,7 +69,8 @@ func (c *Container) replaceMonitor(ctx context.Context, handle *MonitorContainer
 	}
 	name := cur.DaemonName
 	store := c.monStores.Store(name)
-	if store == nil || store.Attachment == nil || cur.Container == nil || store.Attachment.ID != cur.GetContainerID() {
+	retryBeforeCreate := store != nil && store.Phase == monstore.Bound && store.Attachment == nil && cur.Container == nil
+	if store == nil || !retryBeforeCreate && (store.Attachment == nil || cur.Container == nil || store.Attachment.ID != cur.GetContainerID()) {
 		return nil, invalid(fmt.Errorf("monitor %s: its store is not attached to this handle's container", name))
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
@@ -86,10 +89,17 @@ func (c *Container) replaceMonitor(ctx context.Context, handle *MonitorContainer
 	}
 	gens := c.monitorGenerations(name, func(ports []int) []testcontainers.ContainerCustomizer { return c.monitorJoinOptions(join, ports) }, monitorSocketReady(name))
 	gens.beforeCreate = func(ctx context.Context) error { return c.clearAdminSocket(ctx, "mon."+name) }
-	if err := c.native.fence(ctx, cur.GetContainerID()); err != nil {
-		return nil, fmt.Errorf("settle monitor %s native commands: %w", name, err)
+	if !retryBeforeCreate {
+		if err := c.native.fence(ctx, cur.GetContainerID()); err != nil {
+			return nil, fmt.Errorf("settle monitor %s native commands: %w", name, err)
+		}
 	}
-	id, err := store.ReplaceGeneration(ctx, gens, image)
+	var id string
+	if retryBeforeCreate {
+		id, err = store.StartGeneration(ctx, gens, image)
+	} else {
+		id, err = store.ReplaceGeneration(ctx, gens, image)
+	}
 	next, err := t.recordMonitorReplacement(cur, store.Attachment, gens.created[id], image, err)
 	if err != nil {
 		return next, err
@@ -107,16 +117,21 @@ func (c *Container) replaceMonitor(ctx context.Context, handle *MonitorContainer
 // after a replacement attempt. The caller holds the topology lock.
 func (t monitorTopology) recordMonitorReplacement(cur *MonitorContainer, attachment *monstore.Attachment, created testcontainers.Container, image string, err error) (*MonitorContainer, error) {
 	name := cur.DaemonName
-	if attachment != nil && attachment.ID == cur.GetContainerID() {
+	if attachment != nil && cur.Container != nil && attachment.ID == cur.GetContainerID() {
 		if attachment.RemoveRequested {
 			return nil, fmt.Errorf("monitor %s removal is unconfirmed; retry Replace on the original handle: %w", name, err)
 		}
 		return nil, err
 	}
-	if name == "a" && cur.Container == t.first {
+	if name == "a" && cur.Container != nil && cur.Container == t.first {
 		t.markFirstMonitorTerminated()
 	}
 	if created == nil {
+		if attachment == nil {
+			next := &MonitorContainer{DaemonName: name, owner: t.owner, image: image}
+			t.roster.addMonitor(name, next)
+			return next, err
+		}
 		t.roster.dropMonitor(name)
 		return nil, errors.Join(err, fmt.Errorf("monitor %s has no container after its replacement; Terminate settles the store", name))
 	}
