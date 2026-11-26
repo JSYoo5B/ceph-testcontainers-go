@@ -18,10 +18,13 @@ func TestTemporaryZoneLinkDelayRefusesBeforeAnythingRuns(t *testing.T) {
 	f := &Fixture{realm: rgwRealmAccess{sourceClient: probe, destinationClient: probe}}
 	loss := fault.NetworkProfile{HelperImage: "netem-helper:test", Loss: 100}
 	for name, edit := range map[string]func(*fault.NetworkProfile){
-		"a plane": func(d *fault.NetworkProfile) { d.Plane = ceph.PublicNetworkPlane },
-		"a peer":  func(d *fault.NetworkProfile) { d.Peer = netip.MustParseAddr("10.88.0.7") },
-		"a port":  func(d *fault.NetworkProfile) { d.PeerPort = 7480 },
-		"peers":   func(d *fault.NetworkProfile) { d.Peers = []fault.NetworkPeer{} },
+		"a plane":           func(d *fault.NetworkProfile) { d.Plane = ceph.PublicNetworkPlane },
+		"a peer":            func(d *fault.NetworkProfile) { d.Peer = netip.MustParseAddr("10.88.0.7") },
+		"a port":            func(d *fault.NetworkProfile) { d.PeerPort = 7480 },
+		"peers":             func(d *fault.NetworkProfile) { d.Peers = []fault.NetworkPeer{} },
+		"inbound":           func(d *fault.NetworkProfile) { d.Direction = fault.Inbound },
+		"both directions":   func(d *fault.NetworkProfile) { d.Direction = fault.BothDirections },
+		"unknown direction": func(d *fault.NetworkProfile) { d.Direction = fault.NetworkDirection(20) },
 	} {
 		delay := loss
 		edit(&delay)
