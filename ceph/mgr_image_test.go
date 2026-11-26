@@ -120,6 +120,7 @@ func TestManagerLaunchPrecedence(t *testing.T) {
 type mgrImageControl struct {
 	*noInitialManagerControl
 	registered []string
+	lostCreate string
 	// imageIDs maps an image reference to the ID of the image it names, as
 	// the local Docker image store would; a test moves a reference by
 	// changing its entry.
@@ -128,11 +129,19 @@ type mgrImageControl struct {
 
 func (c *mgrImageControl) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
 	call := strings.Join(monitorQuorumTestModuleArgs(args), " ")
-	if name, ok := strings.CutPrefix(call, "auth get-or-create mgr."); ok {
+	name, creating := strings.CutPrefix(call, "auth get-or-create mgr.")
+	if !creating {
+		name, _ = strings.CutPrefix(call, "auth get mgr.")
+	}
+	if creating || strings.HasPrefix(call, "auth get mgr.") {
 		name, _, _ = strings.Cut(name, " ")
 		c.calls = append(c.calls, call)
+		if creating && c.lostCreate == name {
+			c.auth = `{"auth_dump":[{"entity":"mgr.` + name + `"}]}`
+			return 1, noInitialOSDStream("manager identity creation reply lost"), nil
+		}
 		c.registered = append(c.registered, name)
-		status := map[string]any{"available": true, "active_name": c.registered[0], "active_gid": 100, "standbys": []map[string]any{}}
+		status := map[string]any{"epoch": 1, "available": true, "active_name": c.registered[0], "active_gid": 100, "standbys": []map[string]any{}, "services": map[string]any{}}
 		var standbys []map[string]any
 		for i, standby := range c.registered[1:] {
 			standbys = append(standbys, map[string]any{"name": standby, "gid": 101 + i})
@@ -146,6 +155,29 @@ func (c *mgrImageControl) Exec(ctx context.Context, args []string, opts ...tcexe
 		return 0, noInitialOSDStream(string(key)), nil
 	}
 	return c.noInitialManagerControl.Exec(ctx, args, opts...)
+}
+
+func TestAddManagerRecoversLostIdentityCreationReply(t *testing.T) {
+	cluster, control, started := mgrImageFixture(t, ImageSet{Essential: "core"}, nil)
+	control.lostCreate = "a"
+	partial, err := cluster.AddManager(t.Context(), "a")
+	if err == nil || partial == nil || partial.Container != nil || !partial.authPending || cluster.members.roster.manager("a") != partial || len(*started) != 0 {
+		t.Fatalf("lost identity reply did not retain a partial owned handle: %+v %v", partial, err)
+	}
+	control.lostCreate = ""
+	resumed, err := cluster.AddManager(t.Context(), "a")
+	if err != nil || resumed != partial || resumed.Container == nil || resumed.authPending || !slices.Contains(control.calls, "auth get mgr.a") || len(*started) != 1 {
+		t.Fatalf("retry did not recover the owned identity: %+v %v calls=%v", resumed, err, control.calls)
+	}
+	creates := 0
+	for _, call := range control.calls {
+		if strings.HasPrefix(call, "auth get-or-create mgr.a ") {
+			creates++
+		}
+	}
+	if creates != 1 {
+		t.Fatalf("retry replayed an uncertain identity creation: %v", control.calls)
+	}
 }
 
 // mgrImageDaemon is a container that the fixture started from image, the

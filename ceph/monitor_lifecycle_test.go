@@ -397,9 +397,9 @@ func TestMonitorRemovalEmptyPreflightMapRetainsOwnedState(t *testing.T) {
 }
 
 func monitorLifecycleFixture(control *monitorLifecycleControl) *Container {
-	control.config = []byte("[global]\nmon host = old\n")
+	control.config = []byte("[global]\nmon host = old\nfsid = " + clientMonitorFSID + "\n")
 	return &Container{Container: control,
-		settings: options{startupTimeout: time.Second}, bootstrap: bootstrapRecord{config: bytes.Clone(control.config)},
+		settings: options{startupTimeout: time.Second}, bootstrap: bootstrapRecord{config: bytes.Clone(control.config), keyring: []byte("owned-admin-keyring")},
 		// The kill is recorded in the CLI call order, so a test sees whether
 		// it came before the membership removal.
 		monitorKiller: func(_ context.Context, ctr testcontainers.Container) error {
@@ -514,7 +514,7 @@ func (control *monitorLifecycleControl) exec(ctx context.Context, args []string)
 		for _, name := range nativeMembers {
 			members = append(members, map[string]any{"name": name, "public_addrs": map[string]any{"addrvec": []map[string]string{{"type": "v2", "addr": monitorLifecycleAddress(name) + "/0"}}}})
 		}
-		output, _ = json.Marshal(map[string]any{"quorum_names": nativeQuorum, "monmap": map[string]any{"mons": members}})
+		output, _ = json.Marshal(map[string]any{"quorum_names": nativeQuorum, "monmap": map[string]any{"fsid": clientMonitorFSID, "mons": members}})
 	case strings.HasPrefix(call, "-m ") && strings.Contains(call, " mon remove "):
 		hosts, name, _ := strings.Cut(strings.TrimPrefix(call, "-m "), " mon remove ")
 		// The removal must be sent only to surviving members.

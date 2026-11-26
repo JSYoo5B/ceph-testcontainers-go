@@ -251,7 +251,7 @@ func TestNoInitialManagersFirstAddAdmissionAndIdentityFailures(t *testing.T) {
 			case "foreign auth":
 				control.auth = `{"auth_dump":[{"entity":"mgr.a","key":"PRIVATE-FIRST-MGR-KEY"}]}`
 			case "foreign map":
-				control.mgr = `{"available":true,"active_name":"a","active_gid":99,"standbys":[]}`
+				control.mgr = `{"epoch":1,"available":true,"active_name":"a","active_gid":99,"standbys":[],"services":{}}`
 			case "auth list error":
 				control.fail = "auth ls --format json"
 			case "auth malformed":
@@ -260,8 +260,12 @@ func TestNoInitialManagersFirstAddAdmissionAndIdentityFailures(t *testing.T) {
 				control.fail = "auth get-or-create mgr.a mon allow profile mgr osd allow * mds allow *"
 			}
 			mgr, err := cluster.AddManager(t.Context(), "a")
-			if mgr != nil || err == nil || strings.Contains(err.Error(), "PRIVATE-FIRST-MGR-KEY") || cluster.members.roster.managerCount() != 0 || cluster.members.roster.initialManager() != nil {
+			lost := scenario == "create response loss"
+			if err == nil || strings.Contains(err.Error(), "PRIVATE-FIRST-MGR-KEY") || (mgr != nil) != lost || cluster.members.roster.managerCount() != map[bool]int{false: 0, true: 1}[lost] || cluster.members.roster.initialManager() != nil {
 				t.Fatalf("first Add identity rejection leaked/adopted state: mgr=%v err=%v", mgr, err)
+			}
+			if lost && (mgr.Container != nil || !mgr.authPending || cluster.members.roster.manager("a") != mgr) {
+				t.Fatal("uncertain identity was not retained as an owned partial attempt")
 			}
 			for _, call := range control.calls {
 				if call != "auth ls --format json" && call != "mgr dump --format json" && (scenario != "create response loss" || call != control.fail) {
@@ -269,12 +273,13 @@ func TestNoInitialManagersFirstAddAdmissionAndIdentityFailures(t *testing.T) {
 				}
 			}
 			if scenario == "create response loss" {
-				// Auth may have committed despite loss. Existing preflight rejects
-				// it on a fresh call; zero mode does not invent adoption or retry.
+				// A retry reads the possibly applied identity without issuing
+				// get-or-create again. This narrow fake lacks an auth get reply;
+				// the full recovery control is in mgr_image_test.go.
 				control.auth = `{"auth_dump":[{"entity":"mgr.a"}]}`
 				control.calls, control.fail = nil, ""
-				if mgr, err := cluster.AddManager(t.Context(), "a"); mgr != nil || err == nil || !slices.Equal(control.calls, []string{"auth ls --format json"}) {
-					t.Fatal("uncertain first auth was silently adopted on retry", err)
+				if retried, err := cluster.AddManager(t.Context(), "a"); retried != mgr || err == nil || !slices.Equal(control.calls, []string{"auth ls --format json", "mgr dump --format json", "auth get mgr.a"}) {
+					t.Fatal("uncertain first auth was replayed or forgotten on retry", err)
 				}
 			}
 		})
@@ -309,7 +314,7 @@ func noInitialManagerFixture() (*Container, *noInitialManagerControl) {
 	control := &noInitialManagerControl{
 		osdUUID: uuid.NewString(), osds: []map[string]any{},
 		quorum: `{"quorum_names":["a"],"monmap":{"mons":[{"name":"a"}]}}`,
-		auth:   `{"auth_dump":[]}`, mgr: `{"available":false,"active_name":"","active_gid":0,"standbys":[]}`,
+		auth:   `{"auth_dump":[]}`, mgr: `{"epoch":1,"available":false,"active_name":"","active_gid":0,"standbys":[],"services":{}}`,
 	}
 	cluster := &Container{Container: control, settings: options{startupTimeout: time.Second}, fleet: osdFleetState{osdHandles: osdRegistry{owned: map[int]*OSDContainer{}}}}
 	return cluster, control
