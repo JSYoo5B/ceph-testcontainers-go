@@ -148,6 +148,34 @@ func TestLeaseWatchTransientFailureIsAGapThenResumed(t *testing.T) {
 	}
 }
 
+func TestLeaseWatchIncompleteStatusIsAGapThenResumed(t *testing.T) {
+	for _, field := range []string{"path", "retention"} {
+		t.Run(field, func(t *testing.T) {
+			fake, _, w := watchedLease(t)
+			baseline := nextLeaseEvent(t, w)
+			fake.report("/", "2h", map[string]any{field: nil})
+			gap := nextLeaseEvent(t, w)
+			if gap.Kind != ceph.WatchGap || gap.Err == nil || gap.Status != nil {
+				t.Fatalf("incomplete status ended or changed the watch: %+v", gap)
+			}
+			value := any("/")
+			if field == "retention" {
+				value = map[string]int{"n": 2}
+			}
+			fake.report("/", "2h", map[string]any{field: value})
+			for event := nextLeaseEvent(t, w); ; event = nextLeaseEvent(t, w) {
+				if event.Kind == ceph.WatchGap {
+					continue
+				}
+				if event.Kind != ceph.WatchResumed || event.Status.Created != baseline.Status.Created {
+					t.Fatalf("complete status did not resume watch: %+v", event)
+				}
+				break
+			}
+		})
+	}
+}
+
 func TestLeaseWatchEndsWhenTheScheduleIsNoLongerTheLeases(t *testing.T) {
 	for name, tc := range map[string]struct {
 		change func(*testing.T, *fakeSnapSchedule, *Lease)

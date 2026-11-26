@@ -369,6 +369,9 @@ func parseStatuses(data []byte, dir string) ([]Status, error) {
 		if err := json.Unmarshal(data, &entries); err != nil {
 			return nil, fmt.Errorf("decode the snapshot schedule status: %w", err)
 		}
+		if entries == nil {
+			return nil, errors.New("the snapshot schedule status is not a list")
+		}
 	}
 	var result []Status
 	for _, raw := range entries {
@@ -387,10 +390,13 @@ func parseStatuses(data []byte, dir string) ([]Status, error) {
 		if err := json.Unmarshal(raw, &entry); err != nil {
 			return nil, fmt.Errorf("decode a snapshot schedule: %w", err)
 		}
+		if entry.Path == "" {
+			return nil, errors.New("the snapshot schedule status lacks a path")
+		}
 		if entry.Path != dir {
 			continue
 		}
-		if entry.Created == nil || entry.Pruned == nil || entry.Active == nil || entry.Start == "" || entry.Added == "" {
+		if entry.Retention == nil || entry.Created == nil || entry.Pruned == nil || entry.Active == nil || entry.Start == "" || entry.Added == "" {
 			return nil, errors.New("the snapshot schedule status lacks its counts, active flag, start or creation time")
 		}
 		status := Status{Path: entry.Path, Schedule: entry.Schedule, Active: *entry.Active, Retention: nonNil(entry.Retention),

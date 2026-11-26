@@ -223,10 +223,28 @@ func TestCephFSQuiesceValidationAndDecoder(t *testing.T) {
 		t.Fatal("an unowned subvolume descriptor was accepted")
 	}
 	base := `{"sets":{"id":{"version":12,"state":{"name":"QUIESCED"},"timeout":10.0,"expiration":30.0,"members":{"file:/volumes/owned":{"excluded":false}}}}}`
-	for _, data := range []string{"null", `{"sets":{}}`, strings.Replace(base, `"version":12`, `"version":0`, 1), strings.Replace(base, "QUIESCED", "unknown", 1), strings.Replace(base, `"excluded":false`, `"excluded":true`, 1), strings.Replace(base, "file:/", "inode:", 1)} {
+	for _, data := range []string{"null", `{}`, `{"sets":null}`, `{"sets":{}}`, strings.Replace(base, `"version":12`, `"version":0`, 1), strings.Replace(base, "QUIESCED", "unknown", 1), strings.Replace(base, `"excluded":false`, `"excluded":true`, 1), strings.Replace(base, `,"timeout":10.0`, ``, 1), strings.Replace(base, `,"expiration":30.0`, ``, 1), strings.Replace(base, `"excluded":false`, ``, 1), strings.Replace(base, "file:/", "inode:", 1)} {
 		if _, err := decodeSet([]byte(data), "id"); err == nil {
 			t.Fatal("invalid native quiesce state accepted", data)
 		}
+	}
+	for _, data := range []string{`{}`, `{"sets":null}`} {
+		_, err := decodeSet([]byte(data), "id")
+		var lost ownershipError
+		if err == nil || errors.As(err, &lost) {
+			t.Fatalf("incomplete sets were classified as ownership loss: %s: %v", data, err)
+		}
+	}
+	if _, err := decodeSet([]byte(`{"sets":{}}`), "id"); err == nil {
+		t.Fatal("explicit empty sets did not establish absence")
+	} else {
+		var lost ownershipError
+		if !errors.As(err, &lost) {
+			t.Fatalf("explicit empty sets should establish absence: %v", err)
+		}
+	}
+	if state, err := decodeSet([]byte(base), "id"); err != nil || state.Timeout != 10 || state.Expiration != 30 || len(state.Members) != 1 {
+		t.Fatalf("complete native quiesce state: %+v %v", state, err)
 	}
 }
 
