@@ -150,9 +150,16 @@ func ValidatePair(ctx context.Context, image string, source, destination *ceph.C
 		return fmt.Errorf("inspect destination Ceph control handle: %w", err)
 	}
 	if sourceFacts.NetworkName == "" || destinationFacts.NetworkName == "" ||
-		sourceControl == nil || destinationControl == nil ||
-		!sourceControl.IsRunning() || !destinationControl.IsRunning() {
+		sourceControl == nil || destinationControl == nil {
 		return invalid(errors.New("multicluster requires two running Ceph clusters"))
+	}
+	for _, control := range []struct {
+		name      string
+		container testcontainers.Container
+	}{{"source", sourceControl}, {"destination", destinationControl}} {
+		if err := inspectControlRunning(ctx, control.name, control.container); err != nil {
+			return err
+		}
 	}
 	for _, cluster := range []*ceph.Container{source, destination} {
 		if _, err := cluster.ConnectionConfig(ctx); err != nil {
@@ -161,6 +168,17 @@ func ValidatePair(ctx context.Context, image string, source, destination *ceph.C
 			}
 			return invalid(fmt.Errorf("multicluster requires initialized, unterminated Ceph clusters: %w", err))
 		}
+	}
+	return nil
+}
+
+func inspectControlRunning(ctx context.Context, name string, control testcontainers.Container) error {
+	inspection, err := control.Inspect(ctx)
+	if err != nil {
+		return fmt.Errorf("inspect %s Ceph control container: %w", name, err)
+	}
+	if inspection == nil || inspection.State == nil || !inspection.State.Running {
+		return invalid(fmt.Errorf("multicluster requires a running %s Ceph control container", name))
 	}
 	return nil
 }
@@ -179,8 +197,15 @@ func RunClient(ctx context.Context, image string, cluster *ceph.Container, peerN
 	if peerNetwork != "" && !facts.UsesHostNetwork {
 		opts = append(opts, network.WithNetworkName(nil, peerNetwork))
 	}
-	ctr, err := testcontainers.Run(ctx, image, opts...)
-	owned.AddContainer(ctr)
+	created, err := testcontainers.Run(ctx, image, opts...)
+	var ctr testcontainers.Container
+	if created != nil {
+		ctr = created
+		owned.AddContainer(ctr)
+	}
+	if ctr == nil && err == nil {
+		return nil, errors.New("run multicluster CLI client returned no container")
+	}
 	if err != nil {
 		return ctr, fmt.Errorf("run multicluster CLI client: %w", err)
 	}
