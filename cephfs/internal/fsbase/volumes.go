@@ -146,7 +146,7 @@ type rawVolumeInfo struct {
 	DataPool      string          `json:"data_pool"`
 	PoolNamespace string          `json:"pool_namespace"`
 	Quota         json.RawMessage `json:"bytes_quota"`
-	BytesUsed     int64           `json:"bytes_used"`
+	BytesUsed     *int64          `json:"bytes_used"`
 	CreatedAt     string          `json:"created_at"`
 	State         string          `json:"state"`
 	Type          string          `json:"type"`
@@ -164,7 +164,7 @@ func decodeVolumeQuota(raw json.RawMessage) (int64, error) {
 }
 
 func validateVolumeInfo(raw rawVolumeInfo) error {
-	if raw.Path == "" || !path.IsAbs(raw.Path) || path.Clean(raw.Path) != raw.Path || raw.Path == "/" || raw.CreatedAt == "" || raw.DataPool == "" || raw.BytesUsed < 0 {
+	if raw.Path == "" || !path.IsAbs(raw.Path) || path.Clean(raw.Path) != raw.Path || raw.Path == "/" || raw.CreatedAt == "" || raw.DataPool == "" || raw.BytesUsed == nil || *raw.BytesUsed < 0 {
 		return errors.New("decode CephFS volume metadata: missing or invalid path, birth time, pool or used bytes")
 	}
 	return nil
@@ -192,7 +192,7 @@ func (v VolumeCommands) SubvolumeGroupInfo(ctx context.Context, name string) (*G
 	if err != nil {
 		return nil, err
 	}
-	return &GroupInfo{Name: name, Path: raw.Path, DataPool: raw.DataPool, QuotaBytes: quota, BytesUsed: raw.BytesUsed, CreatedAt: raw.CreatedAt}, nil
+	return &GroupInfo{Name: name, Path: raw.Path, DataPool: raw.DataPool, QuotaBytes: quota, BytesUsed: *raw.BytesUsed, CreatedAt: raw.CreatedAt}, nil
 }
 
 // SubvolumeInfo reads one subvolume's native metadata. A snapshot-retained
@@ -217,5 +217,5 @@ func (v VolumeCommands) SubvolumeInfo(ctx context.Context, name, group string) (
 	if err != nil {
 		return nil, err
 	}
-	return &SubvolumeInfo{Name: name, GroupName: group, Path: raw.Path, DataPool: raw.DataPool, PoolNamespace: raw.PoolNamespace, QuotaBytes: quota, BytesUsed: raw.BytesUsed, CreatedAt: raw.CreatedAt, State: raw.State, Type: raw.Type}, nil
+	return &SubvolumeInfo{Name: name, GroupName: group, Path: raw.Path, DataPool: raw.DataPool, PoolNamespace: raw.PoolNamespace, QuotaBytes: quota, BytesUsed: *raw.BytesUsed, CreatedAt: raw.CreatedAt, State: raw.State, Type: raw.Type}, nil
 }

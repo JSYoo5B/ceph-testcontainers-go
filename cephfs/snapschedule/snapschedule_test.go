@@ -42,11 +42,17 @@ func TestParseStatuses(t *testing.T) {
 		t.Fatalf("another directory: %+v %v", statuses, err)
 	}
 	for name, data := range map[string]string{
-		"no counts":   strings.Replace(nativeStatus, `"created_count": 3, `, ``, 1),
-		"no start":    strings.Replace(nativeStatus, `"start": "2026-10-16T00:00:00", `, ``, 1),
-		"no creation": strings.Replace(nativeStatus, `"created": "2026-10-16T22:21:31", `, ``, 1),
-		"a bad time":  strings.Replace(nativeStatus, `"2026-10-16T22:24:00"`, `"yesterday"`, 1),
-		"not a list":  `{}`,
+		"empty row":      `[{}]`,
+		"null row":       `[null]`,
+		"null list":      `null`,
+		"no path":        strings.Replace(nativeStatus, `"path": "/", `, ``, 1),
+		"no retention":   strings.Replace(nativeStatus, `"retention": {"m": 3}, `, ``, 1),
+		"null retention": strings.Replace(nativeStatus, `"retention": {"m": 3}`, `"retention": null`, 1),
+		"no counts":      strings.Replace(nativeStatus, `"created_count": 3, `, ``, 1),
+		"no start":       strings.Replace(nativeStatus, `"start": "2026-10-16T00:00:00", `, ``, 1),
+		"no creation":    strings.Replace(nativeStatus, `"created": "2026-10-16T22:21:31", `, ``, 1),
+		"a bad time":     strings.Replace(nativeStatus, `"2026-10-16T22:24:00"`, `"yesterday"`, 1),
+		"not a list":     `{}`,
 	} {
 		if statuses, err := parseStatuses([]byte(data), "/"); err == nil {
 			t.Errorf("%s: %+v", name, statuses)

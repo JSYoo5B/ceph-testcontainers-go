@@ -278,25 +278,28 @@ func (q *Set) read(ctx context.Context) (*State, error) {
 func decodeSet(data []byte, id string) (*State, error) {
 	var database struct {
 		Sets map[string]struct {
-			Version    uint64  `json:"version"`
-			Timeout    float64 `json:"timeout"`
-			Expiration float64 `json:"expiration"`
+			Version    uint64   `json:"version"`
+			Timeout    *float64 `json:"timeout"`
+			Expiration *float64 `json:"expiration"`
 			State      struct {
 				Name string `json:"name"`
 			} `json:"state"`
 			Members map[string]struct {
-				Excluded bool `json:"excluded"`
+				Excluded *bool `json:"excluded"`
 			} `json:"members"`
 		} `json:"sets"`
 	}
 	if err := json.Unmarshal(data, &database); err != nil {
 		return nil, errors.New("decode native quiesce database")
 	}
+	if database.Sets == nil {
+		return nil, errors.New("native quiesce sets are missing")
+	}
 	set, exists := database.Sets[id]
 	if !exists {
 		return nil, ownershipError("native quiesce set is absent")
 	}
-	if len(database.Sets) != 1 || set.Version == 0 || len(set.Members) == 0 || set.Timeout < 0 || set.Expiration < 0 {
+	if len(database.Sets) != 1 || set.Version == 0 || len(set.Members) == 0 || set.Timeout == nil || set.Expiration == nil || *set.Timeout < 0 || *set.Expiration < 0 {
 		return nil, errors.New("native quiesce set is absent or incomplete")
 	}
 	if !slices.Contains([]string{"QUIESCING", "QUIESCED", "RELEASING", "RELEASED", "EXPIRED", "TIMEDOUT", "CANCELED", "FAILED"}, set.State.Name) {
@@ -304,11 +307,14 @@ func decodeSet(data []byte, id string) (*State, error) {
 	}
 	members := make([]string, 0, len(set.Members))
 	for path, member := range set.Members {
-		if member.Excluded || len(path) < 7 || path[:6] != "file:/" {
+		if member.Excluded == nil {
+			return nil, errors.New("native quiesce member lacks excluded state")
+		}
+		if *member.Excluded || len(path) < 7 || path[:6] != "file:/" {
 			return nil, ownershipError("native quiesce has excluded or unsupported members")
 		}
 		members = append(members, path)
 	}
 	slices.Sort(members)
-	return &State{ID: id, Version: set.Version, State: set.State.Name, Timeout: set.Timeout, Expiration: set.Expiration, Members: members}, nil
+	return &State{ID: id, Version: set.Version, State: set.State.Name, Timeout: *set.Timeout, Expiration: *set.Expiration, Members: members}, nil
 }

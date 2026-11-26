@@ -69,7 +69,7 @@ func (ctr *readOnlyControl) Exec(ctx context.Context, args []string, opts ...tce
 	for _, active := range ctr.active {
 		info[fmt.Sprintf("gid_%d", active.GID)] = map[string]any{"gid": active.GID, "name": active.Name, "rank": active.Rank, "state": active.State, "join_fscid": -1}
 	}
-	var standbys []map[string]any
+	standbys := []map[string]any{}
 	for _, standby := range ctr.standbys {
 		standbys = append(standbys, map[string]any{"gid": standby.GID, "name": standby.Name, "rank": -1, "state": "up:standby", "join_fscid": ctr.fsID})
 	}

@@ -348,6 +348,7 @@ func standbyMismatches(list MDSList, want *MDSStandbys, observed []cephfs.MDSSta
 		return nil
 	}
 	var out []MDSMismatch
+	selected := make(map[int]bool, len(want.Daemons))
 	if len(observed) != want.Count {
 		out = append(out, MDSMismatch{Reason: MDSMismatchCount, List: list, WantValue: int64(want.Count), ObservedValue: int64(len(observed))})
 	}
@@ -363,6 +364,11 @@ func standbyMismatches(list MDSList, want *MDSStandbys, observed []cephfs.MDSSta
 			continue
 		}
 		entry := observed[i]
+		if selected[i] {
+			out = append(out, MDSMismatch{Reason: MDSMismatchAbsent, List: list, Want: daemon})
+			continue
+		}
+		selected[i] = true
 		if daemon.GID != 0 && entry.GID != daemon.GID {
 			out = append(out, MDSMismatch{Reason: MDSMismatchGID, List: list, Want: daemon, Observed: entry})
 		}

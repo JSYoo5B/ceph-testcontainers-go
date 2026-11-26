@@ -61,7 +61,7 @@ func newWaitFixture(t *testing.T, name string) waitFixture {
 		var base *cloneLifecycleFixtureContainer
 		f.fs, base, f.clone = cloneLifecycleFixture(t)
 		base.Output[cloneStatusQuery] = cloneLifecycleStatus("complete")
-		base.Output["fs subvolume info fixture copy --group_name restores --format json"] = `{"path":"/volumes/restores/copy/10000000-0000-4000-8000-000000000001","bytes_quota":32768,"bytes_used":8192,"data_pool":"data","pool_namespace":"","created_at":"2026-10-03 00:02:00.123456","state":"complete","type":"clone"}`
+		base.Output["fs subvolume info fixture copy --group_name restores --format json"] = `{"path":"/volumes/restores/copy/10000000-0000-4000-8000-000000000001","bytes_quota":32768,"bytes_used":8192,"data_pool":"additional","pool_namespace":"","created_at":"2026-10-03 00:02:00.123456","state":"complete","type":"clone"}`
 		f.cluster = f.fs.Core.Cluster()
 		f.control = &waitControl{Container: base}
 		f.cluster.Container = f.control

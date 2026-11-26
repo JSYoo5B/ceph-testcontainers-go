@@ -362,7 +362,7 @@ func (snapshot *Snapshot) Clone(ctx context.Context, config CloneConfig) (*Clone
 	if err := fs.CheckSubvolumeDataPool(ctx, selectedPool); err != nil {
 		return nil, err
 	}
-	identity := &cloneRecord{filesystem: fs, filesystemID: fsID, source: snapshot.identity, name: config.Name, group: config.GroupName, dataPool: config.DataPool}
+	identity := &cloneRecord{filesystem: fs, filesystemID: fsID, source: snapshot.identity, name: config.Name, group: config.GroupName, dataPool: selectedPool}
 	clone := &Clone{Name: config.Name, GroupName: config.GroupName, FilesystemName: fs.Name(), identity: identity}
 	source := snapshot.identity.subvolume
 	args := fsbase.AppendGroup([]string{"fs", "subvolume", "snapshot", "clone", fs.Name(), source.Name, snapshot.identity.name, config.Name}, source.Group)

@@ -717,13 +717,27 @@ func (f mdsFleet) createMDSCredentials(ctx context.Context, a *mdsStartAdmission
 			}
 			return nil, clusterutil.OperationError(ctx, "create initial MDS credentials", err)
 		}
+		f.recordMDSCredentials(a.id)
 		return keyring, nil
 	}
 	keyring, err := f.core.Cluster().Ceph(ctx, args...)
 	if err != nil {
 		return nil, fmt.Errorf("create mds.%s credentials: %w", a.id, err)
 	}
+	f.recordMDSCredentials(a.id)
 	return keyring, nil
+}
+
+// recordMDSCredentials retains a successful native auth mutation even when
+// the service starter never returns a container handle.
+func (f mdsFleet) recordMDSCredentials(id string) {
+	c := f.core.Cluster()
+	servicehook.Lock(c)
+	if f.mds.credentials == nil {
+		f.mds.credentials = make(map[string]bool)
+	}
+	f.mds.credentials[id] = true
+	servicehook.Unlock(c)
 }
 
 // publishStartedMDS is the publication phase: for a real handle (nil means the
@@ -808,10 +822,11 @@ func (f mdsFleet) retireMDS(ctx context.Context, candidate MDSStatus) error {
 	}
 	servicehook.Unlock(c)
 	if _, err := c.Ceph(ctx, "auth", "del", "mds."+daemon.ID); err != nil {
-		// Container ownership is already removed. A failed auth cleanup leaves
-		// only its credential in the disposable cluster, not a phantom daemon.
 		return fmt.Errorf("remove surplus mds.%s credentials: %w", daemon.ID, err)
 	}
+	servicehook.Lock(c)
+	delete(f.mds.credentials, daemon.ID)
+	servicehook.Unlock(c)
 	return nil
 }
 
@@ -999,6 +1014,26 @@ func parseCephFSMDSStatus(data []byte, name string, daemons []*MDS) (*Filesystem
 // status, with daemons as the owned roster. An FSMap without the filesystem
 // is errFilesystemAbsent.
 func decodeCephFSMDSTopology(data []byte, name string, daemons []*MDS) (mdsTopology, error) {
+	var collections struct {
+		Standbys    *[]json.RawMessage `json:"standbys"`
+		Filesystems []struct {
+			MDSMap struct {
+				Name string                      `json:"fs_name"`
+				Info *map[string]json.RawMessage `json:"info"`
+			} `json:"mdsmap"`
+		} `json:"filesystems"`
+	}
+	if err := json.Unmarshal(data, &collections); err != nil {
+		return mdsTopology{}, fmt.Errorf("decode cephfs FSMap collections: %w", err)
+	}
+	if collections.Standbys == nil {
+		return mdsTopology{}, errors.New("decode cephfs FSMap: standbys collection is missing")
+	}
+	for _, filesystem := range collections.Filesystems {
+		if filesystem.MDSMap.Name == name && filesystem.MDSMap.Info == nil {
+			return mdsTopology{}, fmt.Errorf("decode cephfs FSMap: mds info of cephfs %q is missing", name)
+		}
+	}
 	var fsmap fsbase.FSMap
 	if err := json.Unmarshal(data, &fsmap); err != nil {
 		return mdsTopology{}, fmt.Errorf("decode cephfs FSMap: %w", err)

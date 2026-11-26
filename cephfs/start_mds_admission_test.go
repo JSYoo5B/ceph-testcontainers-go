@@ -190,7 +190,7 @@ func TestStartMDSPublicationAndResultClassificationPerMode(t *testing.T) {
 		startMDSTopologyFree(t, fs)
 	})
 	t.Run("ordinary/typed-nil-handle-is-not-published", func(t *testing.T) {
-		fs, _ := coldMDSTestConstruct(t, false)
+		fs, n := coldMDSTestConstruct(t, false)
 		fs.mds.coldMDS = nil
 		var typedNil *mdsScaleFixtureContainer
 		d, err := fs.fleet().startMDSWithAdmission(t.Context(), func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
@@ -198,6 +198,12 @@ func TestStartMDSPublicationAndResultClassificationPerMode(t *testing.T) {
 		}, nil, func(*MDS) { t.Error("published hook ran for a typed-nil handle") })
 		if err != cause || d != nil || fs.Container != nil || len(fs.MDSs()) != 0 || fs.mds.roster.nextIndex != 1 {
 			t.Fatalf("typed-nil handle was published or the error changed: %v %v", d, err)
+		}
+		if err := fs.fleet().removeAll(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Contains(n.calls, "auth del mds.cold-target-0") {
+			t.Fatalf("orphan credentials were not removed: %v", n.calls)
 		}
 	})
 	t.Run("ordinary/second-handle-keeps-embedded-container", func(t *testing.T) {
