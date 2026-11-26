@@ -404,7 +404,8 @@ type NetworkProfileStatus struct {
 // applied from a helper container in the target's network namespace that
 // alone has NET_ADMIN. Restore removes the delay and the helper. A non-nil
 // lease returned with an error must be restored: the change may have been
-// applied. Restore is retryable.
+// applied. Restore is retryable. Its exported fields describe the profile.
+// Status and Restore use the endpoint and filter identities captured at apply.
 type NetworkProfileLease struct {
 	// ContainerID and NetworkName identify the delayed endpoint.
 	ContainerID, NetworkName string
@@ -447,10 +448,16 @@ type NetworkProfileLease struct {
 	// selected peer's endpoint, shaping what that peer sends to the target.
 	// Restore restores them with the rest; each has its own Status. With
 	// Inbound alone the lease applies nothing to the target's endpoint, and
-	// its own Status is refused.
+	// its own Status is refused. The slice describes the leases captured at
+	// apply and editing it does not change which leases Restore restores.
 	PeerLeases []*NetworkProfileLease
 
-	mu sync.Mutex
+	mu                                           sync.Mutex
+	id, network, sandbox, namespace, helperImage string
+	interfaceIndex                               int
+	peerPolicy                                   []NetworkPeer
+	match                                        peerMatch
+	inboundLeases                                []*NetworkProfileLease
 	// shapes reports that the lease owns a profile on its own endpoint;
 	// an Inbound lease only holds its peers' leases.
 	shapes  bool
@@ -1189,19 +1196,20 @@ func applyDirectedDelay(ctx context.Context, backend netemBackend, id, network s
 }
 
 // addPeerLease publishes one more peer lease. With BothDirections, Terminate
-// may already hold the outer lease and restore it meanwhile, so PeerLeases is
-// written and read only under l.mu.
+// may already hold the outer lease and restore it meanwhile. Keep the
+// restoration list private and publish a distinct copy.
 func (l *NetworkProfileLease) addPeerLease(peer *NetworkProfileLease) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.PeerLeases = append(l.PeerLeases, peer)
+	l.inboundLeases = append(l.inboundLeases, peer)
+	l.PeerLeases = slices.Clone(l.inboundLeases)
 }
 
-// peerLeases returns the peer leases published so far.
+// peerLeases returns the owned peer leases published so far.
 func (l *NetworkProfileLease) peerLeases() []*NetworkProfileLease {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return slices.Clone(l.PeerLeases)
+	return slices.Clone(l.inboundLeases)
 }
 
 // planInbound resolves every selected peer address to the container that
@@ -1368,7 +1376,7 @@ func applyNetworkDelay(ctx context.Context, backend netemBackend, id, network st
 		return nil, err
 	}
 	lease := newNetworkProfileLease(backend, helper, id, network, state, imageID, peers, delay)
-	lease.SourcePorts = source
+	lease.SourcePorts, lease.match.source = source, source
 	if err := lease.locate(ctx, state); err != nil {
 		return lease.discard(ctx, err)
 	}
@@ -1412,8 +1420,10 @@ func admitNetworkDelay(ctx context.Context, backend netemBackend, id, network st
 func newNetworkProfileLease(backend netemBackend, helper testcontainers.Container, id, network string, state nshelper.Target, imageID string, peers []NetworkPeer, delay NetworkProfile) *NetworkProfileLease {
 	lease := &NetworkProfileLease{ContainerID: id, NetworkName: network, SandboxID: state.SandboxID,
 		MACAddress: state.MAC, Address: state.Address, HelperImageID: imageID, Delay: delay.Delay,
-		Jitter: delay.Jitter, Peer: delay.Peer, PeerPort: delay.PeerPort, Peers: peers, Loss: delay.Loss, Direction: delay.Direction,
-		Phase: delay.Phase, backend: backend, helper: helper, shapes: true}
+		Jitter: delay.Jitter, Peer: delay.Peer, PeerPort: delay.PeerPort, Peers: slices.Clone(peers), Loss: delay.Loss, Direction: delay.Direction,
+		Phase: delay.Phase, backend: backend, helper: helper, shapes: true,
+		id: id, network: network, sandbox: state.SandboxID, helperImage: imageID,
+		peerPolicy: slices.Clone(peers), match: peerMatch{setup: delay.Phase == ConnectionSetup}}
 	if delay.Rate > 0 {
 		lease.Rate, lease.QueueLimit = delay.Rate, delay.QueueLimit
 		if lease.QueueLimit == 0 {
@@ -1439,7 +1449,7 @@ func (l *NetworkProfileLease) locate(ctx context.Context, state nshelper.Target)
 		return err
 	}
 	if len(report.Links) != 1 {
-		return fmt.Errorf("found %d interfaces with the target's address and MAC on %s", len(report.Links), l.NetworkName)
+		return fmt.Errorf("found %d interfaces with the target's address and MAC on %s", len(report.Links), l.network)
 	}
 	root, err := report.root()
 	if err != nil {
@@ -1448,16 +1458,12 @@ func (l *NetworkProfileLease) locate(ctx context.Context, state nshelper.Target)
 	if root.Handle != "0:" {
 		return nshelper.InvalidRequest("the target's interface has a %s root qdisc (handle %s) that the delay would replace", root.Kind, root.Handle)
 	}
-	l.Namespace, l.Interface, l.InterfaceIndex = report.Namespace, report.Links[0].Name, report.Links[0].Index
-	if again, err := l.backend.target(ctx, l.ContainerID, l.NetworkName); err != nil || again.SandboxID != state.SandboxID {
+	l.namespace, l.interfaceIndex = report.Namespace, report.Links[0].Index
+	l.Namespace, l.Interface, l.InterfaceIndex = l.namespace, report.Links[0].Name, l.interfaceIndex
+	if again, err := l.backend.target(ctx, l.id, l.network); err != nil || again.SandboxID != state.SandboxID {
 		return errors.Join(errors.New("the network delay target restarted while it was being checked"), err)
 	}
 	return nil
-}
-
-// match is how the lease's filters read its peers.
-func (l *NetworkProfileLease) match() peerMatch {
-	return peerMatch{source: l.SourcePorts, setup: l.Phase == ConnectionSetup}
 }
 
 // netemArguments is the netem qdisc's parameter list for delay, with rate and
@@ -1498,7 +1504,7 @@ func netemArguments(delay NetworkProfile, rate NetworkRate, queueLimit int) []st
 // nothing is delayed until the filters select the peers' packets. It picks
 // the child handle.
 func (l *NetworkProfileLease) plan(netem []string) []netemStep {
-	if len(l.Peers) == 0 {
+	if len(l.peerPolicy) == 0 {
 		return []netemStep{{"add the netem delay", append([]string{"tc", "qdisc", "add", "dev", l.Interface, "root", "handle", l.handle}, netem...)}}
 	}
 	l.child = fmt.Sprintf("%x:", 0x1000+rand.IntN(0xe000))
@@ -1510,13 +1516,13 @@ func (l *NetworkProfileLease) plan(netem []string) []netemStep {
 		{"add the delay's prio root", append([]string{"tc", "qdisc", "add", "dev", l.Interface, "root", "handle", l.handle, "prio", "bands", "3", "priomap"}, priomap...)},
 		{"add the netem delay", append([]string{"tc", "qdisc", "add", "dev", l.Interface, "parent", l.handle + peerBand, "handle", l.child}, netem...)},
 	}
-	leaves := planPeerLeaves(l.Peers)
+	leaves := planPeerLeaves(l.peerPolicy)
 	for i, leaf := range leaves {
 		label := "add the peer filter"
 		if len(leaves) > 1 {
 			label = fmt.Sprintf("add peer filter %d of %d", i+1, len(leaves))
 		}
-		steps = append(steps, netemStep{label, peerFilterArgs(l.Interface, l.handle, leaf, l.match())})
+		steps = append(steps, netemStep{label, peerFilterArgs(l.Interface, l.handle, leaf, l.match)})
 	}
 	return steps
 }
@@ -1967,15 +1973,15 @@ func (l *NetworkProfileLease) settle(ctx context.Context) error {
 	if l.helper != nil {
 		return nil
 	}
-	state, err := l.backend.target(ctx, l.ContainerID, l.NetworkName)
-	if errdefs.IsNotFound(err) || err == nil && (!state.Running || state.SandboxID != l.SandboxID) {
+	state, err := l.backend.target(ctx, l.id, l.network)
+	if errdefs.IsNotFound(err) || err == nil && (!state.Running || state.SandboxID != l.sandbox) {
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("inspect the network delay target: %w", err)
 	}
 	// The validated image, by ID: its tag may now name another image.
-	helper, err := startNetemHelper(ctx, l.backend, l.HelperImageID, container.NetworkMode("container:"+l.ContainerID))
+	helper, err := startNetemHelper(ctx, l.backend, l.helperImage, container.NetworkMode("container:"+l.id))
 	if err != nil {
 		return fmt.Errorf("replace the netem helper: %w", err)
 	}
@@ -1991,13 +1997,13 @@ func (l *NetworkProfileLease) read(ctx context.Context) (NetworkProfileStatus, e
 	}
 	// The interface is found by its index: its address, MAC and name may
 	// change, but a reconnect creates a new interface with a new index.
-	report, err := inspectNetem(ctx, l.backend, l.helper, "index", strconv.Itoa(l.InterfaceIndex))
+	report, err := inspectNetem(ctx, l.backend, l.helper, "index", strconv.Itoa(l.interfaceIndex))
 	if err != nil {
 		return NetworkProfileStatus{}, err
 	}
 	// Another namespace, or no interface with that index, is not the delayed
 	// interface; its qdiscs are not the lease's.
-	if report.Namespace != l.Namespace || len(report.Links) != 1 {
+	if report.Namespace != l.namespace || len(report.Links) != 1 {
 		return NetworkProfileStatus{Gone: true}, nil
 	}
 	root, err := report.root()
@@ -2007,7 +2013,7 @@ func (l *NetworkProfileLease) read(ctx context.Context) (NetworkProfileStatus, e
 	status := NetworkProfileStatus{Interface: report.Links[0].Name, RootKind: root.Kind, RootHandle: root.Handle, Qdiscs: report.Qdiscs, Filters: report.Filters}
 	netem := root
 	switch {
-	case len(l.Peers) == 0:
+	case len(l.peerPolicy) == 0:
 		if root.Kind == "netem" && root.Handle == l.handle {
 			status.mismatch = l.ownedPrefix(status)
 			status.Applied = status.mismatch == nil
@@ -2025,7 +2031,7 @@ func (l *NetworkProfileLease) read(ctx context.Context) (NetworkProfileStatus, e
 				netem, children = qdisc, children+1
 			}
 		}
-		status.mismatch = errors.Join(checkPeerPriorityMap(root), checkPeerFilter(report.Filters, l.handle, l.Peers, l.match()))
+		status.mismatch = errors.Join(checkPeerPriorityMap(root), checkPeerFilter(report.Filters, l.handle, l.peerPolicy, l.match))
 		if children != 1 {
 			status.mismatch = errors.Join(status.mismatch, fmt.Errorf("the prio root has no netem child %s in band %s", l.child, l.handle+peerBand))
 		} else if err := l.ownedPrefix(status); status.mismatch == nil && err != nil {
@@ -2074,7 +2080,7 @@ func (l *NetworkProfileLease) ownedPrefix(status NetworkProfileStatus) error {
 		return fmt.Errorf("parse tc qdisc output: %w", err)
 	}
 	rootKind := "netem"
-	if len(l.Peers) > 0 {
+	if len(l.peerPolicy) > 0 {
 		rootKind = "prio"
 	}
 	// A qdisc is under the root when its parent is the root or a qdisc under
@@ -2096,15 +2102,15 @@ func (l *NetworkProfileLease) ownedPrefix(status NetworkProfileStatus) error {
 		}
 		switch {
 		case qdisc.Root && qdisc.Kind == rootKind && qdisc.Handle == l.handle:
-		case len(l.Peers) > 0 && !qdisc.Root && qdisc.Kind == "netem" && qdisc.Handle == l.child && qdisc.Parent == l.handle+peerBand:
+		case len(l.peerPolicy) > 0 && !qdisc.Root && qdisc.Kind == "netem" && qdisc.Handle == l.child && qdisc.Parent == l.handle+peerBand:
 		case qdisc.Root:
 			return fmt.Errorf("the root is %s %s, not the delay's %s", qdisc.Kind, qdisc.Handle, rootKind)
 		default:
 			return fmt.Errorf("a %s qdisc %s under %s", qdisc.Kind, qdisc.Handle, qdisc.Parent)
 		}
 	}
-	if len(l.Peers) > 0 {
-		return checkPeerFilters(status.Filters, l.handle, l.Peers, l.match(), false)
+	if len(l.peerPolicy) > 0 {
+		return checkPeerFilters(status.Filters, l.handle, l.peerPolicy, l.match, false)
 	}
 	var filters []netemFilter
 	if err := json.Unmarshal(status.Filters, &filters); err != nil {
@@ -2117,7 +2123,7 @@ func (l *NetworkProfileLease) ownedPrefix(status NetworkProfileStatus) error {
 }
 
 // Restore removes the delay's qdisc and then the helper, after restoring
-// every lease in PeerLeases. A delay whose interface is gone needs no removal. A
+// each owned peer lease. A delay whose interface is gone needs no removal. A
 // root qdisc that someone replaced, or a filter or qdisc that someone added
 // under the lease's root, is refused, not removed, and the lease stays
 // retryable.
@@ -2133,10 +2139,10 @@ func (l *NetworkProfileLease) Restore(ctx context.Context) error {
 	defer l.mu.Unlock()
 	// Every peer lease is restored, even after the outer lease completed: a
 	// peer lease published after an earlier Restore is still restored here.
-	// Each peer has its own mutex, so holding l.mu keeps PeerLeases stable
-	// without nesting the same lock.
+	// Each peer has its own mutex, so holding l.mu keeps the private list
+	// stable without nesting the same lock.
 	var inbound error
-	for _, peer := range l.PeerLeases {
+	for _, peer := range l.inboundLeases {
 		inbound = errors.Join(inbound, peer.Restore(ctx))
 	}
 	if inbound != nil {
