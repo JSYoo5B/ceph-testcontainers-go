@@ -1,6 +1,6 @@
-//go:build all || (integration && topology && multicluster && (!ci || (ci_multicluster && (!ci_batch || ci_batch_multicluster_topology_infra))))
+//go:build all || (integration && topology && multicluster && (!ci || (ci_multicluster && (!ci_batch || ci_batch_multicluster_control_admission))))
 
-//ci: timeout=60m job-timeout=70 image-roles=essential,client,cephfs,rbd-aux,rgw
+//ci: timeout=30m job-timeout=40 image-roles=essential
 
 package integration_test
 
