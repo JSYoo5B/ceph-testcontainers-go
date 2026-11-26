@@ -105,6 +105,31 @@ func testBlockIOMainDeviceRecovery(t *testing.T) {
 			t.Fatalf("acknowledged read failed: phase=%s object=%s complete=%t exit=%d timeout=%t bytes=%d stderr=%q", phase, object, result.Complete(), result.ExitCode, result.TimedOut, len(result.Stdout), result.Stderr)
 		}
 	}
+	readAfterRecovery := func(object string) {
+		t.Helper()
+		deadline := time.Now().Add(45 * time.Second)
+		for attempt := 1; ; attempt++ {
+			result := blockIOCommand(t, ctx, cluster, client, "get", object, "-")
+			if result.Complete() && result.ExitCode == 0 && bytes.Equal(result.Stdout, payload) {
+				t.Logf("BLOCKIO_RECOVERY_READ attempts=%d bytes=%d", attempt, len(result.Stdout))
+				return
+			}
+			if !blockIORecoveryReadRetryable(result) || time.Now().After(deadline) {
+				blockIOReadDiagnostics(t, ctx, cluster, client, osd, object, "after-recovery")
+				t.Fatalf("acknowledged read failed after recovery: attempt=%d complete=%t exit=%d timeout=%t bytes=%d stderr=%q",
+					attempt, result.Complete(), result.ExitCode, result.TimedOut, len(result.Stdout), result.Stderr)
+			}
+			if attempt == 1 {
+				blockIOReadDiagnostics(t, ctx, cluster, client, osd, object, "after-recovery-first-timeout")
+			}
+			t.Logf("BLOCKIO_RECOVERY_READ_WAIT attempt=%d stderr=%q", attempt, result.Stderr)
+			select {
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			case <-time.After(500 * time.Millisecond):
+			}
+		}
+	}
 	baseline := put("acknowledged")
 	read("acknowledged", "baseline")
 	// Prove that a native read failure retains its stderr before faulting the OSD.
@@ -187,7 +212,7 @@ func testBlockIOMainDeviceRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	blockIOClusterObservation(t, ctx, cluster, client, "after-clean")
-	read("acknowledged", "after-recovery")
+	readAfterRecovery("acknowledged")
 	put("after-recovery")
 	read("after-recovery", "after-recovery-write")
 	if err := backend.Terminate(ctx); !errors.Is(err, ceph.ErrNativeFailure) {
