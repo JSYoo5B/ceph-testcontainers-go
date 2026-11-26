@@ -57,7 +57,7 @@ func TestMultiClusterControlAdmissionInspectsLiveDocker(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer docker.Close()
+			defer func() { _ = docker.Close() }()
 			if _, err := docker.ContainerStop(ctx, control.GetContainerID(), mobycl.ContainerStopOptions{}); err != nil {
 				t.Fatal(err)
 			}
