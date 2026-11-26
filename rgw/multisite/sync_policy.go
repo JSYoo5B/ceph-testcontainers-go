@@ -626,6 +626,17 @@ func (f *Fixture) syncPolicyMaster(ctx context.Context) (*rgwZoneState, map[stri
 	if master == nil {
 		return nil, nil, errors.New("RGW metadata master is not attached and owned")
 	}
+	// The first attached zone can still expose an older imported version.
+	// Read the selected master's own committed pointer before claiming it is
+	// current, and verify that it still names that master and this topology.
+	data, err = f.syncPolicyAdmin(ctx, master, master.Zonegroup, "period", "get")
+	if err != nil {
+		return nil, nil, err
+	}
+	period, err = decodeRGWTopologyPeriod(data)
+	if err != nil {
+		return nil, nil, err
+	}
 	if err := f.checkZonePeriod(period, master, states); err != nil {
 		return nil, nil, err
 	}

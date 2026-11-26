@@ -95,9 +95,13 @@ func (g *SyncGroup) WaitBucketSyncReady(ctx context.Context, pipeID, sourceZone,
 	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
 		return BucketSyncStatus{}, err
 	}
-	defer f.topologyMu.Unlock()
 	// Resolve once: the checkpoint keeps value copies of the selected identities.
 	checkpoint, err := g.bucketCheckpoint(ctx, pipeID, sourceZone, destinationZone)
+	var policy map[string]any
+	if err == nil {
+		policy = syncJSONClone(g.state.group)
+	}
+	f.topologyMu.Unlock()
 	if err != nil {
 		return BucketSyncStatus{}, err
 	}
@@ -109,7 +113,17 @@ func (g *SyncGroup) WaitBucketSyncReady(ctx context.Context, pipeID, sourceZone,
 	observed := false
 	for {
 		attempt, stop := context.WithTimeout(ctx, 30*time.Second)
+		if err := multicluster.LockObservation(attempt, &f.topologyMu); err != nil {
+			stop()
+			return last, fmt.Errorf("wait RGW bucket sync checkpoint: %w", err)
+		}
+		if err := f.checkBucketWaitOwnership(g, checkpoint, policy); err != nil {
+			f.topologyMu.Unlock()
+			stop()
+			return last, err
+		}
 		status, err := f.syncBucketStatus(attempt, checkpoint)
+		f.topologyMu.Unlock()
 		stop()
 		lastErr = err
 		if err == nil || !observed {
@@ -125,6 +139,30 @@ func (g *SyncGroup) WaitBucketSyncReady(ctx context.Context, pipeID, sourceZone,
 		case <-time.After(time.Second):
 		}
 	}
+}
+
+// checkBucketWaitOwnership revalidates the captured handles after the wait
+// releases topologyMu between samples.
+func (f *Fixture) checkBucketWaitOwnership(g *SyncGroup, checkpoint *rgwSyncBucketCheckpoint, policy map[string]any) error {
+	if err := f.validateSyncGroup(g, false); err != nil {
+		return err
+	}
+	if g.state.pending != nil || !reflect.DeepEqual(g.state.group, policy) {
+		return errors.New("RGW owned sync group changed during bucket readiness wait")
+	}
+	for _, captured := range []*rgwZoneState{checkpoint.source, checkpoint.destination} {
+		attached := false
+		for _, current := range f.zoneStates() {
+			if current.Name == captured.Name && current.ID == captured.ID && current.client != nil && current.client == captured.client {
+				attached = true
+				break
+			}
+		}
+		if !attached {
+			return errors.New("RGW bucket checkpoint zone is no longer attached and owned")
+		}
+	}
+	return nil
 }
 
 func (g *SyncGroup) bucketCheckpoint(ctx context.Context, pipeID, sourceZone, destinationZone string) (*rgwSyncBucketCheckpoint, error) {

@@ -6,11 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/testcontainers/testcontainers-go"
 )
 
 // MetadataSyncStatus includes only native state/identity/shard counts. It
@@ -47,8 +50,11 @@ type SyncStatus struct {
 // SyncStatus observes native metadata/data readiness in an attached owned zone.
 // Native human sync status is required for remote-log comparison even when the
 // CLI is passed --format json. The structured metadata state separately guards
-// period/realm epoch and every shard. This is a point-in-time observation;
-// applications should quiesce writes and still verify their own S3 payloads.
+// period/realm epoch and every shard. The current period is selected from
+// every attached zone's local period document and confirmed at its named
+// master; unreadable or conflicting evidence fails the observation. This is a
+// point-in-time observation; applications should quiesce writes and still
+// verify their own S3 payloads.
 //
 //purpose:observation
 func (f *Fixture) SyncStatus(ctx context.Context, zoneName string) (SyncStatus, error) {
@@ -97,10 +103,17 @@ func (f *Fixture) WaitSyncReady(ctx context.Context, zoneName string, sourceZone
 	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
 		return SyncStatus{}, err
 	}
-	defer f.topologyMu.Unlock()
 	if _, err := f.syncStatusZones(zoneName, sourceZones); err != nil {
+		f.topologyMu.Unlock()
 		return SyncStatus{}, err
 	}
+	pins := make(map[string]syncWaitZonePin, len(sourceZones)+1)
+	for _, zone := range f.zoneStates() {
+		if zone.Name == zoneName || slices.Contains(sourceZones, zone.Name) {
+			pins[zone.Name] = syncWaitZonePin{id: zone.ID, client: zone.client}
+		}
+	}
+	f.topologyMu.Unlock()
 	// last is the latest complete observation; an attempt that failed, or
 	// that the deadline cut short, does not replace it, and its error is
 	// reported with it.
@@ -111,7 +124,17 @@ func (f *Fixture) WaitSyncReady(ctx context.Context, zoneName string, sourceZone
 	}
 	for {
 		attemptCtx, attemptCancel := context.WithTimeout(ctx, 30*time.Second)
+		if err := multicluster.LockObservation(attemptCtx, &f.topologyMu); err != nil {
+			attemptCancel()
+			return expired(err)
+		}
+		if err := f.checkSyncWaitPins(pins); err != nil {
+			f.topologyMu.Unlock()
+			attemptCancel()
+			return last, err
+		}
 		status, err := f.syncStatus(attemptCtx, zoneName, len(sourceZones) == 0)
+		f.topologyMu.Unlock()
 		attemptCancel()
 		if lastErr = err; err == nil {
 			last = status
@@ -128,6 +151,30 @@ func (f *Fixture) WaitSyncReady(ctx context.Context, zoneName string, sourceZone
 		case <-time.After(time.Second):
 		}
 	}
+}
+
+type syncWaitZonePin struct {
+	id     string
+	client testcontainers.Container
+}
+
+func (f *Fixture) checkSyncWaitPins(pins map[string]syncWaitZonePin) error {
+	if f.closed {
+		return multisiteInvalid(errors.New("RGW multisite is terminated"))
+	}
+	for name, pin := range pins {
+		attached := false
+		for _, zone := range f.zoneStates() {
+			if zone.Name == name && zone.ID == pin.id && zone.client != nil && zone.client == pin.client {
+				attached = true
+				break
+			}
+		}
+		if !attached {
+			return errors.New("RGW sync readiness zone is no longer attached and owned")
+		}
+	}
+	return nil
 }
 
 func (f *Fixture) syncStatusZones(name string, sources []string) (*rgwZoneState, error) {
@@ -159,7 +206,7 @@ func (f *Fixture) syncStatus(ctx context.Context, zoneName string, metadataOnly 
 	if err != nil {
 		return SyncStatus{}, err
 	}
-	master, current, err := f.syncPolicyMaster(ctx)
+	master, current, err := f.syncObservationMaster(ctx)
 	if err != nil {
 		return SyncStatus{}, err
 	}
@@ -180,7 +227,8 @@ func (f *Fixture) syncStatus(ctx context.Context, zoneName string, metadataOnly 
 	if err != nil {
 		return result, err
 	}
-	if local["id"] != id || fmt.Sprint(local["realm_epoch"]) != strconv.FormatUint(epoch, 10) || !syncPeriodPolicyEqual(local, current) {
+	localEpoch, epochErr := syncCommittedPeriodEpoch(local)
+	if local["id"] != id || fmt.Sprint(local["realm_epoch"]) != strconv.FormatUint(epoch, 10) || epochErr != nil || localEpoch != result.periodEpoch || !syncPeriodPolicyEqual(local, current) {
 		return result, errors.New("RGW observed zone has not imported the current committed period")
 	}
 	var markers map[int]*string
@@ -224,6 +272,80 @@ func (f *Fixture) syncStatus(ctx context.Context, zoneName string, metadataOnly 
 		result.DataSources = text.data
 	}
 	return result, nil
+}
+
+// syncObservationMaster chooses the newest complete committed period seen by
+// every attached zone's local CLI, then confirms it at its named master. A
+// former master can still serve an older imported pointer after promotion;
+// one zone's period alone cannot establish the current readiness baseline.
+func (f *Fixture) syncObservationMaster(ctx context.Context) (*rgwZoneState, map[string]any, error) {
+	if f.closed {
+		return nil, nil, multisiteInvalid(errors.New("RGW multisite is terminated"))
+	}
+	states := f.zoneStates()
+	if len(states) == 0 || states[0].client == nil {
+		return nil, nil, errors.New("RGW fixture has no initialized owned zones")
+	}
+	type candidate struct {
+		native                  map[string]any
+		topology                *rgwTopologyPeriod
+		realmEpoch, periodEpoch uint64
+	}
+	var latest *candidate
+	for _, zone := range states {
+		if zone.client == nil {
+			return nil, nil, errors.New("RGW attached zone has no CLI client for committed period observation")
+		}
+		data, err := f.syncPolicyAdmin(ctx, zone, zone.Zonegroup, "period", "get")
+		if err != nil {
+			return nil, nil, err
+		}
+		topology, err := decodeRGWTopologyPeriod(data)
+		if err != nil {
+			return nil, nil, err
+		}
+		native, err := syncJSON(data)
+		if err != nil {
+			return nil, nil, err
+		}
+		_, realmEpoch, err := syncCommittedPeriodIdentity(native)
+		if err != nil || topology.RealmID != f.RealmID {
+			return nil, nil, errors.New("RGW attached zone has incomplete or foreign committed period evidence")
+		}
+		periodEpoch, err := syncCommittedPeriodEpoch(native)
+		if err != nil {
+			return nil, nil, err
+		}
+		observed := &candidate{native: native, topology: topology, realmEpoch: realmEpoch, periodEpoch: periodEpoch}
+		if latest == nil || realmEpoch > latest.realmEpoch || realmEpoch == latest.realmEpoch && periodEpoch > latest.periodEpoch {
+			latest = observed
+		} else if realmEpoch == latest.realmEpoch && periodEpoch == latest.periodEpoch && !reflect.DeepEqual(native, latest.native) {
+			return nil, nil, errors.New("RGW attached zones disagree on the same committed period version")
+		}
+	}
+	master := rgwPeriodMaster(latest.topology, states)
+	if master == nil {
+		return nil, nil, errors.New("RGW metadata master is not attached and owned")
+	}
+	data, err := f.syncPolicyAdmin(ctx, master, master.Zonegroup, "period", "get")
+	if err != nil {
+		return nil, nil, err
+	}
+	current, err := syncJSON(data)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !reflect.DeepEqual(current, latest.native) {
+		return nil, nil, errors.New("RGW metadata master did not confirm the observed committed period")
+	}
+	period, err := decodeRGWTopologyPeriod(data)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := f.checkZonePeriod(period, master, states); err != nil {
+		return nil, nil, err
+	}
+	return master, current, nil
 }
 
 func syncCommittedPeriodIdentity(current map[string]any) (string, uint64, error) {

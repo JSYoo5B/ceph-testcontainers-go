@@ -2,7 +2,9 @@ package multisite
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -74,6 +76,85 @@ func TestRGWSyncStatusAndWaitRequireScopedRemoteComparison(t *testing.T) {
 	}
 }
 
+func TestRGWSyncStatusRequiresTheMasterPeriodEpoch(t *testing.T) {
+	f, cli, _, _ := newRGWSyncTestFixture()
+	cli.metadataOutput, cli.humanOutput = rgwReadyMetadata, rgwReadyText
+	old := syncJSONClone(cli.current)
+	cli.current["epoch"] = json.Number("2")
+	cli.periodByZone = map[string]map[string]any{"dest-id": old}
+	if _, err := f.SyncStatus(t.Context(), "destination"); err == nil || !strings.Contains(err.Error(), "has not imported") {
+		t.Fatalf("same-ID older period epoch was accepted: %v", err)
+	}
+	delete(cli.periodByZone, "dest-id")
+	if _, err := f.SyncStatus(t.Context(), "destination"); err != nil {
+		t.Fatalf("matching current period was refused: %v", err)
+	}
+}
+
+func TestRGWPolicyMasterReadsSelectedMastersOwnPeriod(t *testing.T) {
+	f, cli, _, _ := newRGWSyncTestFixture()
+	current := syncJSONClone(cli.current)
+	current["master_zone"] = "dest-id"
+	current["epoch"] = json.Number("2")
+	group := syncPeriodGroups(current)[0]
+	group["master_zone"] = "dest-id"
+	group["endpoints"] = []any{"http://destination:7480"}
+	group["is_master"] = true
+	stale := syncJSONClone(current)
+	stale["epoch"] = json.Number("1")
+	cli.current = current
+	cli.periodByZone = map[string]map[string]any{"source-id": stale}
+	master, period, err := f.syncPolicyMaster(t.Context())
+	if err != nil || master.ID != "dest-id" || period["epoch"] != json.Number("2") {
+		t.Fatalf("selected master's current period: %v %+v %v", master, period, err)
+	}
+}
+
+func TestRGWSyncStatusDiscoversNewMasterPastFormerMastersOldPointer(t *testing.T) {
+	f, cli, _, _ := newRGWSyncTestFixture()
+	old := syncJSONClone(cli.current)
+	current := syncJSONClone(old)
+	current["master_zone"] = "dest-id"
+	current["epoch"] = json.Number("2")
+	group := syncPeriodGroups(current)[0]
+	group["master_zone"] = "dest-id"
+	group["endpoints"] = []any{"http://destination:7480"}
+	group["is_master"] = true
+	cli.current = current
+	cli.periodByZone = map[string]map[string]any{"source-id": old}
+	cli.metadataOutput, cli.humanOutput = rgwReadyMetadata, rgwReadyText
+	status, err := f.SyncStatus(t.Context(), "destination")
+	if err != nil || !status.MetadataMaster || status.periodEpoch != 2 {
+		t.Fatalf("new master's committed period was missed: %+v, %v", status, err)
+	}
+	stale, err := f.SyncStatus(t.Context(), "source")
+	if err == nil || stale.MetadataMaster || stale.periodEpoch != 2 || !strings.Contains(err.Error(), "has not imported") {
+		t.Fatalf("former master's old period was treated as current: %+v, %v", stale, err)
+	}
+}
+
+func TestRGWSyncStatusRefusesIncompleteOrConflictingPeriodCandidates(t *testing.T) {
+	for _, tc := range []struct {
+		name, want string
+		period     func(map[string]any) map[string]any
+	}{
+		{"incomplete", "committed", func(map[string]any) map[string]any { return map[string]any{"id": "period-original"} }},
+		{"same version different master", "disagree", func(current map[string]any) map[string]any {
+			candidate := syncJSONClone(current)
+			candidate["master_zone"] = "dest-id"
+			return candidate
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, cli, _, _ := newRGWSyncTestFixture()
+			cli.periodByZone = map[string]map[string]any{"dest-id": tc.period(cli.current)}
+			if _, err := f.SyncStatus(t.Context(), "source"); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("invalid attached period was accepted: %v", err)
+			}
+		})
+	}
+}
+
 func TestRGWSyncStatusRejectsIncompleteAndMisleadingNativeReadiness(t *testing.T) {
 	f, _, _, _ := newRGWSyncTestFixture()
 	want := SyncStatus{RealmID: "realm", ZonegroupID: "group-id", ZoneID: "dest-id"}
@@ -140,18 +221,32 @@ func TestRGWSyncReadyKeepsObservationWhenDeadlineCutsAnAttempt(t *testing.T) {
 	cli.metadataOutput, cli.humanOutput = rgwReadyMetadata, strings.Replace(rgwReadyText, "data is caught up with source", "data is behind on 1 shards", 1)
 	deadline := clustertest.NewSignalDeadline(t.Context())
 	observations := 0
+	var afterCut [][]string
+	cut := false
 	cli.onExec = func(_ context.Context, args []string) {
+		if cut {
+			afterCut = append(afterCut, slices.Clone(args))
+		}
 		if syncTestFlag(args, "--zone-id") != "dest-id" || !syncTestCommand(args, "period", "get") {
 			return
 		}
-		if observations++; observations == 2 {
+		// Each sample reads the destination's period while selecting the
+		// current master and again when checking its local import. Cancellation
+		// may stop the second sample before that latter read.
+		if observations++; observations == 3 {
 			cli.stderrOutput = "ERROR: could not find remote sync shard status for shard_id=17; secret-marker\n"
+			cut = true
 			deadline.Expire()
 		}
 	}
 	last, err := f.WaitSyncReady(deadline, "destination", "source")
-	if !errors.Is(err, context.DeadlineExceeded) || observations != 2 || len(last.DataSources) != 1 || last.DataSources[0].CaughtUp || last.DataSources[0].BehindShards != 1 {
+	if !errors.Is(err, context.DeadlineExceeded) || observations < 3 || observations > 4 || len(last.DataSources) != 1 || last.DataSources[0].CaughtUp || last.DataSources[0].BehindShards != 1 {
 		t.Fatalf("the cut attempt replaced the last observation: %+v %v (observations %d)", last, err, observations)
+	}
+	for _, args := range afterCut {
+		if !syncTestCommand(args, "period", "get") {
+			t.Fatalf("the deadline-cut attempt continued native sync reads: %v", args)
+		}
 	}
 	if msg := err.Error(); !strings.Contains(msg, "BehindShards:1") || strings.Contains(msg, "last_error=<nil>") || strings.Contains(msg, "secret-marker") {
 		t.Fatalf("error does not report the observation and the failed attempt, or exposes native output: %v", err)
