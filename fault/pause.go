@@ -25,7 +25,10 @@ type containerPauseClient interface {
 // with an error must be resumed: a transport failure cannot prove that Docker
 // did not freeze the container. Resume is retryable and idempotent.
 type PauseLease struct {
+	// ContainerID describes the paused container. Resume uses the identity
+	// recorded when Pause applied the lease.
 	ContainerID string
+	id          string
 	mu          sync.Mutex
 	docker      containerPauseClient
 	complete    bool
@@ -107,7 +110,7 @@ func pauseContainer(ctx context.Context, docker containerPauseClient, id string)
 	if state == nil || !state.Running || state.Paused || state.Restarting {
 		return nil, errors.Join(nshelper.InvalidRequest("only a running, unpaused container can be paused"), docker.Close())
 	}
-	pause := &PauseLease{ContainerID: id, docker: docker}
+	pause := &PauseLease{ContainerID: id, id: id, docker: docker}
 	// Return ownership even after an uncertain transport outcome.
 	if _, err := docker.ContainerPause(ctx, id, mobycl.ContainerPauseOptions{}); err != nil {
 		return pause, fmt.Errorf("pause container: %w", err)
@@ -138,12 +141,12 @@ func (pause *PauseLease) Resume(ctx context.Context) error {
 	if pause.complete {
 		return nil
 	}
-	inspection, err := pause.docker.ContainerInspect(ctx, pause.ContainerID, mobycl.ContainerInspectOptions{})
+	inspection, err := pause.docker.ContainerInspect(ctx, pause.id, mobycl.ContainerInspectOptions{})
 	if err != nil && !faulthook.OnlyMissingHostResource(err) {
 		return fmt.Errorf("inspect paused container: %w", err)
 	}
 	if err == nil && inspection.Container.State != nil && inspection.Container.State.Paused {
-		if _, err := pause.docker.ContainerUnpause(ctx, pause.ContainerID, mobycl.ContainerUnpauseOptions{}); err != nil && !faulthook.OnlyMissingHostResource(err) {
+		if _, err := pause.docker.ContainerUnpause(ctx, pause.id, mobycl.ContainerUnpauseOptions{}); err != nil && !faulthook.OnlyMissingHostResource(err) {
 			return fmt.Errorf("resume paused container: %w", err)
 		}
 	}

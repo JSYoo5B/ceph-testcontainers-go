@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
+	"slices"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 )
 
 type fakePauseDocker struct {
+	inspectIDs, thawIDs            []string
 	state                          *container.State
 	inspectErr, pauseErr, thawErr  error
 	inspects, pauses, thaws, close int
@@ -24,8 +26,9 @@ type fakePauseDocker struct {
 	closeErr                       error
 }
 
-func (d *fakePauseDocker) ContainerInspect(context.Context, string, mobycl.ContainerInspectOptions) (mobycl.ContainerInspectResult, error) {
+func (d *fakePauseDocker) ContainerInspect(_ context.Context, id string, _ mobycl.ContainerInspectOptions) (mobycl.ContainerInspectResult, error) {
 	d.inspects++
+	d.inspectIDs = append(d.inspectIDs, id)
 	if d.inspectErr != nil {
 		return mobycl.ContainerInspectResult{}, d.inspectErr
 	}
@@ -43,8 +46,9 @@ func (d *fakePauseDocker) ContainerPause(context.Context, string, mobycl.Contain
 	return mobycl.ContainerPauseResult{}, d.pauseErr
 }
 
-func (d *fakePauseDocker) ContainerUnpause(context.Context, string, mobycl.ContainerUnpauseOptions) (mobycl.ContainerUnpauseResult, error) {
+func (d *fakePauseDocker) ContainerUnpause(_ context.Context, id string, _ mobycl.ContainerUnpauseOptions) (mobycl.ContainerUnpauseResult, error) {
 	d.thaws++
+	d.thawIDs = append(d.thawIDs, id)
 	if d.thawErr == nil || d.thawOnError {
 		d.state.Paused = false
 	}
@@ -180,6 +184,7 @@ func TestClusterPauseTracksCancelledApplyAndRetriesTeardown(t *testing.T) {
 	if err == nil || again != pause || d.pauses != 1 {
 		t.Fatalf("overlap replaced the live handle: %v", err)
 	}
+	pause.ContainerID = "unrelated-container"
 	d.thawErr = errors.New("unpause unavailable")
 	if err := c.Terminate(t.Context()); !errors.Is(err, d.thawErr) || pause.complete || trackedPause(c, "osd") != pause || terminated != 0 || d.close != 0 {
 		t.Fatalf("failed thaw lost retryability: %v", err)
@@ -190,6 +195,9 @@ func TestClusterPauseTracksCancelledApplyAndRetriesTeardown(t *testing.T) {
 	}
 	if err := pause.Resume(t.Context()); err != nil || d.thaws != 2 || d.close != 1 {
 		t.Fatalf("completed resume repeated Docker work: %v", err)
+	}
+	if !slices.Equal(d.inspectIDs, []string{"osd", "osd", "osd"}) || !slices.Equal(d.thawIDs, []string{"osd", "osd"}) {
+		t.Fatalf("edited descriptor redirected cluster teardown: inspect=%v thaw=%v", d.inspectIDs, d.thawIDs)
 	}
 }
 
@@ -279,5 +287,25 @@ func TestPauseQueuedTopologyAndHandleDeadlines(t *testing.T) {
 	}
 	if err := c.Terminate(t.Context()); err != nil || !pause.complete || d.state.Paused {
 		t.Fatalf("fresh context could not thaw after deadlines: %v", err)
+	}
+}
+
+func TestResumeUsesOriginalPausedContainer(t *testing.T) {
+	for _, missing := range []bool{false, true} {
+		docker := &fakePauseDocker{state: &container.State{Running: true}}
+		lease, err := pauseContainer(t.Context(), docker, "paused-container")
+		if err != nil {
+			t.Fatal(err)
+		}
+		lease.ContainerID = "unrelated"
+		wantThaws := []string{"paused-container"}
+		if missing {
+			docker.inspectErr = errdefs.ErrNotFound
+			wantThaws = nil
+		}
+		if err := lease.Resume(t.Context()); err != nil || !lease.complete ||
+			!slices.Equal(docker.inspectIDs, []string{"paused-container", "paused-container"}) || !slices.Equal(docker.thawIDs, wantThaws) {
+			t.Fatalf("missing=%t inspect=%v thaw=%v err=%v", missing, docker.inspectIDs, docker.thawIDs, err)
+		}
 	}
 }

@@ -30,7 +30,10 @@ type networkLinkClient interface {
 // A non-nil handle returned with an error must be restored: transport failure
 // cannot prove that Docker did not disconnect it. Restore is retryable.
 type NetworkInterruption struct {
+	// ContainerID and NetworkName describe the interrupted endpoint.
+	// Restore uses the target recorded when the interruption was applied.
 	ContainerID, NetworkName string
+	id, network              string
 	OriginalAddress          netip.Addr
 	mu                       sync.Mutex
 	docker                   networkLinkClient
@@ -128,13 +131,18 @@ func InterruptLink(ctx context.Context, ctr testcontainers.Container, name strin
 	if endpoint == nil || !endpoint.IPAddress.IsValid() || !endpoint.IPAddress.Is4() {
 		return nil, errors.Join(nshelper.InvalidRequest("container is not attached to Ceph network %s with IPv4", name), docker.Close())
 	}
-	link := &NetworkInterruption{ContainerID: id, NetworkName: name, OriginalAddress: endpoint.IPAddress, docker: docker, endpoint: dockerbridge.RestoreEndpoint(endpoint)}
+	link := newNetworkInterruption(docker, id, name, endpoint)
 	// Return ownership even after uncertain transport outcomes.
 	_, err = docker.NetworkDisconnect(ctx, name, mobycl.NetworkDisconnectOptions{Container: id})
 	if err != nil {
 		return link, fmt.Errorf("disconnect Ceph network endpoint: %w", err)
 	}
 	return link, nil
+}
+
+func newNetworkInterruption(docker networkLinkClient, id, network string, endpoint *dockernetwork.EndpointSettings) *NetworkInterruption {
+	return &NetworkInterruption{ContainerID: id, NetworkName: network, OriginalAddress: endpoint.IPAddress,
+		id: id, network: network, docker: docker, endpoint: dockerbridge.RestoreEndpoint(endpoint)}
 }
 
 func (link *NetworkInterruption) isComplete(ctx context.Context) (bool, error) {
@@ -161,14 +169,14 @@ func (link *NetworkInterruption) Restore(ctx context.Context) error {
 	if link.complete {
 		return nil
 	}
-	inspection, err := link.docker.ContainerInspect(ctx, link.ContainerID, mobycl.ContainerInspectOptions{})
+	inspection, err := link.docker.ContainerInspect(ctx, link.id, mobycl.ContainerInspectOptions{})
 	if err != nil && !faulthook.OnlyMissingHostResource(err) {
 		return fmt.Errorf("inspect interrupted endpoint: %w", err)
 	}
 	if err == nil {
 		var current *dockernetwork.EndpointSettings
 		if inspection.Container.NetworkSettings != nil {
-			current = inspection.Container.NetworkSettings.Networks[link.NetworkName]
+			current = inspection.Container.NetworkSettings.Networks[link.network]
 		}
 		if current != nil {
 			if current.IPAddress != link.endpoint.IPAMConfig.IPv4Address || current.GwPriority != link.endpoint.GwPriority {
@@ -183,13 +191,13 @@ func (link *NetworkInterruption) Restore(ctx context.Context) error {
 				}
 			}
 		} else {
-			if _, err := link.docker.NetworkConnect(ctx, link.NetworkName, mobycl.NetworkConnectOptions{Container: link.ContainerID, EndpointConfig: link.endpoint}); err != nil {
+			if _, err := link.docker.NetworkConnect(ctx, link.network, mobycl.NetworkConnectOptions{Container: link.id, EndpointConfig: link.endpoint}); err != nil {
 				// A missing network is not a restored live caller container. Only
 				// a container removed during reconnect needs no restoration.
 				if !faulthook.OnlyMissingHostResource(err) {
 					return fmt.Errorf("restore Ceph network endpoint: %w", err)
 				}
-				if _, inspectErr := link.docker.ContainerInspect(ctx, link.ContainerID, mobycl.ContainerInspectOptions{}); inspectErr == nil || !faulthook.OnlyMissingHostResource(inspectErr) {
+				if _, inspectErr := link.docker.ContainerInspect(ctx, link.id, mobycl.ContainerInspectOptions{}); inspectErr == nil || !faulthook.OnlyMissingHostResource(inspectErr) {
 					return fmt.Errorf("restore Ceph network endpoint: %w", errors.Join(err, inspectErr))
 				}
 			}
