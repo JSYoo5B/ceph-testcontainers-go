@@ -273,7 +273,11 @@ func blockIOReadDiagnostics(t *testing.T, ctx context.Context, cluster *ceph.Con
 		t.Logf("BLOCKIO_OSD_LOG phase=%s error=%v", phase, err)
 		return
 	}
-	defer logs.Close()
+	defer func() {
+		if err := logs.Close(); err != nil {
+			t.Logf("BLOCKIO_OSD_LOG phase=%s close_error=%v", phase, err)
+		}
+	}()
 	data, err := io.ReadAll(io.LimitReader(logs, 4<<20))
 	if len(data) > 16<<10 {
 		data = data[len(data)-(16<<10):]
