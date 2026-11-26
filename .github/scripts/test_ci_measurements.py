@@ -119,6 +119,8 @@ class PhaseTests(unittest.TestCase):
             "Verify the release candidate checkout": "setup",
             "Prepare Go modules": "setup", "Compile selected tagged suite": "compile",
             "Prepare runner storage": "storage", "Docker baseline and engine identity": "docker",
+            "Check out the helper preparation from the workflow commit": "setup",
+            "Prepare the Block I/O helper and kernel": "test_images",
             "Resolve native published Ceph roles": "images", "Prepare Ryuk and the test images": "test_images",
             "Record runner storage with the images": "storage", "Verify post-image runner headroom": "storage",
             "Native assertions and completion proof": "native", "Retry the failed tests once": "native",

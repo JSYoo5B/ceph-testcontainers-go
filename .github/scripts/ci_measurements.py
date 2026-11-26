@@ -70,13 +70,14 @@ EVENTS = ("pull_request", "push")
 # no prefix names stays in that fallback.
 PHASES = (
     ("setup", ("Set up job", "Run actions/checkout", "Run actions/setup-go", "Restore the Go module cache",
-               "Restore the Go build cache", "Prepare Go modules", "Verify the release candidate checkout")),
+               "Restore the Go build cache", "Prepare Go modules", "Verify the release candidate checkout",
+               "Check out the helper preparation from the workflow commit")),
     ("compile", ("Compile selected tagged suite",)),
     ("storage", ("Prepare runner storage", "Record runner storage", "Verify post-image runner headroom",
                  "Release the qualification pressure file")),
     ("docker", ("Docker baseline",)),
     ("images", ("Resolve native published Ceph roles",)),
-    ("test_images", ("Prepare Ryuk and the test images",)),
+    ("test_images", ("Prepare Ryuk and the test images", "Prepare the Block I/O helper and kernel")),
     ("native", ("Native assertions", "Retry the failed tests once")),
     ("cleanup", ("Verify owned Docker resource cleanup",)),
     ("plan_modules", ("Download every Go module",)),

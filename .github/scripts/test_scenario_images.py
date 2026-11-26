@@ -325,8 +325,12 @@ class ScenarioImageTests(unittest.TestCase):
         self.assertEqual(scalar(block, "needs"), "plan")
         self.assertIn("matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}", block)
         self.assertNotIn("actions/download-artifact", block)
-        self.assertEqual(block.count("uses: actions/checkout@v7"), 1)
         job_steps = steps(block)
+        checkouts = [step for step in job_steps if "uses: actions/checkout@v7" in step]
+        self.assertEqual([scalar(step, "ref") for step in checkouts],
+                         ["${{ inputs.ref }}", "${{ github.workflow_sha }}"])
+        self.assertNotIn("        if: ", checkouts[0])
+        self.assertEqual(scalar(checkouts[1], "if"), "matrix.category == 'optional' && matrix.batch == 'block_io'")
         prep = next(step for step in job_steps if "uses: " + PREP in step)
         baseline = next(step for step in job_steps if "uses: " + CLEANUP in step and "phase: snapshot" in step)
         native = next(step for step in job_steps if "uses: actions/upload-artifact" in step)

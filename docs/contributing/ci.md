@@ -377,6 +377,11 @@ batches on Squid 19.2.5 role images. The run is added beside the usual checks.
 - **Validation.** Names are checked against the head commit's planner
   (`tag_scenarios.py vocabulary`). One unknown name refuses the whole command,
   and the reply lists every unknown name.
+- **Block I/O.** Selecting `optional/block_io` prepares `loop` and `dm_delay` on
+  its disposable GitHub-hosted runner, builds and checks the pinned helper,
+  and runs the native batch on each selected release. A helper, native
+  assertion or cleanup failure fails the selection. This applies to both
+  advisory and required runs.
 - **Format.** The command must start its line and appear once per comment;
   quoted or fenced lines are ignored. Editing a comment does not run it.
 - **Authorization.** Only authors with association `OWNER`, `MEMBER` or
@@ -1400,6 +1405,13 @@ selection: the source declares every optional batch (see
 batches are described with their features, for example in
 [Daemon timing](../guides/daemon-timing.md) and the
 [`fault/blockio` README](../../fault/blockio/README.md).
+
+Run the Block I/O batch on a pull request with `/ci run optional/block_io`
+or require it with `/ci require optional/block_io`. To qualify it separately
+on every supported release, dispatch **Block fault probe**
+(`block-fault-probe.yml`) on the pull request branch with `public_api=true`
+and `prepare_kernel=true`. Verify that the run's commit is the pull
+request head. Both routes retain helper, native and cleanup results.
 
 `cephfs_fuse` (`TestCephFSFuseMount`) mounts CephFS with `ceph-fuse` in
 client containers given `/dev/fuse`, `CAP_SYS_ADMIN` and

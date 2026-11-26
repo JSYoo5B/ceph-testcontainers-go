@@ -9,6 +9,7 @@ on:
       - .github/scripts/block_fault_probe.py
       - .github/scripts/test_block_fault_probe.py
       - .github/workflows/block-fault-probe.yml
+      - .github/actions/block-io-helper/**
   workflow_dispatch:
     inputs:
       public_api:
@@ -84,40 +85,20 @@ jobs:
     env:
       CGO_ENABLED: '0'
       TESTCONTAINERS_HOST_OVERRIDE: '127.0.0.1'
-      CEPH_TEST_BLOCKIO_REQUIRE_DELAY: '1'
-      HELPER_REVISION: 711be98130c5173ef63ce56edf48fbdbdfe086ba
       CEPH_RELEASE: ${{ matrix.release }}
     steps:
       - uses: actions/checkout@v7
         with:
-          persist-credentials: false
-      - uses: actions/checkout@v7
-        with:
-          repository: JSYoo5B/ceph-testcontainers-images
-          ref: 711be98130c5173ef63ce56edf48fbdbdfe086ba
-          path: helper-source
           persist-credentials: false
       - uses: actions/setup-go@v7
         with:
           go-version: '1.26.x'
           check-latest: true
           cache: false
-      - name: Prepare the explicitly admitted disposable kernel
-        if: inputs.prepare_kernel
-        run: |
-          test "$RUNNER_ENVIRONMENT" = github-hosted
-          sudo -n modprobe loop
-          sudo -n modprobe dm_delay
-      - name: Build and quick-check the pinned helper
-        run: |
-          test "$(git -C helper-source rev-parse HEAD)" = "$HELPER_REVISION"
-          mkdir -p artifacts/blockio
-          docker build --tag blockio-qualification:local helper-source/image/extensions/blockio
-          helper=$(docker image inspect --format '{{.Id}}' blockio-qualification:local)
-          echo "CEPH_TEST_BLOCKIO_HELPER_IMAGE=$helper" >> "$GITHUB_ENV"
-          python3 helper-source/image/extension_check.py --extension blockio --image "$helper" \
-            > artifacts/blockio/helper-check.log
-          printf '%s\n' "$GITHUB_SHA" "$HELPER_REVISION" "$helper" > artifacts/blockio/sources.txt
+      - uses: ./.github/actions/block-io-helper
+        with:
+          prepare_kernel: ${{ inputs.prepare_kernel && 'true' || 'false' }}
+          directory: artifacts/blockio
       # The published role tags of the release, pulled once and exported by
       # tag for the tests; the summary under artifacts/blockio/role-images
       # records what the engine reported for them.
