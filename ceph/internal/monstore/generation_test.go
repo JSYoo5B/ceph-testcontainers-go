@@ -747,11 +747,11 @@ var monStoreGenerationSymbols = []string{"Generations", "checkMonStoreGeneration
 	"observeAddress", "holdAddress"}
 
 // monStoreGenerationCallers are the production uses of the path: the first
-// generation of a new store (startMonitorStore) and the replacement
-// (replaceMonitor).
+// generation of a new store (startMonitorStore), and the replacement
+// (replaceMonitor), including its retry after a known pre-create failure.
 var monStoreGenerationCallers = map[string][]string{
 	"ceph/mon_store_container.go": {"StartGeneration", "StopGeneration"},
-	"ceph/mon_store_replace.go":   {"ReplaceGeneration"},
+	"ceph/mon_store_replace.go":   {"StartGeneration", "ReplaceGeneration"},
 }
 
 func monStoreGenerationProblems(files map[string]*ast.File) (problems []string) {

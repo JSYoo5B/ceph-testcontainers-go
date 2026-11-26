@@ -75,7 +75,7 @@ func (f featureClient) startedContainer(ctx context.Context) (testcontainers.Con
 	}
 	defer func() { f.native.calls.endClientStartup(); cancel() }()
 	f.toolkit.markAttempted()
-	ctr, err := testcontainers.Run(ctx, images.Client, append([]testcontainers.ContainerCustomizer{
+	ctr, err := runContainer(ctx, images.Client, append([]testcontainers.ContainerCustomizer{
 		f.adminClient(), f.quorumMember("client"), f.startup.ownedLabel(), WithIdleEntrypoint(),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"})),
 	}, f.runDir.mounts()...)...)

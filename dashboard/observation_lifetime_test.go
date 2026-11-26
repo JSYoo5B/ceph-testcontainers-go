@@ -43,7 +43,7 @@ func (f *observationCLI) Exec(ctx context.Context, args []string, opts ...tcexec
 	defer f.mu.Unlock()
 	switch command := clustertest.ModuleArgs(args); {
 	case slices.Equal(command, []string{"mgr", "dump", "--format", "json"}):
-		return clustertest.Reply(args, 0, []byte(`{"available":true,"active_name":"a","active_gid":1}`))
+		return clustertest.Reply(args, 0, []byte(`{"epoch":1,"available":true,"active_name":"a","active_gid":1,"standbys":[],"services":{}}`))
 	case slices.Equal(command, []string{"mgr", "services", "--format", "json"}):
 		data, _ := json.Marshal(map[string]string{"dashboard": f.url})
 		return clustertest.Reply(args, 0, data)

@@ -126,13 +126,13 @@ func TestMessengerBootstrapAndLateMonitorAddressPolicy(t *testing.T) {
 func TestMessengerSecurePolicySurvivesMonitorRefreshAndClientAttachment(t *testing.T) {
 	cluster, control := newMonitorConfigFixture()
 	cluster.settings.messengerMode = MessengerV2Secure
-	global := "[global]\nmon host = old\nfsid = retained-fsid\n"
+	global := "[global]\nmon host = old\nfsid = " + clientMonitorFSID + "\n"
 	for key, value := range messengerSecurePolicy {
 		global += key + " = " + value + "\n"
 	}
 	cluster.bootstrap.config = []byte(global)
 	control.config = []byte(global + "[client.admin]\nprivate = retained\n")
-	control.native = []byte(`{"quorum_names":["a","b","c"],"monmap":{"mons":[
+	control.native = []byte(`{"quorum_names":["a","b","c"],"monmap":{"fsid":"` + clientMonitorFSID + `","mons":[
 {"name":"a","public_addrs":{"addrvec":[{"type":"v2","addr":"127.0.0.1:34111/0"}]}},
 {"name":"b","public_addrs":{"addrvec":[{"type":"v2","addr":"127.0.0.1:34112/0"}]}},
 {"name":"c","public_addrs":{"addrvec":[{"type":"v2","addr":"127.0.0.1:34113/0"}]}}]}}`)
