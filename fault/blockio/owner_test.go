@@ -76,3 +76,155 @@ subprocess.Popen = refuse
 		t.Fatalf("release should not dispatch a backing mutation or replay creation: %s", got)
 	}
 }
+
+func TestOwnerWithdrawalRequiresStartedEvidence(t *testing.T) {
+	for _, action := range []string{"build-started", "detach-started"} {
+		t.Run(action, func(t *testing.T) {
+			for _, tc := range []struct {
+				name, field    string
+				valid, started bool
+			}{
+				{name: "absent"},
+				{name: "null", field: `,"started":null`},
+				{name: "not started", field: `,"started":false`, valid: true},
+				{name: "started", field: `,"started":true`, valid: true, started: true},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					b := &Container{name: "owned", instance: "test-keeper", detachID: randomID()}
+					sent, stopped := &b.creationSent, &b.creationStopped
+					if action == "detach-started" {
+						sent, stopped = &b.detachSent, &b.detachStopped
+					}
+					*sent, *stopped = true, true
+					b.nativeCommand = func(_ context.Context, argv ...string) ([]byte, error) {
+						if argv[3] != action {
+							t.Fatalf("unexpected owner action %q", argv[3])
+						}
+						return []byte(`{"lease":"owned","instance":"test-keeper","attempt":` + strconv.Quote(b.detachID) + tc.field + `}`), nil
+					}
+					err := b.withdrawUnstarted(t.Context())
+					if tc.valid {
+						if err != nil || *sent != tc.started || *stopped {
+							t.Fatalf("explicit receipt: sent=%t stopped=%t err=%v", *sent, *stopped, err)
+						}
+					} else if !errors.Is(err, ceph.ErrNativeFailure) || !*sent || !*stopped {
+						t.Fatalf("incomplete receipt altered pending dispatch: sent=%t stopped=%t err=%v", *sent, *stopped, err)
+					}
+				})
+			}
+		})
+	}
+}
+
+// Run the keeper's actual detach, poll and unlink code on a temporary file.
+// The subprocess substitute models just losetup, including one post-detach
+// query failure. No kernel mapping or host loop is changed by this test.
+func TestTerminateRechecksAssociationAfterSuccessfulDetach(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("Python 3 is required for the keeper readback test")
+	}
+	for _, replaced := range []bool{false, true} {
+		t.Run(map[bool]string{false: "original backing", true: "replacement backing"}[replaced], func(t *testing.T) {
+			b, model := newLifetimeFixture(t)
+			dir := t.TempDir()
+			backing := filepath.Join(dir, "data-"+b.name)
+			detachMarker := filepath.Join(dir, "detached")
+			queryMarker := filepath.Join(dir, "query-failed")
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			setup := exec.CommandContext(ctx, python, "-I", "-c", `
+import json, os, pathlib, sys
+root, name, generation, loop = sys.argv[1:]
+path = pathlib.Path(root) / ("data-" + name)
+path.write_text("original backing")
+s = path.stat()
+(pathlib.Path(root) / "create.json").write_text(json.dumps(dict(
+    lease=name, instance=generation, file=str(path), loop=loop, Inode=s.st_ino, FileDev=s.st_dev, done=True)))
+`, dir, b.name, b.instance, b.loop.Loop)
+			if out, err := setup.CombinedOutput(); err != nil {
+				t.Fatalf("prepare keeper manifest: %v: %s", err, out)
+			}
+			prelude := "root = " + strconv.Quote(dir) + "\nloop = " + strconv.Quote(b.loop.Loop) + "\n" + `
+import errno, os, pathlib, subprocess
+native_listdir = os.listdir
+def listdir(path):
+    if str(path).startswith("/sys/block/") and str(path).endswith("/holders"):
+        return []
+    return native_listdir(path)
+os.listdir = listdir
+detached = pathlib.Path(root) / "detached"
+failed = pathlib.Path(root) / "query-failed"
+def run(args, **kwargs):
+    if args == ("losetup", "--detach", loop):
+        with detached.open("x"):
+            pass
+        return subprocess.CompletedProcess(args, 0, "", "")
+    if args[:3] == ("losetup", "--list", "--associated"):
+        if not detached.exists():
+            return subprocess.CompletedProcess(args, 0, loop, "")
+        if not failed.exists():
+            failed.touch()
+            raise OSError(errno.EIO, "injected association read failure")
+        return subprocess.CompletedProcess(args, 0, "", "")
+    raise AssertionError(args)
+subprocess.run = run
+`
+			script := strings.Replace(ownerScript, `work = "/tc-blk"`, "work = "+strconv.Quote(dir), 1)
+			script = strings.Replace(script, "generation=instance()", "generation="+strconv.Quote(b.instance), 1)
+			program := filepath.Join(dir, "owner.py")
+			if err := os.WriteFile(program, []byte(prelude+script), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var loopChecks int
+			b.nativeCommand = func(ctx context.Context, argv ...string) ([]byte, error) {
+				switch argv[3] {
+				case "start-detach":
+					reply, err := model.command(ctx, argv...)
+					if err == nil {
+						// Drive the detached child to completion before polling.
+						childArgs := append([]string{"-I", program, "detach"}, argv[4:]...)
+						_, err = exec.CommandContext(ctx, python, childArgs...).Output()
+					}
+					return reply, err
+				case "detached", "unlink":
+					return exec.CommandContext(ctx, python, append([]string{"-I", program}, argv[3:]...)...).Output()
+				case "exec":
+					if len(argv) > 12 && argv[11] == "loopid" {
+						loopChecks++
+						if _, err := os.Stat(detachMarker); err == nil {
+							return nil, errors.New("the old loop is absent")
+						}
+					}
+				}
+				return model.command(ctx, argv...)
+			}
+			if err := b.Terminate(ctx); err == nil || !b.mappingRemoved || !b.detachSent || b.loopReleased || model.keeper.calls != 0 {
+				t.Fatalf("unavailable association did not retain the attempt: sent=%t released=%t err=%v", b.detachSent, b.loopReleased, err)
+			}
+			if _, err := os.Stat(queryMarker); err != nil {
+				t.Fatalf("first association read did not fail: %v", err)
+			}
+			if replaced {
+				if err := os.Rename(backing, backing+".original"); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(backing, []byte("replacement"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := b.Terminate(ctx)
+			if model.detachCalls != 1 || loopChecks != 1 {
+				t.Fatalf("recovery acted on the old loop again: detaches=%d loop lookups=%d err=%v", model.detachCalls, loopChecks, err)
+			}
+			if replaced {
+				if data, readErr := os.ReadFile(backing); err == nil || b.released || model.keeper.calls != 0 ||
+					readErr != nil || string(data) != "replacement" {
+					t.Fatalf("replacement was not retained: release=%t err=%v read=%v", b.released, err, readErr)
+				}
+			} else if _, readErr := os.Stat(backing); err != nil || !b.released || model.keeper.calls != 1 || !errors.Is(readErr, os.ErrNotExist) {
+				t.Fatalf("positive absence did not release the original backing: release=%t err=%v stat=%v", b.released, err, readErr)
+			}
+		})
+	}
+}

@@ -93,12 +93,13 @@ func (m *lifetimeReceipts) command(ctx context.Context, args ...string) ([]byte,
 			}
 			done = false
 		case "build-started":
-			reply.Started = m.buildStarted
+			reply.Started = &m.buildStarted
 		case "detach-started":
 			if len(args) != 8 || len(m.detachAttempts) == 0 || args[7] != m.detachAttempts[len(m.detachAttempts)-1] {
 				m.core.t.Fatal("detach marker query changed invocation identity")
 			}
-			reply.Attempt, reply.Started = args[7], !m.unranDetach[args[7]]
+			started := !m.unranDetach[args[7]]
+			reply.Attempt, reply.Started = args[7], &started
 		case "start-detach":
 			if len(args) != 8 || args[7] == "" {
 				m.core.t.Fatal("detach dispatch lacks an invocation identity")

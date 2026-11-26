@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -416,5 +417,36 @@ func TestCommandCapabilityClassification(t *testing.T) {
 	}}
 	if _, err := b.command(t.Context()); !errors.Is(err, context.Canceled) || errors.Is(err, ceph.ErrImageCapability) {
 		t.Fatalf("cancellation misclassified: %v", err)
+	}
+}
+
+func TestStoppedStepWithdrawalRequiresStartedEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name, field string
+		wantPending bool
+		wantError   error
+		wantText    string
+	}{
+		{name: "absent", wantPending: true, wantText: "lacks non-null started"},
+		{name: "null", field: `,"started":null`, wantPending: true, wantText: "lacks non-null started"},
+		{name: "not started", field: `,"started":false`},
+		{name: "started", field: `,"started":true`, wantPending: true, wantError: errPending},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b, _ := newControlFixture(t)
+			b.record.Begin("remove", "", "pending-step")
+			b.stoppedStep, b.removeSent = "pending-step", true
+			b.nativeCommand = func(context.Context, ...string) ([]byte, error) {
+				return []byte(`{"action":"settled","name":"owned","id":"pending-step","done":false` + tc.field + `}`), nil
+			}
+			err := b.settle(t.Context())
+			matches := errors.Is(err, tc.wantError)
+			if tc.wantText != "" {
+				matches = err != nil && strings.Contains(err.Error(), tc.wantText)
+			}
+			if !matches || (b.record.UnsettledID == "pending-step") != tc.wantPending || b.removeSent != tc.wantPending {
+				t.Fatalf("receipt changed removal state: pending=%q sent=%t err=%v", b.record.UnsettledID, b.removeSent, err)
+			}
+		})
 	}
 }
