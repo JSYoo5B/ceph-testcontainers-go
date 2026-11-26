@@ -53,7 +53,10 @@ type CPULimitStatus struct {
 // and the kernel's current state, never by sending it again. Restore is
 // retryable and idempotent.
 type CPULimitLease struct {
+	// ContainerID describes the limited container. Status and Restore use
+	// the identity recorded at admission.
 	ContainerID string
+	id          string
 	mu          sync.Mutex
 	engine      cpuLimitEngine
 	target      testcontainers.Container
@@ -192,7 +195,8 @@ func applyCPULimit(ctx context.Context, engine cpuLimitEngine, ctr testcontainer
 	if !info.Info.CPUCfsQuota {
 		return nil, cpuEnvironment("the engine's kernel has no CFS bandwidth control")
 	}
-	lease := &CPULimitLease{ContainerID: ctr.GetContainerID(), engine: engine, target: ctr}
+	id := ctr.GetContainerID()
+	lease := &CPULimitLease{ContainerID: id, id: id, engine: engine, target: ctr}
 	before, err := lease.observe(ctx, docker)
 	if err != nil {
 		return nil, err
@@ -212,7 +216,7 @@ func applyCPULimit(ctx context.Context, engine cpuLimitEngine, ctr testcontainer
 	if guard.missing || !guard.running() || guard.generation != before.generation || guard.settings != before.settings {
 		return nil, nshelper.InvalidRequest("the container changed while its CPU limit was admitted")
 	}
-	result, updateErr := docker.ContainerUpdate(ctx, lease.ContainerID, mobycl.ContainerUpdateOptions{Resources: lease.plan.apply.resources()})
+	result, updateErr := docker.ContainerUpdate(ctx, lease.id, mobycl.ContainerUpdateOptions{Resources: lease.plan.apply.resources()})
 	// From here the update may have reached the engine: the lease is
 	// returned with any error.
 	after, err := lease.observe(ctx, docker)
@@ -339,7 +343,7 @@ func (lease *CPULimitLease) Restore(ctx context.Context) error {
 		return fmt.Errorf("the container's CPU settings changed outside the lease and are not overwritten: engine %s, kernel %s", now.settings, now.kernel)
 	}
 	lease.restoring = true
-	result, updateErr := docker.ContainerUpdate(ctx, lease.ContainerID, mobycl.ContainerUpdateOptions{Resources: plan.restore.resources()})
+	result, updateErr := docker.ContainerUpdate(ctx, lease.id, mobycl.ContainerUpdateOptions{Resources: plan.restore.resources()})
 	after, err := lease.observe(ctx, docker)
 	switch {
 	case err != nil:
@@ -437,7 +441,7 @@ func (o cpuObservation) running() bool { return o.up && !o.paused && !o.restarti
 // inspect reads the engine's view of the target. A missing state or host
 // configuration is an error, never an unlimited reading.
 func (lease *CPULimitLease) inspect(ctx context.Context, docker cpuLimitClient) (cpuObservation, error) {
-	result, err := docker.ContainerInspect(ctx, lease.ContainerID, mobycl.ContainerInspectOptions{})
+	result, err := docker.ContainerInspect(ctx, lease.id, mobycl.ContainerInspectOptions{})
 	if err != nil {
 		if faulthook.OnlyMissingHostResource(err) {
 			return cpuObservation{missing: true}, nil

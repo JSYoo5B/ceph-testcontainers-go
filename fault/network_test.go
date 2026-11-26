@@ -5,10 +5,10 @@ import (
 	"errors"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"net/netip"
+	"slices"
 	"testing"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/dockerbridge"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/faulthook"
 	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
@@ -18,6 +18,7 @@ import (
 )
 
 type linkDockerFake struct {
+	inspectIDs, connectTargets       []string
 	endpoint                         *dockernetwork.EndpointSettings
 	inspectErr, connectErr, closeErr error
 	connects, closes                 int
@@ -25,7 +26,8 @@ type linkDockerFake struct {
 	missingAfterConnect              bool
 }
 
-func (d *linkDockerFake) ContainerInspect(context.Context, string, mobycl.ContainerInspectOptions) (mobycl.ContainerInspectResult, error) {
+func (d *linkDockerFake) ContainerInspect(_ context.Context, id string, _ mobycl.ContainerInspectOptions) (mobycl.ContainerInspectResult, error) {
+	d.inspectIDs = append(d.inspectIDs, id)
 	if d.inspectErr != nil {
 		return mobycl.ContainerInspectResult{}, d.inspectErr
 	}
@@ -40,8 +42,9 @@ func (d *linkDockerFake) NetworkDisconnect(context.Context, string, mobycl.Netwo
 	panic("not used by restoration tests")
 }
 
-func (d *linkDockerFake) NetworkConnect(_ context.Context, _ string, opts mobycl.NetworkConnectOptions) (mobycl.NetworkConnectResult, error) {
+func (d *linkDockerFake) NetworkConnect(_ context.Context, network string, opts mobycl.NetworkConnectOptions) (mobycl.NetworkConnectResult, error) {
 	d.connects++
+	d.connectTargets = append(d.connectTargets, network+"/"+opts.Container)
 	if d.missingAfterConnect {
 		d.inspectErr = errdefs.ErrNotFound
 	}
@@ -59,7 +62,7 @@ func newLinkFake() (*NetworkInterruption, *linkDockerFake) {
 	ip := netip.MustParseAddr("172.22.0.8")
 	original := &dockernetwork.EndpointSettings{IPAddress: ip, Aliases: []string{"osd-0"}, NetworkID: "old-network-id", EndpointID: "old-endpoint-id", Gateway: netip.MustParseAddr("172.22.0.1"), GwPriority: 5}
 	d := &linkDockerFake{}
-	return &NetworkInterruption{ContainerID: "osd-0", NetworkName: "cluster-network", OriginalAddress: ip, endpoint: dockerbridge.RestoreEndpoint(original), docker: d}, d
+	return newNetworkInterruption(d, "osd-0", "cluster-network", original), d
 }
 
 // newDualStackLinkFake is newLinkFake for an endpoint of a dual-stack bridge.
@@ -67,7 +70,7 @@ func newDualStackLinkFake() (*NetworkInterruption, *linkDockerFake) {
 	ip := netip.MustParseAddr("172.22.0.8")
 	original := &dockernetwork.EndpointSettings{IPAddress: ip, GlobalIPv6Address: netip.MustParseAddr("fd62:93fe:2c9e::8"), Aliases: []string{"osd-0"}, GwPriority: 5}
 	d := &linkDockerFake{}
-	return &NetworkInterruption{ContainerID: "osd-0", NetworkName: "cluster-network", OriginalAddress: ip, endpoint: dockerbridge.RestoreEndpoint(original), docker: d}, d
+	return newNetworkInterruption(d, "osd-0", "cluster-network", original), d
 }
 
 func TestInterruptedDualStackEndpointRestoresBothAddresses(t *testing.T) {
@@ -195,5 +198,41 @@ func TestInterruptNetworkClassifiesRefusalsBeforeDocker(t *testing.T) {
 		if link, err := InterruptLink(t.Context(), target, name); !errors.Is(err, ceph.ErrInvalidRequest) || link != nil {
 			t.Fatalf("InterruptLink(%q) refusal is not ceph.ErrInvalidRequest: %v", name, err)
 		}
+	}
+}
+
+func TestInterruptedEndpointRestoresOriginalTarget(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		managed, missing bool
+	}{
+		{name: "explicit restore"},
+		{name: "cluster cleanup", managed: true},
+		{name: "original container removed", missing: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			link, d := newLinkFake()
+			restore := link.Restore
+			if tc.managed {
+				cluster := testhelper.TestCluster(nil, testhelper.TestConfig{})
+				trackInterruption(cluster, link.ContainerID, link)
+				restore = func(ctx context.Context) error { return cluster.Terminate(ctx) }
+			}
+			originalAddress := link.OriginalAddress
+			link.ContainerID, link.NetworkName, link.OriginalAddress = "unrelated", "foreign-network", netip.MustParseAddr("192.0.2.5")
+			var wantConnect []string
+			if tc.missing {
+				d.inspectErr = errdefs.ErrNotFound
+			} else {
+				wantConnect = []string{"cluster-network/osd-0"}
+			}
+			if err := restore(t.Context()); err != nil || !link.complete ||
+				!slices.Equal(d.inspectIDs, []string{"osd-0"}) || !slices.Equal(d.connectTargets, wantConnect) {
+				t.Fatalf("inspect=%v connect=%v err=%v", d.inspectIDs, d.connectTargets, err)
+			}
+			if !tc.missing && d.endpoint.IPAddress != originalAddress {
+				t.Fatalf("restoration used the edited address: %v", d.endpoint.IPAddress)
+			}
+		})
 	}
 }

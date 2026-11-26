@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -24,13 +25,14 @@ import (
 // kernel mapping is Docker's: NanoCPUs over a 100 ms period, a quota over its
 // period, and "max" for no positive quota.
 type fakeCPUDocker struct {
-	info       system.Info
-	state      container.State
-	restarts   int
-	settings   cpuSettings
-	kernel     cpuMax
-	throttled  int64
-	cgroupLine string
+	inspectIDs, updateIDs []string
+	info                  system.Info
+	state                 container.State
+	restarts              int
+	settings              cpuSettings
+	kernel                cpuMax
+	throttled             int64
+	cgroupLine            string
 
 	// configuredOnly keeps the kernel unchanged on update; updateErr is the
 	// reply of every update, which still applies unless dropUpdate is set.
@@ -72,7 +74,8 @@ func (d *fakeCPUDocker) Info(context.Context, mobycl.InfoOptions) (mobycl.System
 	return mobycl.SystemInfoResult{Info: d.info}, nil
 }
 
-func (d *fakeCPUDocker) ContainerInspect(context.Context, string, mobycl.ContainerInspectOptions) (mobycl.ContainerInspectResult, error) {
+func (d *fakeCPUDocker) ContainerInspect(_ context.Context, id string, _ mobycl.ContainerInspectOptions) (mobycl.ContainerInspectResult, error) {
+	d.inspectIDs = append(d.inspectIDs, id)
 	if d.inspectErr != nil {
 		return mobycl.ContainerInspectResult{}, d.inspectErr
 	}
@@ -84,9 +87,10 @@ func (d *fakeCPUDocker) ContainerInspect(context.Context, string, mobycl.Contain
 	}}, nil
 }
 
-func (d *fakeCPUDocker) ContainerUpdate(_ context.Context, _ string, options mobycl.ContainerUpdateOptions) (mobycl.ContainerUpdateResult, error) {
+func (d *fakeCPUDocker) ContainerUpdate(_ context.Context, id string, options mobycl.ContainerUpdateOptions) (mobycl.ContainerUpdateResult, error) {
 	r := *options.Resources
 	d.updates = append(d.updates, r)
+	d.updateIDs = append(d.updateIDs, id)
 	if !d.dropUpdate {
 		for _, field := range []struct {
 			to   *int64
@@ -460,6 +464,7 @@ func TestCPULimitFailedRestoreStaysRetryableThroughTerminate(t *testing.T) {
 	if !errors.Is(err, ceph.ErrInvalidRequest) || again != lease || len(d.updates) != 1 {
 		t.Fatalf("overlap: %v %v", again, err)
 	}
+	lease.ContainerID = "unrelated-container"
 	d.dropUpdate, d.updateErr = true, errors.New("engine unavailable")
 	if err := c.Terminate(t.Context()); !errors.Is(err, d.updateErr) || lease.complete || trackedCPULimit(c, "osd") != lease {
 		t.Fatalf("failed restore lost retryability: %v", err)
@@ -467,6 +472,10 @@ func TestCPULimitFailedRestoreStaysRetryableThroughTerminate(t *testing.T) {
 	d.dropUpdate, d.updateErr = false, nil
 	if err := c.Terminate(t.Context()); err != nil || !lease.complete || !d.kernel.Unlimited {
 		t.Fatalf("retried teardown did not restore: %v", err)
+	}
+	if !slices.Equal(d.updateIDs, []string{"osd", "osd", "osd"}) ||
+		slices.ContainsFunc(d.inspectIDs, func(id string) bool { return id != "osd" }) {
+		t.Fatalf("edited descriptor redirected cluster teardown: inspect=%v update=%v", d.inspectIDs, d.updateIDs)
 	}
 }
 
@@ -507,5 +516,24 @@ func TestParseCPUFilesRefusesIncompleteEvidence(t *testing.T) {
 	max, status, err := parseCPUFiles([]byte("0::/\n0::/\n25000 100000\n" + stat))
 	if err != nil || max != (cpuMax{Quota: 25_000, Period: 100_000}) || status.Quota != 25*time.Millisecond || status.Periods != 1 {
 		t.Fatalf("valid files: %s %+v %v", max, status, err)
+	}
+}
+
+func TestCPULimitUsesOriginalContainerForStatusAndRestore(t *testing.T) {
+	d := newFakeCPUDocker(cpuSettings{})
+	lease, err := limitWith(t.Context(), cpuCluster(), d, 25e7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease.ContainerID = "unrelated"
+	if _, err := lease.Status(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := lease.Restore(t.Context()); err != nil || !lease.complete || !d.kernel.Unlimited {
+		t.Fatalf("restore = %v, cgroup = %v", err, d.kernel)
+	}
+	if !slices.Equal(d.updateIDs, []string{"osd", "osd"}) ||
+		slices.ContainsFunc(d.inspectIDs, func(id string) bool { return id != "osd" }) {
+		t.Fatalf("inspect=%v update=%v", d.inspectIDs, d.updateIDs)
 	}
 }
