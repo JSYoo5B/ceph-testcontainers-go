@@ -15,6 +15,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+import ci_command
 import periodic_gate
 import report_test_failures as failure_reporter
 import required_ci as command_gate
@@ -41,18 +42,24 @@ class PublicBlockIOQualificationTests(unittest.TestCase):
         public = jobs['public-api']
         self.assertEqual(re.search(r'^    if: (.+)$', public, re.MULTILINE)[1],
                          "github.event_name == 'workflow_dispatch' && inputs.public_api")
-        kernel = next(step for step in steps(public) if 'modprobe' in step)
-        self.assertEqual(scalar(kernel, 'if'), 'inputs.prepare_kernel')
-        self.assertIn('test "$RUNNER_ENVIRONMENT" = github-hosted', kernel)
-        self.assertIn("CEPH_TEST_BLOCKIO_REQUIRE_DELAY: '1'", public)
+        prepare = next(step for step in steps(public) if 'uses: ./.github/actions/block-io-helper' in step)
+        self.assertEqual(scalar(prepare, 'prepare_kernel'), "${{ inputs.prepare_kernel && 'true' || 'false' }}")
+        action = (ROOT / '.github/actions/block-io-helper/action.yml').read_text()
+        self.assertIn('test "$RUNNER_ENVIRONMENT" = github-hosted', action)
+        self.assertIn("if: inputs.prepare_kernel == 'true'", action)
+        self.assertIn('sudo -n modprobe loop', action)
+        self.assertIn('sudo -n modprobe dm_delay', action)
+        self.assertIn('CEPH_TEST_BLOCKIO_REQUIRE_DELAY=1', action)
+        self.assertIn('CEPH_TEST_BLOCKIO_HELPER_IMAGE=$helper', action)
+        self.assertIn('extension_check.py --extension blockio --image "$helper"', action)
+        self.assertRegex(action, r'(?m)^        ref: [0-9a-f]{40}$')
+        self.assertNotIn('docker push', action)
         self.assertIn('--category optional', public)
         self.assertIn('--batch block_io --package ./internal/integration', public)
         self.assertIn('--binary artifacts/blockio/compile', public)
         self.assertIn('steps.baseline.outcome ==', public)
         self.assertNotIn('docker push', public)
         self.assertNotIn('packages: write', workflow)
-        revision = re.search(r'HELPER_REVISION: ([0-9a-f]{40})$', public, re.MULTILINE)[1]
-        self.assertIn('ref: ' + revision, public)
         source = (ROOT / 'internal/integration/public_block_io_integration_test.go').read_text()
         self.assertIn('integration && ci_optional && ci_batch_block_io', source)
 
@@ -889,6 +896,35 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         selected = engine.select_profiles_plan(self.plan, self.optional, ",".join(runtime))
         self.assertEqual(sorted(profile["id"] for profile in selected["include"]), sorted(runtime))
 
+    def test_block_io_comment_selection_prepares_the_helper_before_native_execution(self):
+        vocabulary = engine.vocabulary(self.plan, self.optional)
+        for verb in ("run", "require"):
+            with self.subTest(verb=verb):
+                request = {**ci_command.parse(verb + " optional/block_io recovery/scratch_tmpfs on all"),
+                           "sha": "a" * 40, "pull": 1, "comment_id": 1}
+                selection = ci_command.select(request, vocabulary)
+                self.assertTrue(selection["accepted"])
+                plan = engine.select_profiles_plan(self.plan, self.optional, selection["profiles"])
+                self.assertEqual({(job["category"], job["batch"])
+                                  for job in engine.network_matrix(plan["include"], "default")},
+                                 {("optional", "block_io"), ("recovery", "scratch_tmpfs")})
+        runtime = steps(self.jobs["tagged-runtime.yml"]["runtime"])
+        checkout = next(step for step in runtime if "sparse-checkout: .github/actions/block-io-helper" in step)
+        prepare = next(step for step in runtime if "uses: ./block-io-workflow-source/.github/actions/block-io-helper" in step)
+        self.assertEqual(scalar(checkout, "ref"), "${{ github.workflow_sha }}")
+        for step in (checkout, prepare):
+            self.assertEqual(scalar(step, "if"), "matrix.category == 'optional' && matrix.batch == 'block_io'")
+            self.assertNotIn("continue-on-error", step)
+        self.assertEqual(scalar(prepare, "prepare_kernel"), "'true'")
+        self.assertEqual(scalar(prepare, "directory"), "artifacts/scenario/blockio-helper")
+        baseline, native, cleanup = (next(i for i, step in enumerate(runtime) if "        id: " + phase + "\n" in step)
+                                     for phase in ("docker_baseline", "native", "cleanup"))
+        self.assertLess(baseline, runtime.index(checkout))
+        self.assertLess(runtime.index(checkout), runtime.index(prepare))
+        self.assertLess(runtime.index(prepare), native)
+        self.assertLess(native, cleanup)
+        self.assertIn("always()", scalar(runtime[cleanup], "if"))
+
     def test_entry_categories_partition_source_profiles_without_ci_name_inventories(self):
         categories = [category for _, category in self.ENTRY_POINTS.values()]
         self.assertEqual(set(categories), set(engine.RUNTIME_CATEGORIES))
@@ -947,8 +983,9 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertEqual(command[command.index("--repetitions") + 1], "$SCENARIO_REPETITIONS")
         self.assertEqual(scalar(plan, "SCENARIO_REPETITIONS"), "${{ inputs.repetitions }}")
         self.assertIn('elif [ "$SCENARIO_CATEGORY" = representative ]; then', plan)
-        # Every checkout takes the pinned commit; empty keeps the caller's.
-        self.assertEqual(reusable.count("uses: actions/checkout@v7"), 2)
+        # Plan and runtime check out the source to test. Block I/O also
+        # checks out the helper action from the workflow's commit.
+        self.assertEqual(reusable.count("uses: actions/checkout@v7"), 3)
         self.assertEqual(reusable.count("          ref: ${{ inputs.ref }}\n"), 2)
         runtime_steps = steps(runtime)
         prepared = next(step for step in runtime_steps if "uses: ./.github/actions/scenario-images" in step)
