@@ -80,6 +80,8 @@ func Parse(raw []byte, action string) (View, error) {
 		}
 		if r.Done {
 			required = append(required, "rc", "error")
+		} else if action == "settled" {
+			required = append(required, "started")
 		}
 	case "loop":
 		required = append(required, "loop", "file", "inode", "error")
