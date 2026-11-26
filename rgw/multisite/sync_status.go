@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/testcontainers/testcontainers-go"
 )
 
 // MetadataSyncStatus includes only native state/identity/shard counts. It
@@ -97,10 +99,17 @@ func (f *Fixture) WaitSyncReady(ctx context.Context, zoneName string, sourceZone
 	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
 		return SyncStatus{}, err
 	}
-	defer f.topologyMu.Unlock()
 	if _, err := f.syncStatusZones(zoneName, sourceZones); err != nil {
+		f.topologyMu.Unlock()
 		return SyncStatus{}, err
 	}
+	pins := make(map[string]syncWaitZonePin, len(sourceZones)+1)
+	for _, zone := range f.zoneStates() {
+		if zone.Name == zoneName || slices.Contains(sourceZones, zone.Name) {
+			pins[zone.Name] = syncWaitZonePin{id: zone.ID, client: zone.client}
+		}
+	}
+	f.topologyMu.Unlock()
 	// last is the latest complete observation; an attempt that failed, or
 	// that the deadline cut short, does not replace it, and its error is
 	// reported with it.
@@ -111,7 +120,17 @@ func (f *Fixture) WaitSyncReady(ctx context.Context, zoneName string, sourceZone
 	}
 	for {
 		attemptCtx, attemptCancel := context.WithTimeout(ctx, 30*time.Second)
+		if err := multicluster.LockObservation(attemptCtx, &f.topologyMu); err != nil {
+			attemptCancel()
+			return expired(err)
+		}
+		if err := f.checkSyncWaitPins(pins); err != nil {
+			f.topologyMu.Unlock()
+			attemptCancel()
+			return last, err
+		}
 		status, err := f.syncStatus(attemptCtx, zoneName, len(sourceZones) == 0)
+		f.topologyMu.Unlock()
 		attemptCancel()
 		if lastErr = err; err == nil {
 			last = status
@@ -128,6 +147,30 @@ func (f *Fixture) WaitSyncReady(ctx context.Context, zoneName string, sourceZone
 		case <-time.After(time.Second):
 		}
 	}
+}
+
+type syncWaitZonePin struct {
+	id     string
+	client testcontainers.Container
+}
+
+func (f *Fixture) checkSyncWaitPins(pins map[string]syncWaitZonePin) error {
+	if f.closed {
+		return multisiteInvalid(errors.New("RGW multisite is terminated"))
+	}
+	for name, pin := range pins {
+		attached := false
+		for _, zone := range f.zoneStates() {
+			if zone.Name == name && zone.ID == pin.id && zone.client != nil && zone.client == pin.client {
+				attached = true
+				break
+			}
+		}
+		if !attached {
+			return errors.New("RGW sync readiness zone is no longer attached and owned")
+		}
+	}
+	return nil
 }
 
 func (f *Fixture) syncStatusZones(name string, sources []string) (*rgwZoneState, error) {

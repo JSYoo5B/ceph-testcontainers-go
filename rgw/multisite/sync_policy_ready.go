@@ -62,17 +62,23 @@ func (g *SyncGroup) WaitBucketPolicyReady(ctx context.Context, destinationZone s
 	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
 		return BucketSyncPolicyStatus{}, err
 	}
-	defer f.topologyMu.Unlock()
 	attempt, stop := context.WithTimeout(ctx, 30*time.Second)
 	target, status, err := g.admitPolicyImport(attempt, destinationZone)
 	stop()
+	f.topologyMu.Unlock()
 	if err != nil {
 		return status, err
 	}
 	for {
 		attempt, stop := context.WithTimeout(ctx, 30*time.Second)
+		if err := multicluster.LockObservation(attempt, &f.topologyMu); err != nil {
+			stop()
+			return status, fmt.Errorf("wait RGW bucket policy import: %w", err)
+		}
 		last, fatal, readErr := target.sample(attempt)
+		f.topologyMu.Unlock()
 		stop()
+		status = last
 		if err := ctx.Err(); err != nil {
 			return last, fmt.Errorf("wait RGW bucket policy import: %w", err)
 		}
