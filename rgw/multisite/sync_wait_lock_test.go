@@ -26,8 +26,8 @@ func assertRGWReadinessReleasesTopology(t *testing.T, f *Fixture, observed <-cha
 	defer stop()
 	if err := multicluster.LockObservation(lockCtx, &f.topologyMu); err != nil {
 		cancel()
-		<-done
-		t.Fatalf("readiness wait retained topology lock between samples: %v", err)
+		waitErr := <-done
+		t.Fatalf("readiness wait retained topology lock between samples: %v (wait: %v)", err, waitErr)
 	}
 	// Termination must invalidate a captured wait on its next sample.
 	f.closed = true
@@ -39,8 +39,8 @@ func assertRGWReadinessReleasesTopology(t *testing.T, f *Fixture, observed <-cha
 		}
 	case <-time.After(3 * time.Second):
 		cancel()
-		<-done
-		t.Fatal("readiness wait did not revalidate the fixture")
+		waitErr := <-done
+		t.Fatalf("readiness wait did not revalidate the fixture (wait: %v)", waitErr)
 	}
 }
 

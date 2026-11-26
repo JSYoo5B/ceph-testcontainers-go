@@ -103,10 +103,11 @@ func (w *SyncWatch) Stop() error {
 	return w.stream.Stop()
 }
 
-// WatchSync polls the sync state of one attached owned zone, the same
-// observation as SyncStatus, and reports its changes. sourceZones selects the
-// data sources the watch compares and Ready covers, as for WaitSyncReady: no
-// sources means metadata only. The default WatchConfig.Interval is 5 seconds.
+// WatchSync polls the sync state of one attached owned zone and reports its
+// changes. sourceZones selects the data sources the watch compares and Ready
+// covers, as for WaitSyncReady: no sources uses its metadata-only evidence
+// without reading combined data status. With sources it uses the full
+// SyncStatus observation. The default WatchConfig.Interval is 5 seconds.
 //
 // Before it returns, WatchSync makes one read under ctx and QueryTimeout. A
 // failed first read returns its error and starts nothing. That read is the
@@ -187,7 +188,7 @@ func (f *Fixture) WatchSync(ctx context.Context, cfg ceph.WatchConfig, zoneName 
 	return &SyncWatch{stream: stream}, nil
 }
 
-// watchSyncRead is one admitted SyncStatus read. A terminated fixture or a
+// watchSyncRead is one admitted sync read. A terminated fixture or a
 // zone selection that no longer resolves is fatal; everything else that fails
 // is a gap.
 func (f *Fixture) watchSyncRead(ctx context.Context, zoneName string, sources []string) (SyncStatus, error) {
