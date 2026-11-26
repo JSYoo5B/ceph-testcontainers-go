@@ -180,7 +180,8 @@ func (f *Fixture) syncStatus(ctx context.Context, zoneName string, metadataOnly 
 	if err != nil {
 		return result, err
 	}
-	if local["id"] != id || fmt.Sprint(local["realm_epoch"]) != strconv.FormatUint(epoch, 10) || !syncPeriodPolicyEqual(local, current) {
+	localEpoch, epochErr := syncCommittedPeriodEpoch(local)
+	if local["id"] != id || fmt.Sprint(local["realm_epoch"]) != strconv.FormatUint(epoch, 10) || epochErr != nil || localEpoch != result.periodEpoch || !syncPeriodPolicyEqual(local, current) {
 		return result, errors.New("RGW observed zone has not imported the current committed period")
 	}
 	var markers map[int]*string

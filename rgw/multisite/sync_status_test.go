@@ -2,6 +2,7 @@ package multisite
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -71,6 +72,40 @@ func TestRGWSyncStatusAndWaitRequireScopedRemoteComparison(t *testing.T) {
 	status, err = f.SyncStatus(t.Context(), "destination")
 	if err != nil || status.Metadata.CaughtUp {
 		t.Fatal("metadata on a different period was accepted")
+	}
+}
+
+func TestRGWSyncStatusRequiresTheMasterPeriodEpoch(t *testing.T) {
+	f, cli, _, _ := newRGWSyncTestFixture()
+	cli.metadataOutput, cli.humanOutput = rgwReadyMetadata, rgwReadyText
+	old := syncJSONClone(cli.current)
+	cli.current["epoch"] = json.Number("2")
+	cli.periodByZone = map[string]map[string]any{"dest-id": old}
+	if _, err := f.SyncStatus(t.Context(), "destination"); err == nil || !strings.Contains(err.Error(), "has not imported") {
+		t.Fatalf("same-ID older period epoch was accepted: %v", err)
+	}
+	delete(cli.periodByZone, "dest-id")
+	if _, err := f.SyncStatus(t.Context(), "destination"); err != nil {
+		t.Fatalf("matching current period was refused: %v", err)
+	}
+}
+
+func TestRGWPolicyMasterReadsSelectedMastersOwnPeriod(t *testing.T) {
+	f, cli, _, _ := newRGWSyncTestFixture()
+	current := syncJSONClone(cli.current)
+	current["master_zone"] = "dest-id"
+	current["epoch"] = json.Number("2")
+	group := syncPeriodGroups(current)[0]
+	group["master_zone"] = "dest-id"
+	group["endpoints"] = []any{"http://destination:7480"}
+	group["is_master"] = true
+	stale := syncJSONClone(current)
+	stale["epoch"] = json.Number("1")
+	cli.current = current
+	cli.periodByZone = map[string]map[string]any{"source-id": stale}
+	master, period, err := f.syncPolicyMaster(t.Context())
+	if err != nil || master.ID != "dest-id" || period["epoch"] != json.Number("2") {
+		t.Fatalf("selected master's current period: %v %+v %v", master, period, err)
 	}
 }
 
