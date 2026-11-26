@@ -202,6 +202,27 @@ func TestCephFSMDSStatusSelectsOwnedStandbysAndExactRanks(t *testing.T) {
 	}
 }
 
+func TestCephFSMDSStatusRequiresExplicitCollections(t *testing.T) {
+	base := `{"standbys":[],"filesystems":[{"id":7,"mdsmap":{"fs_name":"tenant","max_mds":1,"info":{}}}]}`
+	for _, test := range []struct {
+		name, data string
+		valid      bool
+	}{
+		{"explicit empty", base, true},
+		{"missing standbys", strings.Replace(base, `"standbys":[],`, ``, 1), false},
+		{"null standbys", strings.Replace(base, `"standbys":[]`, `"standbys":null`, 1), false},
+		{"missing info", strings.Replace(base, `,"info":{}`, ``, 1), false},
+		{"null info", strings.Replace(base, `"info":{}`, `"info":null`, 1), false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			status, err := parseCephFSMDSStatus([]byte(test.data), "tenant", nil)
+			if (err == nil) != test.valid || (test.valid && (status == nil || len(status.Active) != 0 || len(status.Standby) != 0)) {
+				t.Fatalf("status=%+v error=%v", status, err)
+			}
+		})
+	}
+}
+
 func TestCephFSReplayStandbyIsDistinctFromActiveRank(t *testing.T) {
 	data := []byte(`{"standbys":[],"filesystems":[{"id":4,"mdsmap":{"fs_name":"hot","max_mds":1,"info":{
 		"gid_20":{"name":"hot-0","rank":0,"gid":20,"state":"up:active","join_fscid":4},
@@ -322,7 +343,7 @@ func TestCephFSScaleDownPreservesFailuresAndRemovesOnlyOwnedStandby(t *testing.T
 			fs := newFilesystem(cluster, Config{Name: "tenant", MetadataPool: ceph.PoolConfig{Name: "metadata"}, DataPool: ceph.PoolConfig{Name: "data"}, ActiveMDS: 1, StandbyMDS: 1}, nil)
 			fs.Container = idle
 			fs.base().ReplaceNative(&fsbase.NativeIdentity{ID: 7, MetadataPool: 1, DefaultPool: 2})
-			fs.mds = mdsState{roster: mdsRoster{nextIndex: 2, daemons: []*MDS{{Container: idle, ID: "tenant-0", FilesystemName: "tenant"}, {Container: active, ID: "tenant-1", FilesystemName: "tenant"}}}}
+			fs.mds = mdsState{roster: mdsRoster{nextIndex: 2, daemons: []*MDS{{Container: idle, ID: "tenant-0", FilesystemName: "tenant"}, {Container: active, ID: "tenant-1", FilesystemName: "tenant"}}}, credentials: map[string]bool{"tenant-0": true}}
 			filesystems(cluster).byName = map[string]*Filesystem{"tenant": fs}
 			setServices(cluster, map[string]testcontainers.Container{"mds.tenant-0": idle, "mds.tenant-1": active, "mds.other-0": other})
 			err := fs.ScaleMDS(t.Context(), 1, 0)
@@ -343,6 +364,24 @@ func TestCephFSScaleDownPreservesFailuresAndRemovesOnlyOwnedStandby(t *testing.T
 				}
 				if slices.Contains(call, "new") || (slices.Contains(call, "pool") && !slices.Equal(call, []string{"osd", "pool", "ls", "detail", "--format", "json"})) || slices.Contains(call, "rm") {
 					t.Fatalf("MDS scale-down modified filesystem storage: %v", call)
+				}
+			}
+			if tc.authFail {
+				if !fs.mds.credentials["tenant-0"] {
+					t.Fatal("failed auth deletion lost its retry identity")
+				}
+				control.Fail = ""
+				if err := fs.fleet().removeAll(t.Context()); err != nil || fs.mds.credentials["tenant-0"] {
+					t.Fatalf("retry did not remove retained credentials: %v %+v", err, fs.mds.credentials)
+				}
+				deletions := 0
+				for _, call := range control.Calls {
+					if slices.Equal(call, []string{"auth", "del", "mds.tenant-0"}) {
+						deletions++
+					}
+				}
+				if deletions != 2 {
+					t.Fatalf("failed auth deletion was not retried: %d attempts", deletions)
 				}
 			}
 		})

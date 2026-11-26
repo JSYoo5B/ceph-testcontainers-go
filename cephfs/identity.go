@@ -14,13 +14,15 @@ import (
 // *Filesystem satisfies fsbase.Owner.
 type fsHandle = fsbase.Handle
 
-// mdsState is the MDS state of one filesystem: its owned daemons and, for a
-// filesystem created without an initial MDS, the cold-start record. The MDS
-// fleet (Filesystem.fleet) is the only code that reaches it; its lock contract
+// mdsState is the MDS state of one filesystem: its owned daemons, credentials
+// confirmed by successful auth creation, and, for a filesystem created
+// without an initial MDS, the cold-start record. The MDS fleet
+// (Filesystem.fleet) is the only code that reaches it; its lock contract
 // is the roster's, documented on mdsRoster.
 type mdsState struct {
-	roster  mdsRoster
-	coldMDS *cephFSColdMDS
+	roster      mdsRoster
+	coldMDS     *cephFSColdMDS
+	credentials map[string]bool
 }
 
 // newFilesystem returns the unregistered descriptor of the filesystem that

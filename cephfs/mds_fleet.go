@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	iofs "io/fs"
+	"slices"
 	"strings"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
@@ -56,9 +57,9 @@ func (fs *Filesystem) fleet() mdsFleet {
 }
 
 // removeAll terminates every owned daemon of a filesystem being removed,
-// deletes its service registration and key, drops it from the roster and
-// clears the first-MDS slot. Owner held: removeFilesystem holds setupMu and the
-// cluster mutex and has already removed the native filesystem.
+// deletes its service registration and every retained key, drops it from the
+// roster and clears the first-MDS slot. Owner held: removeFilesystem holds
+// setupMu and the cluster mutex and has already removed the native filesystem.
 func (f mdsFleet) removeAll(ctx context.Context) error {
 	c, name := f.core.Cluster(), f.core.Name()
 	for _, daemon := range f.mds.roster.snapshot() {
@@ -71,12 +72,20 @@ func (f mdsFleet) removeAll(ctx context.Context) error {
 				servicehook.DeleteService(c, service)
 			}
 		}
-		if _, err := c.Ceph(ctx, "auth", "del", "mds."+daemon.ID); err != nil && !errors.Is(err, iofs.ErrNotExist) && !strings.Contains(err.Error(), "does not exist") {
-			return fmt.Errorf("remove key of mds.%s: %w", daemon.ID, err)
-		}
 		f.mds.roster.remove(daemon)
 	}
 	*f.first = nil
+	ids := make([]string, 0, len(f.mds.credentials))
+	for id := range f.mds.credentials {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	for _, id := range ids {
+		if _, err := c.Ceph(ctx, "auth", "del", "mds."+id); err != nil && !errors.Is(err, iofs.ErrNotExist) && !strings.Contains(err.Error(), "does not exist") {
+			return fmt.Errorf("remove key of mds.%s: %w", id, err)
+		}
+		delete(f.mds.credentials, id)
+	}
 	return nil
 }
 

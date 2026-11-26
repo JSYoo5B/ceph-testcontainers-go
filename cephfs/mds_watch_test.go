@@ -70,7 +70,11 @@ func (s *mdsWatchSource) dump() []byte {
 			"data_pools": s.dataPools, "info": s.info,
 		}})
 	}
-	data, err := json.Marshal(map[string]any{"epoch": s.epoch, "standbys": s.standbys, "filesystems": filesystems})
+	standbys := s.standbys
+	if standbys == nil {
+		standbys = []fsbase.MDSInfo{}
+	}
+	data, err := json.Marshal(map[string]any{"epoch": s.epoch, "standbys": standbys, "filesystems": filesystems})
 	if err != nil {
 		panic(err)
 	}
@@ -411,6 +415,25 @@ func TestMDSWatchStalledConsumerOverflowsWithAnAttributableCause(t *testing.T) {
 	}
 }
 
+func corruptOwnedMDSInfo(s *mdsWatchSource, null bool) {
+	var document map[string]any
+	if err := json.Unmarshal(s.dump(), &document); err != nil {
+		panic(err)
+	}
+	filesystems := document["filesystems"].([]any)
+	mdsmap := filesystems[len(filesystems)-1].(map[string]any)["mdsmap"].(map[string]any)
+	if null {
+		mdsmap["info"] = nil
+	} else {
+		delete(mdsmap, "info")
+	}
+	var err error
+	s.raw, err = json.Marshal(document)
+	if err != nil {
+		panic(err)
+	}
+}
+
 func TestMDSWatchTransientFailureIsAGapThenResumed(t *testing.T) {
 	for name, fault := range map[string]func(*mdsWatchSource, error){
 		"failed read":       func(s *mdsWatchSource, err error) { s.fail = err },
@@ -420,6 +443,23 @@ func TestMDSWatchTransientFailureIsAGapThenResumed(t *testing.T) {
 		"empty object":     func(s *mdsWatchSource, _ error) { s.raw = []byte(`{}`) },
 		"null":             func(s *mdsWatchSource, _ error) { s.raw = []byte(`null`) },
 		"null filesystems": func(s *mdsWatchSource, _ error) { s.raw = []byte(`{"epoch":21,"standbys":[],"filesystems":null}`) },
+		"missing standbys on owned entry": func(s *mdsWatchSource, _ error) {
+			s.raw = []byte(strings.Replace(string(s.dump()), `"standbys":`, `"missing_standbys":`, 1))
+		},
+		"null standbys on owned entry": func(s *mdsWatchSource, _ error) {
+			var document map[string]any
+			if err := json.Unmarshal(s.dump(), &document); err != nil {
+				panic(err)
+			}
+			document["standbys"] = nil
+			s.raw, _ = json.Marshal(document)
+		},
+		"missing info on owned entry": func(s *mdsWatchSource, _ error) {
+			corruptOwnedMDSInfo(s, false)
+		},
+		"null info on owned entry": func(s *mdsWatchSource, _ error) {
+			corruptOwnedMDSInfo(s, true)
+		},
 		"unnamed entry": func(s *mdsWatchSource, _ error) {
 			s.raw = []byte(`{"epoch":21,"standbys":[],"filesystems":[{"id":41}]}`)
 		},
