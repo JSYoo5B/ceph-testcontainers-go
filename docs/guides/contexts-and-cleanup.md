@@ -55,6 +55,7 @@ shorten:
 | `rbdmirror.Container.RefreshMonitorConfig` | 2 minutes |
 | `cephfsmirror.Run` waiting for the MGR `mirroring` module | 90 seconds |
 | `diagnostics.Collect` | `diagnostics.Config.Timeout` (1 minute by default) |
+| `preflight.Observe` | 2 minutes; a helper it started is removed with a fresh 30-second context when yours has ended |
 
 These bounds are upper limits for the fixture, not a budget for your test.
 Pass a context deadline that fits the condition you wait for, so that a

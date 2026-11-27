@@ -40,6 +40,8 @@ controls and register the selected targets. The fixture does not install tools,
 load host kernel modules or alter daemon configuration. Missing host facilities
 are `ceph.ErrEnvironmentUnavailable`; missing image tools are an image capability
 error. A registered `linear` target does not imply `delay` is registered.
+[`ceph/preflight`](../../ceph/preflight/README.md) runs the same probe before
+any fixture starts and reports Delay and EIO separately.
 
 The opt-in native recipe uses only public APIs and the native `rados` CLI. It
 checks delay against baseline and restored writes when available, separates a

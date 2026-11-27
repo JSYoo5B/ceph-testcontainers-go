@@ -38,6 +38,9 @@ Documentation for a published release is available at its Git tag.
   - [`ceph/finalize`](ceph/finalize/README.md): one ordered cleanup path with
     post-test checks, log and crash verification, a failure archive and
     `Terminate`.
+  - [`ceph/preflight`](ceph/preflight/README.md): a shareable report, before
+    any fixture starts, of whether the selected Docker engine meets the
+    engine and block I/O fault prerequisites.
 - [`rbd`](rbd/README.md): RBD pools and namespaces, image watchers and locks,
   backup and restore.
   - [`rbd/expect`](rbd/expect/README.md): pure evaluations of captured image
@@ -93,7 +96,7 @@ Testcontainers containers on two existing clusters: `rbd/mirror` and
 `cephfs/mirror` return a `*Container` that owns the whole daemon cohort and
 embeds the first mirror daemon's `testcontainers.Container`, and
 `rgw/multisite` returns a `*Fixture` whose `Source` and `Destination` gateways
-are containers, while the `Fixture` itself embeds none. `fault`, `override`, `capture`, `ceph/diagnostics` and
+are containers, while the `Fixture` itself embeds none. `fault`, `override`, `capture`, `ceph/diagnostics`, `ceph/preflight` and
 `ceph/finalize` start no fixture of their own; they act on or observe containers that already
 exist.
 

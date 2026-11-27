@@ -576,7 +576,10 @@ adds an OSD on that device to a cluster started without initial OSDs, and
 already expose loop and device-mapper controls and register the targets; the
 fixture loads no kernel module. Restoring the table does not restart an OSD
 that an EIO fault aborted. The README gives the cleanup order and the native
-recipe.
+recipe. To learn before the cluster starts whether the selected engine has
+these prerequisites, and to keep that answer with the test output, use
+[`ceph/preflight`](../../ceph/preflight/README.md) with `BlockIODelay` or
+`BlockIOEIO`.
 
 ## Dropping or delaying messages
 
