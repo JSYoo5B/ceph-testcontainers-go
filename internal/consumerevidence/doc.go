@@ -8,10 +8,11 @@
 //
 // Every observation is a native one that the public API already reaches:
 // admin socket commands through MonitorContainer.AdminSocket, CLI reads
-// through Container.Ceph and Observer, container instances through the
-// daemon handles, MON log lines through their container logs, behavioral
-// controls through Container.RunNativeCommand and redaction through
-// diagnostics.Redact. Each read has its own bound, records its status, and is
+// through Container.Ceph and Observer (the MgrMap with its epoch through
+// Observer.ManagerStatus), container instances through the daemon handles,
+// the refusals that the MONs logged for a MGR's latest process through
+// diagnostics.CollectManagerRefusals, behavioral controls through
+// Container.RunNativeCommand and redaction through diagnostics.Redact. Each read has its own bound, records its status, and is
 // never retried; an incomplete read is never an observed absence.
 //
 // Command ipcfixture shows the recipes in a fixture process that a test

@@ -260,10 +260,8 @@ func (c *authCollector) query(name, kind string, run func(context.Context) ([]by
 func (c *authCollector) observeManagers(phase string, sessions []MonitorSessions) []AuthManager {
 	var mgrMap ManagerMap
 	c.query("mgr dump "+phase, "observation", func(ctx context.Context) ([]byte, error) {
-		data, err := c.cluster.Ceph(ctx, "mgr", "dump", "--format", "json")
-		if err == nil {
-			mgrMap, err = decodeManagerMap(data)
-		}
+		var err error
+		mgrMap, err = readManagerStatus(ctx, c.cluster)
 		return nil, err
 	})
 	var managers []*ceph.ManagerContainer
