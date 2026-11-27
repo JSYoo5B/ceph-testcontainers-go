@@ -304,20 +304,20 @@ jobs:
           phase: snapshot
           artifact_name: runtime-cleanup-${{ matrix.id }}-${{ inputs.release }}${{ matrix.artifact_suffix }}
       # A comment run checks out the PR head, which may predate this action.
-      - name: Check out the helper preparation from the workflow commit
+      # The helper image itself is one of the test images prepared below.
+      - name: Check out the Block I/O kernel preparation from the workflow commit
         if: matrix.category == 'optional' && matrix.batch == 'block_io'
         uses: actions/checkout@v7
         with:
           ref: ${{ github.workflow_sha }}
           path: block-io-workflow-source
-          sparse-checkout: .github/actions/block-io-helper
+          sparse-checkout: .github/actions/block-io-kernel
           persist-credentials: false
-      - name: Prepare the Block I/O helper and kernel
+      - name: Prepare the Block I/O kernel
         if: matrix.category == 'optional' && matrix.batch == 'block_io'
-        uses: ./block-io-workflow-source/.github/actions/block-io-helper
+        uses: ./block-io-workflow-source/.github/actions/block-io-kernel
         with:
           prepare_kernel: 'true'
-          directory: artifacts/scenario/blockio-helper
       - name: Resolve native published Ceph roles
         id: role_images
         if: matrix.requires_ceph
