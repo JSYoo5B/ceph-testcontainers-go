@@ -51,6 +51,10 @@ unavailable one its kind and guidance:
 | `unknown` | The observation failed or was inconclusive. It proves nothing either way. |
 | `not-run` | The check was not run at this level, or a gate before it was not observed. |
 
+`Observe` returns an error with the report for every `unknown` check that a
+failed observation left, and for a helper whose removal was not confirmed.
+`unavailable` and `not-run` checks come without an error.
+
 `Report.Verdict` is `unavailable` when any check of a capability is,
 otherwise `unknown` when one is unknown or not run, otherwise `observed`.
 The common gates (engine, Linux engine, helper start, tools, drivers,

@@ -209,14 +209,17 @@ func facts(info system.Info, transport string) EngineFacts {
 	return f
 }
 
-// engineOS is the common gate that block I/O needs a Linux engine.
-func engineOS(report *Report) {
+// engineOS is the common gate that block I/O needs a Linux engine. An
+// engine that answered without its operating system returns an error.
+func engineOS(report *Report) error {
 	switch report.Engine.OSType {
 	case "linux":
 		report.set(keyEngineOS, Observed, "", "engine-info", "", "")
 	case "":
 		report.set(keyEngineOS, Unknown, "", "engine-info", "the engine did not report its operating system", "")
+		return failure(ceph.ErrEnvironmentUnavailable, "the engine did not report its operating system")
 	default:
 		report.set(keyEngineOS, Unavailable, EnvironmentKind, "engine-info", "block I/O faults need a Linux engine", "select a Linux engine; on Docker Desktop for Windows, switch to Linux containers")
 	}
+	return nil
 }

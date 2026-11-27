@@ -104,8 +104,8 @@ func (c checker) runHelper(ctx context.Context, engine engineClient, image strin
 		} else if probe, parseErr := control.ParseProbe(raw); parseErr != nil {
 			report.set(keyTools, Unknown, "", "helper-probe", "the helper probe returned invalid output", "")
 			errs = append(errs, failure(ceph.ErrNativeFailure, "the helper probe returned invalid output"))
-		} else {
-			record(probe, report)
+		} else if err := record(probe, report); err != nil {
+			errs = append(errs, err)
 		}
 	} else {
 		errs = append(errs, startFailure(ctx, err, report))
@@ -154,8 +154,10 @@ func probeFailure(ctx context.Context, err error, report *Report) error {
 }
 
 // record maps the probe's gates onto the report. The targets are
-// conclusive only when the probe read the registered target list.
-func record(probe control.Probe, report *Report) {
+// conclusive only when the probe read the registered target list. A gate
+// whose observation failed is unknown and returns an error.
+func record(probe control.Probe, report *Report) error {
+	var failed []string
 	report.set(keyHelperStart, Observed, "", "helper-start", "", "")
 	keys := map[string]string{"tools": keyTools, "drivers": keyDrivers, "control": keyControl}
 	reasons := map[string]string{
@@ -180,6 +182,7 @@ func record(probe control.Probe, report *Report) {
 			report.set(key, Unavailable, Kind(gate.Kind), "helper-probe", reason, guidance[gate.Key])
 		case "unknown":
 			report.set(key, Unknown, "", "helper-probe", "the probe could not observe this gate", "")
+			failed = append(failed, key)
 		}
 	}
 	targets := probe.Gates[len(probe.Gates)-1]
@@ -196,6 +199,13 @@ func record(probe control.Probe, report *Report) {
 			report.set(key, Unknown, "", "helper-probe", "dmsetup targets could not be read", "")
 		}
 	}
+	if targets.State == "unknown" {
+		failed = append(failed, "the device-mapper target list")
+	}
+	if len(failed) > 0 {
+		return failure(ceph.ErrNativeFailure, "the helper probe could not observe %s", strings.Join(failed, ", "))
+	}
+	return nil
 }
 
 // joinTools names the missing tools of the fixed tool list only.

@@ -202,7 +202,7 @@ func TestHelperVerdicts(t *testing.T) {
 		{name: "python3 missing", helper: testHelper{probeErr: &supervised.ExitError{Label: "preflight helper", Code: 127}}, delay: Unavailable, eio: Unavailable,
 			checks: map[string]State{keyHelperStart: Observed, keyTools: Unavailable, keyDrivers: NotRun}, kind: ImageKind, wantReleased: true},
 		{name: "targets unreadable", helper: testHelper{probe: gates("observed", "observed", "observed", "unknown")}, delay: Unknown, eio: Unknown,
-			checks: map[string]State{keyControl: Observed, keyTargetLinear: Unknown, keyTargetDelay: Unknown, keyTargetError: Unknown}, wantReleased: true},
+			checks: map[string]State{keyControl: Observed, keyTargetLinear: Unknown, keyTargetDelay: Unknown, keyTargetError: Unknown}, wantErr: ceph.ErrNativeFailure, wantReleased: true},
 		{name: "helper configuration refused", helper: testHelper{startErr: fmt.Errorf("create container: %w", errdefs.ErrPermissionDenied.WithMessage("authorization denied by plugin for /home/secret-user"))},
 			delay: Unavailable, eio: Unavailable, checks: map[string]State{keyHelperStart: Unavailable, keyTools: NotRun, keyTargetDelay: NotRun}, kind: EnvironmentKind, wantReleased: true},
 		{name: "helper image not found", helper: testHelper{startErr: fmt.Errorf("pull: %w", errdefs.ErrNotFound.WithMessage("secret-host.example.internal/helper"))},
@@ -340,6 +340,17 @@ func TestNonLinuxEngineIsUnavailableWithoutHelper(t *testing.T) {
 	c.helper = func(engineClient) helperRunner { t.Fatal("a helper started on a Windows engine"); return nil }
 	report, err := c.check(t.Context(), helperRequest())
 	if err != nil || report.Verdict(BlockIODelay) != Unavailable || report.Helper != nil {
+		t.Fatalf("%v\n%s", err, report)
+	}
+}
+
+func TestEngineWithoutOperatingSystemIsUnknownWithError(t *testing.T) {
+	engine := linuxEngine()
+	engine.info.OSType = ""
+	c := helperChecker(engine, nil)
+	c.helper = func(engineClient) helperRunner { t.Fatal("a helper started without a known engine OS"); return nil }
+	report, err := c.check(t.Context(), helperRequest())
+	if !errors.Is(err, ceph.ErrEnvironmentUnavailable) || report.Verdict(BlockIODelay) != Unknown || report.Verdict(Engine) != Observed {
 		t.Fatalf("%v\n%s", err, report)
 	}
 }

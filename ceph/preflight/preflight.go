@@ -201,11 +201,12 @@ func failure(kind error, format string, args ...any) error {
 // engine that testcontainers selects for this process, the one a fixture
 // started next would use, before any fixture starts. It returns a report,
 // also a partial one, with an error when an observation could not be made
-// or the helper could not be removed; an Unavailable conclusion is not an
-// error. A cancelled or expired ctx is kept in the error. The error holds no
-// engine detail either. Observe gives its work a two-minute deadline; an
-// earlier caller deadline takes precedence. Each call observes again: the
-// effective environment can change between calls.
+// or the helper could not be removed. Every Unknown check that a failed
+// observation left comes with such an error; an Unavailable or NotRun check
+// does not. A cancelled or expired ctx is kept in the error, which holds no
+// engine detail. Observe gives its work a two-minute deadline; an earlier
+// caller deadline takes precedence. Each call observes again: the effective
+// environment can change between calls.
 //
 // The caller decides from Report.Verdict whether to fail, skip or go on, and
 // owns logging, files and uploads of the report.
@@ -250,7 +251,9 @@ func (c checker) check(ctx context.Context, request Request) (*Report, error) {
 		errs = append(errs, err)
 	}
 	if info && len(blockIO) > 0 {
-		engineOS(report)
+		if err := engineOS(report); err != nil {
+			errs = append(errs, err)
+		}
 		if request.Level == Helper && report.state(keyEngineOS) == Observed {
 			errs = append(errs, c.runHelper(ctx, engine, request.HelperImage, report)...)
 		}
