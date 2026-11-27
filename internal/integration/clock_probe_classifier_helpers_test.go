@@ -217,10 +217,15 @@ func expectedClockRoute(p clockProbePath, f clockProbeFacts) clockExpectation {
 		return clockExpectBypass
 	case clockPathMonotonic:
 		if faked, ok := monotonicFaked(f); ok {
-			if faked {
-				return clockExpectShift
+			if !faked {
+				return clockExpectBypass
 			}
-			return clockExpectBypass
+			// A faked monotonic clock follows FAKETIME when it is present,
+			// not the controller's file update.
+			if f.Faketime != nil {
+				return clockExpectUnknown
+			}
+			return clockExpectShift
 		}
 	}
 	return clockExpectUnknown
@@ -351,12 +356,16 @@ func judgeClockProbe(r clockProbeRecord) clockProbeJudgement {
 		}
 	}
 	if mr, ok := j.Paths[clockPathMonotonic]; ok {
+		// Eligibility depends on whether the clock is faked at all, not on
+		// whether it is expected to follow the file: with FAKETIME present a
+		// faked control has no file expectation but is still ineligible.
+		faked, known := monotonicFaked(f)
 		switch {
 		case mr.Unsupported:
 			j.add(clockProbeInconclusive, "monotonic control is unsupported")
-		case mr.Expectation == clockExpectShift:
+		case known && faked:
 			j.add(clockProbeRejected, "monotonic control is faked in this configuration, so it is not an eligible control")
-		case mr.Expectation == clockExpectUnknown:
+		case !known:
 			j.add(clockProbeInconclusive, "whether the monotonic control is faked is not known")
 		case mr.Before != clockAtBaseline || mr.During != clockAtBaseline || mr.After != clockAtBaseline:
 			j.add(clockProbeInconclusive, "monotonic control did not stay at baseline")

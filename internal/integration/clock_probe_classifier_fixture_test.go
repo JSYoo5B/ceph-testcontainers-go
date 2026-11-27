@@ -332,6 +332,31 @@ func TestClockProbeEnvironmentModeIsNotAFactContradiction(t *testing.T) {
 		}
 	}
 
+	// Monotonic faking enabled: the control follows FAKETIME at a constant
+	// nonzero offset, not the file. That is not a fact contradiction either,
+	// but the faked control stays ineligible.
+	for _, intercept := range []bool{false, true} {
+		r := probeBase()
+		r.Facts.InterceptSyscall = boolPtr(intercept)
+		r.Facts.Faketime = strPtr("+0")
+		r.Facts.DontFakeMono = nil
+		r.Samples[clockPathPublic] = probeSeq(0, 0, 0)
+		r.Samples[clockPathMonotonic] = probeSeq(1700000000000000000, 1700000000000000000, 1700000000000000000)
+		j := wantProbe(t, "env mode, monotonic faked", r, clockProbeRejected, "FAKETIME is present in the probe environment")
+		if strings.Contains(j.String(), "facts are wrong") {
+			t.Errorf("intercept=%v: env mode with monotonic faking blamed on the recorded facts: %s", intercept, j)
+		}
+		if !strings.Contains(j.String(), "not an eligible control") {
+			t.Errorf("intercept=%v: faked monotonic control not rejected as a control: %s", intercept, j)
+		}
+		if got := j.Paths[clockPathMonotonic].Expectation; got != clockExpectUnknown {
+			t.Errorf("intercept=%v: monotonic expectation %s, want unknown", intercept, got)
+		}
+		if refs := clockReferencePaths(j); len(refs) != 0 {
+			t.Errorf("intercept=%v: references from a rejected record: %v", intercept, refs)
+		}
+	}
+
 	// An empty FAKETIME is still present and still disables the file.
 	r := probeBase()
 	r.Facts.Faketime = strPtr("")
