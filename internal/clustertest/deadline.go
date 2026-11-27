@@ -14,10 +14,11 @@ import (
 // wall-clock deadline. It reports no Deadline, so code that sizes its own
 // timeouts from the caller's deadline treats it as unbounded until it expires.
 //
-// A context derived from it (context.WithTimeout, WithCancel, ...) is
-// cancelled before Expire returns, as one derived from a standard context
-// is when that is cancelled: the code under test sees the deadline at its
-// next check, never a moment later.
+// A context derived from it (context.WithTimeout, WithCancel, ...) before
+// Expire is cancelled before Expire returns, as one derived from a standard
+// context is when that is cancelled: the code under test sees the deadline at
+// its next check, never a moment later. One derived after Expire starts out
+// cancelled.
 //
 //testdouble:shared-double
 type SignalDeadline struct {
@@ -55,15 +56,18 @@ func (d *SignalDeadline) Expire() {
 	})
 }
 
-// AfterFunc arranges for f to run when d expires: within Expire, or at once
-// when d has expired already. The context package uses it to cancel the
-// contexts derived from d synchronously instead of from a goroutine that
-// watches Done. stop reports whether it kept f from running.
+// AfterFunc arranges for f to run when d expires: within Expire for a
+// function registered before, or in its own goroutine, as context.AfterFunc
+// runs it, for one registered after. The context package uses it to cancel
+// the contexts derived from d synchronously instead of from a goroutine that
+// watches Done. It registers a derived context while holding that context's
+// lock, and f takes the same lock, so f must not run inside the call. stop
+// reports whether it kept f from running.
 func (d *SignalDeadline) AfterFunc(f func()) (stop func() bool) {
 	d.mu.Lock()
 	if d.expired {
 		d.mu.Unlock()
-		f()
+		go f()
 		return func() bool { return false }
 	}
 	key := &f

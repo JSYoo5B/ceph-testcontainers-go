@@ -45,3 +45,54 @@ func TestSignalDeadlineCancelsDerivedContextsSynchronously(t *testing.T) {
 		t.Fatalf("a cancelled parent expired the deadline: %v", unexpired.Err())
 	}
 }
+
+// pausedRegistration holds the registration of a derived context until the
+// test releases it, so that Expire runs between the context package's check
+// of Done and its call of AfterFunc, which it makes with the derived
+// context's lock held.
+type pausedRegistration struct {
+	*SignalDeadline
+	entered, release chan struct{}
+}
+
+func (p pausedRegistration) AfterFunc(f func()) func() bool {
+	close(p.entered)
+	<-p.release
+	return p.SignalDeadline.AfterFunc(f)
+}
+
+// A context derived while Expire runs is cancelled, and deriving it does not
+// deadlock on its own lock.
+func TestSignalDeadlineExpireDuringRegistration(t *testing.T) {
+	for _, derive := range map[string]func(context.Context) (context.Context, context.CancelFunc){
+		"WithCancel": context.WithCancel,
+		"WithTimeout": func(parent context.Context) (context.Context, context.CancelFunc) {
+			return context.WithTimeout(parent, time.Hour)
+		},
+	} {
+		deadline := NewSignalDeadline(t.Context())
+		paused := pausedRegistration{SignalDeadline: deadline, entered: make(chan struct{}), release: make(chan struct{})}
+		derived := make(chan context.Context, 1)
+		go func() {
+			ctx, cancel := derive(paused)
+			t.Cleanup(cancel)
+			derived <- ctx
+		}()
+		<-paused.entered
+		deadline.Expire()
+		close(paused.release)
+		select {
+		case ctx := <-derived:
+			select {
+			case <-ctx.Done():
+			case <-time.After(10 * time.Second):
+				t.Fatal("the context derived during Expire was not cancelled")
+			}
+			if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				t.Fatalf("derived during Expire: %v", ctx.Err())
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("deriving a context during Expire deadlocked")
+		}
+	}
+}
