@@ -89,12 +89,25 @@ class CutoverTests(unittest.TestCase):
         self.assertEqual(self.repo.branches["main"], self.repo.branches["develop"])
         core, main, tags = flow.baseline()
         self.assertEqual(core["rules"][2]["parameters"]["required_approving_review_count"], 0)
-        self.assertTrue(main["rules"][0]["parameters"]["strict_required_status_checks_policy"])
+        self.assertFalse(main["rules"][0]["parameters"]["strict_required_status_checks_policy"])
         self.assertEqual(core["rules"][3]["parameters"]["required_status_checks"],
                          [{"context": name, "integration_id": flow.ACTIONS} for name in flow.CODE])
         self.assertEqual(tags["conditions"]["ref_name"]["include"], ["refs/tags/v*"])
         self.assertEqual(tags["rules"], [{"type": "update"}, {"type": "deletion"}])
         self.assertTrue(all(not p["bypass_actors"] for p in self.repo.policies.values()))
+
+    def test_only_release_and_support_candidates_require_an_up_to_date_head(self):
+        """A promotion merge exists only on main, so a strict main rule
+        would report every later promotion as out of date."""
+        def strict(branch):
+            (rule,) = flow.candidate(branch)["rules"]
+            self.assertEqual(rule["parameters"]["required_status_checks"],
+                             [{"context": flow.gate(branch), "integration_id": flow.ACTIONS}])
+            return rule["parameters"]["strict_required_status_checks_policy"]
+
+        self.assertIs(strict("main"), False)
+        for line in ("release/1.0", "release/1.1", "support/1.0"):
+            self.assertIs(strict(line), True, line)
 
     def test_develop_default_after_bootstrap(self):
         self.cutover()

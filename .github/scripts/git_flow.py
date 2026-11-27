@@ -74,7 +74,16 @@ def checks(names, *, strict=False):
 
 
 def candidate(branch):
-    return ruleset(PREFIX + branch, "branch", ["refs/heads/" + branch], [checks([gate(branch)], strict=True)])
+    """Require the branch's own release candidate result.
+
+    A release or support line also requires an up-to-date head: its pull
+    requests are the line's update from develop or a patch, and the matrix
+    must qualify the line as it would be merged. main does not. Each
+    promotion leaves a merge commit that only main has, so the next
+    promotion is never up to date, and the push validation of the actual
+    merge already compares it with the commit the promotion tested."""
+    return ruleset(PREFIX + branch, "branch", ["refs/heads/" + branch],
+                   [checks([gate(branch)], strict=branch != "main")])
 
 
 def requested():
