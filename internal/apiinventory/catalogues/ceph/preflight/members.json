@@ -1,0 +1,54 @@
+{
+  "schema": "ceph-api-naming-members/v2",
+  "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
+  "package": "ceph/preflight",
+  "count": 34,
+  "types": {
+    "ceph/preflight.Check": [
+      "Check.Capabilities field []Capability `json:\"capabilities\"`",
+      "Check.Guidance field string `json:\"guidance,omitempty\"`",
+      "Check.Key field string `json:\"key\"`",
+      "Check.Kind field Kind `json:\"kind,omitempty\"`",
+      "Check.Reason field string `json:\"reason,omitempty\"`",
+      "Check.Source field string `json:\"source,omitempty\"`",
+      "Check.State field State `json:\"state\"`"
+    ],
+    "ceph/preflight.EngineFacts": [
+      "EngineFacts.Architecture field string `json:\"architecture,omitempty\"`",
+      "EngineFacts.Backend field string `json:\"backend,omitempty\"`",
+      "EngineFacts.CgroupVersion field string `json:\"cgroup_version,omitempty\"`",
+      "EngineFacts.Desktop field *bool `json:\"desktop,omitempty\"`",
+      "EngineFacts.KernelVersion field string `json:\"kernel_version,omitempty\"`",
+      "EngineFacts.OSType field string `json:\"os_type,omitempty\"`",
+      "EngineFacts.OperatingSystem field string `json:\"operating_system,omitempty\"`",
+      "EngineFacts.Rootless field *bool `json:\"rootless,omitempty\"`",
+      "EngineFacts.ServerVersion field string `json:\"server_version,omitempty\"`",
+      "EngineFacts.Transport field string `json:\"transport,omitempty\"`",
+      "EngineFacts.UserNamespaces field *bool `json:\"user_namespaces,omitempty\"`"
+    ],
+    "ceph/preflight.HelperRun": [
+      "HelperRun.Cleanup field string `json:\"cleanup,omitempty\"`",
+      "HelperRun.ContainerID field string `json:\"container_id,omitempty\"`",
+      "HelperRun.Released field bool `json:\"released\"`",
+      "HelperRun.Started field bool `json:\"started\"`"
+    ],
+    "ceph/preflight.Platform": [
+      "Platform.Architecture field string `json:\"architecture\"`",
+      "Platform.OS field string `json:\"os\"`"
+    ],
+    "ceph/preflight.Report": [
+      "Report.Capabilities field []Capability `json:\"capabilities\"`",
+      "Report.Checks field []Check `json:\"checks\"`",
+      "Report.Engine field EngineFacts `json:\"engine\"`",
+      "Report.Helper field *HelperRun `json:\"helper,omitempty\"`",
+      "Report.Level field Level `json:\"level\"`",
+      "Report.Process field Platform `json:\"process\"`",
+      "Report.SchemaVersion field int `json:\"schema_version\"`"
+    ],
+    "ceph/preflight.Request": [
+      "Request.Capabilities field []Capability",
+      "Request.HelperImage field string",
+      "Request.Level field Level"
+    ]
+  }
+}
