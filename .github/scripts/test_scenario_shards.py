@@ -5,8 +5,10 @@ The Go AST catalog reads source only. Compiled profile verification belongs to
 """
 
 from collections import Counter
+import argparse
 import contextlib
 import io
+import os
 from pathlib import Path
 import re
 import shlex
@@ -97,59 +99,143 @@ def run_command(step):
     return "\n".join(lines)
 
 
-# The options of "python -m unittest discover" that take a value, by every
-# spelling. The selection options are mapped to their discovery field.
-DISCOVER_FIELDS = {"-s": "start", "--start-directory": "start", "-p": "pattern", "--pattern": "pattern",
-                   "-t": "top", "--top-level-directory": "top"}
-DISCOVER_VALUED = {"-k", "--durations"}
+def discover_parser():
+    """The argument parser of "python -m unittest discover", with the options
+    and positional arguments that unittest gives it."""
+    parser = argparse.ArgumentParser(prog="unittest discover", add_help=False)
+    for flags in (("-v", "--verbose"), ("-q", "--quiet"), ("--locals",), ("-f", "--failfast"),
+                  ("-c", "--catch"), ("-b", "--buffer")):
+        parser.add_argument(*flags, action="store_true")
+    parser.add_argument("--durations", type=int)
+    parser.add_argument("-k", dest="filters", action="append", default=[])
+    parser.add_argument("-s", "--start-directory", dest="start")
+    parser.add_argument("-p", "--pattern", dest="pattern")
+    parser.add_argument("-t", "--top-level-directory", dest="top")
+    for name in ("start", "pattern", "top"):
+        parser.add_argument(name, nargs="?", default=argparse.SUPPRESS)
+    return parser
 
 
-def unittest_discoveries(text):
-    """The (start directory, pattern, top-level directory) of every unittest
-    discover command line in text, with unittest's defaults filled in and
-    output options such as -v ignored."""
-    found = set()
-    for line in text.splitlines():
+def discovery(words):
+    """What one discover invocation selects: its start directory, pattern and
+    top-level directory with unittest's defaults, and its -k filters. Output
+    and failure-handling options do not change the selection."""
+    parser = discover_parser()
+    parser.error = lambda message: (_ for _ in ()).throw(AssertionError(message))
+    options, unknown = parser.parse_known_args(words)
+    if unknown:
+        raise AssertionError(f"unknown unittest discover arguments: {unknown}")
+
+    def directory(path):
+        return os.path.normpath(path)
+
+    start = directory(options.start or ".")
+    top = directory(options.top) if options.top else start
+    return start, options.pattern or "test*.py", top, frozenset(options.filters)
+
+
+def shell_discoveries(script):
+    """Every unittest discover invocation of a shell script. A mention that
+    cannot be read as one fails instead of being left out."""
+    script = script.replace("\\\n", " ")
+    found = []
+    for line in script.splitlines():
+        lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        lexer.commenters = "#"
         try:
-            words = shlex.split(line, comments=True)
-        except ValueError:
-            continue
-        for index in range(len(words) - 2):
-            if words[index:index + 3] != ["-m", "unittest", "discover"]:
-                continue
-            fields, positional, rest = {}, [], iter(words[index + 3:])
-            for word in rest:
-                name, _, value = word.partition("=")
-                if name in DISCOVER_FIELDS:
-                    fields[DISCOVER_FIELDS[name]] = value if value else next(rest, "")
-                elif name in DISCOVER_VALUED:
-                    if not value:
-                        next(rest, None)
-                elif not word.startswith("-"):
-                    positional.append(word)
-            for field, value in zip(("start", "pattern", "top"), positional):
-                fields.setdefault(field, value)
-            found.add((fields.get("start", "."), fields.get("pattern", "test*.py"), fields.get("top")))
+            words = list(lexer)
+        except ValueError as error:
+            raise AssertionError(f"unreadable command line {line!r}: {error}") from error
+        command, mentioned = [], len(re.findall(r"unittest\s+discover", line.split("#", 1)[0]))
+        parsed = 0
+        for word in [*words, ";"]:
+            if word and set(word) <= set("();<>|&"):
+                for index in range(len(command) - 2):
+                    if command[index:index + 3] == ["-m", "unittest", "discover"]:
+                        found.append(discovery(command[index + 3:]))
+                        parsed += 1
+                command = []
+            else:
+                command.append(word)
+        if parsed != mentioned:
+            raise AssertionError(f"unittest discover not read as python -m unittest discover: {line!r}")
     return found
 
 
+def step_script(step):
+    """The shell script of a workflow step; a folded block is one line."""
+    match = re.search(r"^ +(?:-\s+)?run:\s*(.*?)\s*$", step, re.MULTILINE)
+    script = run_command(step)
+    return script.replace("\n", " ") if match and match[1] in (">", ">-", ">+") else script
+
+
+def fenced_shell(markdown):
+    """The text of the shell code blocks of a Markdown document."""
+    return "\n".join(re.findall(r"^```(?:sh|bash|shell)\n(.*?)^```", markdown, re.MULTILINE | re.DOTALL))
+
+
+def covered(required, offered):
+    """The required discoveries that no offered one runs in full. An offered
+    discovery runs every test of a required one with the same directories and
+    pattern when it has no -k filter, or every filter the required one has."""
+    def runs(guide, ci):
+        return guide[:3] == ci[:3] and (not guide[3] or (ci[3] and guide[3] >= ci[3]))
+
+    return [ci for ci in required if not any(runs(guide, ci) for guide in offered)]
+
+
 class UnittestDiscoveriesTests(unittest.TestCase):
-    def test_output_and_filter_options_do_not_change_the_discovery(self):
-        expected = {(".github/scripts", "test_*.py", None)}
+    SUITE = (".github/scripts", "test_*.py", ".github/scripts", frozenset())
+
+    def test_output_and_failure_options_do_not_change_the_selection(self):
         for line in ("python3 -m unittest discover -s .github/scripts -p 'test_*.py'",
                      "python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v",
-                     "python3 -m unittest discover -q -b -k name -s .github/scripts -p 'test_*.py'",
-                     "python3 -m unittest discover --start-directory=.github/scripts --pattern 'test_*.py' --locals",
-                     "  python3 -m unittest discover .github/scripts 'test_*.py'  # comment"):
+                     "python3 -m unittest discover -q -b -c -f --locals --durations 5 -s .github/scripts -p 'test_*.py'",
+                     "python3 -m unittest discover -vb -s.github/scripts -ptest_*.py",
+                     "python3 -m unittest discover --start-directory=.github/scripts --pattern 'test_*.py' --verb",
+                     "python3 -m unittest discover --start ./.github/scripts/ --pat 'test_*.py' -t .github/scripts",
+                     "python3 -I -m unittest discover .github/scripts 'test_*.py'  # comment",
+                     "cd x && python3 -m unittest discover -s .github/scripts -p 'test_*.py' || exit 1",
+                     "python3 -m unittest discover -s .github/scripts \\\n  -p 'test_*.py'"):
             with self.subTest(line=line):
-                self.assertEqual(unittest_discoveries(line), expected)
+                self.assertEqual(shell_discoveries(line), [self.SUITE])
 
-    def test_directories_patterns_and_defaults_are_distinct(self):
-        self.assertEqual(unittest_discoveries("python3 -m unittest discover"), {(".", "test*.py", None)})
-        self.assertEqual(unittest_discoveries("python -m unittest discover -s a -p x.py -t .\n"
-                                              "python3 -m unittest discover -s b -p x.py -v"),
-                         {("a", "x.py", "."), ("b", "x.py", None)})
-        self.assertEqual(unittest_discoveries("python3 -m unittest test_module -v"), set())
+    def test_filters_directories_patterns_and_defaults_are_kept(self):
+        self.assertEqual(shell_discoveries("python3 -m unittest discover"), [(".", "test*.py", ".", frozenset())])
+        self.assertEqual(shell_discoveries("python -m unittest discover -s a -p x.py -t . -k one -kother"),
+                         [("a", "x.py", ".", frozenset({"one", "other"}))])
+        self.assertEqual(shell_discoveries("python3 -m unittest discover -vk one -s a"),
+                         [("a", "test*.py", "a", frozenset({"one"}))])
+        self.assertEqual(shell_discoveries("python3 -m unittest test_module -v\necho unittest"), [])
+
+    def test_an_unreadable_mention_fails(self):
+        for line in ("python3 -m unittest discover --unknown -s a",
+                     "python3 -m unittest discover a b c d",
+                     "python3 -m unittest discover -s 'a",
+                     "python3 -munittest discover -s a",
+                     "python3 -m unittest discover -k"):
+            with self.subTest(line=line), self.assertRaises(AssertionError):
+                shell_discoveries(line)
+
+    def test_a_filtered_command_does_not_cover_the_whole_suite(self):
+        whole, one = self.SUITE, self.SUITE[:3] + (frozenset({"one"}),)
+        both = self.SUITE[:3] + (frozenset({"one", "two"}),)
+        self.assertEqual(covered([whole], [whole]), [])
+        self.assertEqual(covered([whole], [one]), [whole])
+        self.assertEqual(covered([one], [whole]), [])
+        self.assertEqual(covered([one], [both]), [])
+        self.assertEqual(covered([both], [one]), [both])
+        self.assertEqual(covered([whole], [("scripts/desktop",) + whole[1:]]), [whole])
+        self.assertEqual(covered([whole], [(whole[0], "check_*.py") + whole[2:]]), [whole])
+        self.assertEqual(covered([whole], [whole[:2] + (".", frozenset())]), [whole])
+
+    def test_folded_steps_and_fenced_blocks(self):
+        step = "      - name: Tests\n        run: >-\n          python3 -m unittest discover\n          -s a -p 'x_*.py'\n"
+        self.assertEqual(shell_discoveries(step_script(step)), [("a", "x_*.py", "a", frozenset())])
+        guide = ("Run `python3 -m unittest discover -s prose`.\n\n```sh\n"
+                 "python3 -m unittest discover -s a\n```\n\n```text\npython3 -m unittest discover -s b\n```\n")
+        self.assertEqual(shell_discoveries(fenced_shell(guide)), [("a", "test*.py", "a", frozenset())])
 
 
 def engine_step(job_steps, operation):
@@ -1240,10 +1326,10 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertTrue(list((ROOT / ".github/scripts").glob("test_*.py")))
         # A contributor who runs the testing guide's local checks runs every
         # Python test that CI discovers.
-        discovered = unittest_discoveries(jobs["static"])
-        guide = unittest_discoveries((ROOT / "docs/contributing/testing.md").read_text())
+        discovered = [found for step in steps(jobs["static"]) for found in shell_discoveries(step_script(step))]
+        guide = shell_discoveries(fenced_shell((ROOT / "docs/contributing/testing.md").read_text()))
         self.assertTrue(discovered)
-        self.assertLessEqual(discovered, guide, "CI discovers Python tests that the testing guide does not run")
+        self.assertEqual(covered(discovered, guide), [], "CI discovers Python tests that the testing guide does not run")
         coverage_steps = steps(jobs["tag-coverage"])
         coverage = shlex.split(run_command(engine_step(coverage_steps, "plan")))
         self.assertIn("--verify", coverage)
