@@ -1181,7 +1181,15 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertIn("make vet", jobs["static"])
         self.assertIn("make tag-compile", jobs["static"])
         self.assertIn("python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v", jobs["static"])
+        self.assertIn("python3 -m unittest discover -s scripts/desktop -p 'test_*.py' -v", jobs["static"])
         self.assertTrue(list((ROOT / ".github/scripts").glob("test_*.py")))
+        # A contributor who runs the testing guide's local checks runs every
+        # Python test that CI discovers.
+        discovered = re.findall(r"python3 -m unittest discover (-s \S+ -p \S+) -v", jobs["static"])
+        guide = (ROOT / "docs/contributing/testing.md").read_text()
+        self.assertTrue(discovered)
+        for command in discovered:
+            self.assertIn(f"python3 -m unittest discover {command}\n", guide)
         coverage_steps = steps(jobs["tag-coverage"])
         coverage = shlex.split(run_command(engine_step(coverage_steps, "plan")))
         self.assertIn("--verify", coverage)

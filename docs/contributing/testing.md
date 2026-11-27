@@ -13,6 +13,7 @@ described in [Continuous integration](ci.md).
 | Ceph integration tests | `internal/integration`, its `rbd`, `cephfs` and `rgw` test packages and its `experiments/<case>` packages, plus `*_integration_test.go` in `ceph`, `rbd/mirror`, `internal/debugoverhead` and `internal/capturearchive` | Yes, plus Ceph images | Build tags |
 | Docker environment tests | `internal/dockerbridge` and `capture`, `*_integration_test.go` | Docker only | Build tags |
 | CI tooling tests | `.github/scripts/test_*.py` | No | `python3 -m unittest` |
+| Desktop setup tests | `scripts/desktop/test_*.py` | No | `python3 -m unittest` |
 | go-ceph consumer check | `internal/integration/goceph` | Yes, prepared Linux images | `goceph` tag and a harness |
 
 Integration tests are excluded by build tags, not by `t.Skip`. The skips that
@@ -98,6 +99,7 @@ make check        # make test, make race, make vet and make tag-compile
 make lint         # golangci-lint with the build tags listed in .golangci.yml, as Code checks runs it
 golangci-lint run --build-tags all ./...   # lint of the plain all build alone
 python3 -m unittest discover -s .github/scripts -p 'test_*.py'
+python3 -m unittest discover -s scripts/desktop -p 'test_*.py'
 python3 -m unittest discover -s internal/integration/goceph -p test_run.py
 python3 .github/scripts/tag_scenarios.py plan --verify --output artifacts/tag-plan.json
 ```

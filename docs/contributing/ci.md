@@ -167,7 +167,7 @@ The local commands for these jobs are in
 | --- | --- | --- |
 | Unit tests | 15 min | `make test` |
 | Race detector | 15 min | `make race` |
-| Vet, compile and CI tooling | 25 min | `make vet`, golangci-lint, `make tag-compile`, the Python tests in `.github/scripts` (`test_*.py`), actionlint and the go-ceph harness test |
+| Vet, compile and CI tooling | 25 min | `make vet`, golangci-lint, `make tag-compile`, the Python tests in `.github/scripts` and `scripts/desktop` (`test_*.py`), actionlint and the go-ceph harness test |
 | Compiled tag coverage and helpers | 25 min | `tag_scenarios.py plan --verify`, then `tag_scenarios.py code` (the Docker-free `code` batch); uploads `code-tag-coverage` |
 | Vulnerability check (Go 1.26.x and 1.27.x) | 20 min | `make vulncheck`; uploads `vulncheck-go-<version>` |
 
