@@ -55,8 +55,14 @@ func TestReadStatusErrors(t *testing.T) {
 func TestReadManagerStatusRejectsIncompleteMap(t *testing.T) {
 	cli := &fakeCLI{replies: map[string][]byte{"mgr dump --format json": []byte(`{"epoch":3,"available":true,"active_name":"a","active_gid":7,"standbys":[{"name":"b","gid":9}],"services":{}}`)}}
 	got, err := readManagerStatus(context.Background(), cli.run)
-	if err != nil || !got.Available || got.ActiveName != "a" || got.ActiveGID != 7 || len(got.Standbys) != 1 || got.Standbys[0].Name != "b" {
+	if err != nil || got.Epoch != 3 || !got.Available || got.ActiveName != "a" || got.ActiveGID != 7 || len(got.Standbys) != 1 || got.Standbys[0].Name != "b" {
 		t.Fatalf("manager status = %+v, %v", got, err)
+	}
+	for _, epoch := range []string{`"3"`, `-3`, `3.5`, `null`, `true`} {
+		cli.replies["mgr dump --format json"] = []byte(`{"epoch":` + epoch + `,"available":true,"active_name":"a","active_gid":7,"standbys":[],"services":{}}`)
+		if got, err := readManagerStatus(context.Background(), cli.run); err == nil || !reflect.DeepEqual(got, ManagerStatus{}) {
+			t.Fatalf("epoch %s = %+v, %v", epoch, got, err)
+		}
 	}
 	boom := errors.New("boom")
 	cli = &fakeCLI{errs: map[string]error{"mgr dump --format json": boom}}
@@ -74,7 +80,7 @@ func TestReadManagerStatusRejectsIncompleteMap(t *testing.T) {
 		}
 	}
 	cli.replies["mgr dump --format json"] = []byte(`{"epoch":4,"available":false,"active_name":"","active_gid":0,"standbys":[],"services":{}}`)
-	if got, err := readManagerStatus(context.Background(), cli.run); err != nil || got.Available || got.ActiveName != "" || got.Standbys == nil {
+	if got, err := readManagerStatus(context.Background(), cli.run); err != nil || got.Epoch != 4 || got.Available || got.ActiveName != "" || got.Standbys == nil {
 		t.Fatalf("complete inactive MGRMap = %+v, %v", got, err)
 	}
 }

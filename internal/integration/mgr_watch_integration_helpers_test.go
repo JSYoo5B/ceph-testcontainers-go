@@ -39,7 +39,7 @@ func awaitManagerWatchEvent(t *testing.T, w *ceph.ManagerWatch, last *uint64, ga
 			if match(event) {
 				return event
 			}
-			t.Logf("%s: event %d %s epoch %d: %+v services %v", what, event.Sequence, event.Kind, event.Epoch, event.Status, event.Services)
+			t.Logf("%s: event %d %s epoch %d: %+v services %v", what, event.Sequence, event.Kind, event.Status.Epoch, event.Status, event.Services)
 		case <-timeout:
 			t.Fatalf("%s: no matching event within %v", what, limit)
 		}
@@ -154,7 +154,7 @@ func testManagerWatch(t *testing.T) {
 	var last uint64
 	gaps := 0
 	baseline := awaitManagerWatchEvent(t, w, &last, &gaps, time.Second, "baseline", func(e ceph.ManagerWatchEvent) bool { return e.Kind == ceph.WatchBaseline })
-	t.Logf("baseline: epoch %d: %+v services %v, read %v", baseline.Epoch, baseline.Status, baseline.Services, baseline.Finished.Sub(baseline.Started))
+	t.Logf("baseline: epoch %d: %+v services %v, read %v", baseline.Status.Epoch, baseline.Status, baseline.Services, baseline.Finished.Sub(baseline.Started))
 	// Enabling a module can make the active manager respawn and register
 	// again, so the active manager to stop is the one that advertises the
 	// service while the other one stands by.
@@ -171,8 +171,14 @@ func testManagerWatch(t *testing.T) {
 		t.Fatalf("mgr.%s advertises %s, want %s", first.ActiveName, host, addresses[first.ActiveName])
 	}
 	managerWatchScrape(t, ctx, client, advertised.Services["prometheus"])
-	t.Logf("settled: active mgr.%s GID %d, standby mgr.%s GID %d, prometheus at %s from epoch %d", first.ActiveName, first.ActiveGID, standby, first.Standbys[0].GID, advertised.Services["prometheus"], advertised.Epoch)
+	t.Logf("settled: active mgr.%s GID %d, standby mgr.%s GID %d, prometheus at %s from epoch %d", first.ActiveName, first.ActiveGID, standby, first.Standbys[0].GID, advertised.Services["prometheus"], advertised.Status.Epoch)
 
+	// Two typed reads bracket the failover: each carries the epoch of its own
+	// map, so the later read is ordered after the earlier one.
+	beforeStop, err := observer.ManagerStatus(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	stopped := harness.ManagerHandle(t, ctx, cluster, first.ActiveName)
 	grace := 10 * time.Second
 	if err := stopped.Stop(ctx, &grace); err != nil {
@@ -190,10 +196,18 @@ func testManagerWatch(t *testing.T) {
 	promoted := awaitManagerWatchEvent(t, w, &last, &gaps, 3*time.Minute, "promotion of the standby", func(e ceph.ManagerWatchEvent) bool {
 		return e.Status.ActiveName == standby && e.Status.ActiveGID != 0
 	})
-	if promoted.Status.ActiveGID == first.ActiveGID || promoted.Epoch <= advertised.Epoch {
+	if promoted.Status.ActiveGID == first.ActiveGID || promoted.Status.Epoch <= advertised.Status.Epoch {
 		t.Fatalf("promotion event = %+v", promoted)
 	}
-	t.Logf("promotion: event %d %s epoch %d, mgr.%s GID %d available %t, observed %v after the stop returned", promoted.Sequence, promoted.Kind, promoted.Epoch, standby, promoted.Status.ActiveGID, promoted.Status.Available, promoted.Finished.Sub(stoppedAt))
+	afterPromotion, err := observer.ManagerStatus(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterPromotion.Epoch <= beforeStop.Epoch || afterPromotion.Epoch < promoted.Status.Epoch || afterPromotion.ActiveGID == beforeStop.ActiveGID || afterPromotion.ActiveName != standby {
+		t.Fatalf("ManagerStatus across the failover: before %+v, after %+v, promotion event epoch %d", beforeStop, afterPromotion, promoted.Status.Epoch)
+	}
+	t.Logf("ManagerStatus across the failover: epoch %d mgr.%s GID %d -> epoch %d mgr.%s GID %d", beforeStop.Epoch, beforeStop.ActiveName, beforeStop.ActiveGID, afterPromotion.Epoch, afterPromotion.ActiveName, afterPromotion.ActiveGID)
+	t.Logf("promotion: event %d %s epoch %d, mgr.%s GID %d available %t, observed %v after the stop returned", promoted.Sequence, promoted.Kind, promoted.Status.Epoch, standby, promoted.Status.ActiveGID, promoted.Status.Available, promoted.Finished.Sub(stoppedAt))
 	moved := promoted
 	if !moved.Status.Available || moved.Services["prometheus"] == "" {
 		moved = awaitManagerWatchEvent(t, w, &last, &gaps, 2*time.Minute, "service of the promoted manager", func(e ceph.ManagerWatchEvent) bool {
@@ -206,7 +220,7 @@ func testManagerWatch(t *testing.T) {
 		t.Fatalf("promoted mgr.%s advertises %s, want %s", standby, host, addresses[standby])
 	}
 	managerWatchScrape(t, ctx, client, moved.Services["prometheus"])
-	t.Logf("service moved: event %d epoch %d, prometheus at %s", moved.Sequence, moved.Epoch, moved.Services["prometheus"])
+	t.Logf("service moved: event %d epoch %d, prometheus at %s", moved.Sequence, moved.Status.Epoch, moved.Services["prometheus"])
 
 	if err := stopped.Start(ctx); err != nil {
 		t.Fatal(err)
@@ -220,7 +234,7 @@ func testManagerWatch(t *testing.T) {
 	if gid, _ := managerWatchStandbyGID(returned, first.ActiveName); gid == first.ActiveGID || returned.Status.ActiveGID != promoted.Status.ActiveGID {
 		t.Fatalf("restarted standby event = %+v (the same name registers with a new GID)", returned)
 	}
-	t.Logf("standby again: event %d epoch %d, mgr.%s with a new GID, observed %v after the start returned", returned.Sequence, returned.Epoch, first.ActiveName, returned.Finished.Sub(startedAt))
+	t.Logf("standby again: event %d epoch %d, mgr.%s with a new GID, observed %v after the start returned", returned.Sequence, returned.Status.Epoch, first.ActiveName, returned.Finished.Sub(startedAt))
 
 	if err := w.Stop(); err != nil {
 		t.Fatalf("Stop = %v", err)

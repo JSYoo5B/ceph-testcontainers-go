@@ -32,8 +32,7 @@ type mgrWatchSource struct {
 
 func newMgrWatchSource() *mgrWatchSource {
 	return &mgrWatchSource{before: daemonWatchFSID, after: daemonWatchFSID, sample: managerSample{
-		epoch:    20,
-		status:   ManagerStatus{Available: true, ActiveName: "a", ActiveGID: 4100, Standbys: []mgrStandby{{Name: "b", GID: 4200}}},
+		status:   ManagerStatus{Epoch: 20, Available: true, ActiveName: "a", ActiveGID: 4100, Standbys: []mgrStandby{{Name: "b", GID: 4200}}},
 		services: map[string]string{"prometheus": "http://172.20.0.5:9283/"},
 	}}
 }
@@ -61,8 +60,9 @@ func (s *mgrWatchSource) read(ctx context.Context) (managerMapReport, error) {
 func (s *mgrWatchSource) update(change func(*mgrWatchSource)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	epoch := s.sample.status.Epoch
 	change(s)
-	s.sample.epoch++
+	s.sample.status.Epoch = epoch + 1
 }
 
 func (s *mgrWatchSource) readCount() int {
@@ -96,7 +96,7 @@ func TestManagerWatchBaselineIsBufferedBeforeWatchManagersReturns(t *testing.T) 
 	w := startTestMgrWatch(t, t.Context(), watch.Settings{Interval: time.Hour, Timeout: time.Second, Buffer: 1}, source)
 	select {
 	case event := <-w.Events():
-		if event.Sequence != 1 || event.Kind != WatchBaseline || event.Err != nil || event.Epoch != 20 ||
+		if event.Sequence != 1 || event.Kind != WatchBaseline || event.Err != nil || event.Status.Epoch != 20 ||
 			!reflect.DeepEqual(event.Status, source.sample.status) || !maps.Equal(event.Services, source.sample.services) {
 			t.Fatalf("baseline = %+v", event)
 		}
@@ -160,7 +160,7 @@ func TestManagerWatchReportsAFailoverInOrder(t *testing.T) {
 		t.Fatalf("events = %+v", events)
 	}
 	for i, event := range events {
-		if event.Sequence != uint64(i+1) || (i > 0 && (event.Kind != WatchChanged || event.Epoch <= events[i-1].Epoch)) {
+		if event.Sequence != uint64(i+1) || (i > 0 && (event.Kind != WatchChanged || event.Status.Epoch <= events[i-1].Status.Epoch)) {
 			t.Fatalf("event %d = %+v", i, event)
 		}
 	}
@@ -206,14 +206,16 @@ func TestManagerWatchTransientFailureIsAGapThenResumed(t *testing.T) {
 	boom := errors.New("transient")
 	source.update(func(s *mgrWatchSource) { s.fail = boom })
 	gap := daemonWatchNext(t, w)
-	if gap.Kind != WatchGap || !errors.Is(gap.Err, boom) || gap.Services != nil || gap.Status.ActiveName != "" || gap.Epoch != 0 || gap.Sequence != 2 {
+	if gap.Kind != WatchGap || !errors.Is(gap.Err, boom) || gap.Services != nil || gap.Status.ActiveName != "" || gap.Status.Epoch != 0 || gap.Sequence != 2 {
 		t.Fatalf("gap = %+v", gap)
 	}
 	source.update(func(s *mgrWatchSource) { s.fail = nil })
 	var resumed ManagerWatchEvent
 	for resumed = daemonWatchNext(t, w); resumed.Kind == WatchGap; resumed = daemonWatchNext(t, w) {
 	}
-	if resumed.Kind != WatchResumed || resumed.Err != nil || !reflect.DeepEqual(resumed.Status, baseline.Status) {
+	unchanged := baseline.Status
+	unchanged.Epoch = resumed.Status.Epoch
+	if resumed.Kind != WatchResumed || resumed.Err != nil || resumed.Status.Epoch <= baseline.Status.Epoch || !reflect.DeepEqual(resumed.Status, unchanged) {
 		t.Fatalf("resumed = %+v (an unchanged map after a gap is still reported)", resumed)
 	}
 	source.update(func(s *mgrWatchSource) { s.sample.status.Standbys = nil })
@@ -376,7 +378,7 @@ func TestDecodeManagerMap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := managerSample{epoch: 7, status: ManagerStatus{Available: true, ActiveName: "a", ActiveGID: 4100,
+	want := managerSample{status: ManagerStatus{Epoch: 7, Available: true, ActiveName: "a", ActiveGID: 4100,
 		Standbys: []mgrStandby{{Name: "b", GID: 5001}, {Name: "c", GID: 5002}, {Name: "d", GID: 5000}}},
 		services: map[string]string{"prometheus": "http://172.20.0.5:9283/"}}
 	if !reflect.DeepEqual(sample, want) {
@@ -415,7 +417,7 @@ func TestManagerWatchReadsBracketTheDumpWithTheFSID(t *testing.T) {
 		t.Fatalf("baseline commands = %q", got)
 	}
 	baseline := daemonWatchNext(t, w)
-	if baseline.Epoch != 1 || baseline.Status.ActiveName != "a" || baseline.Status.Standbys[0].Name != "b" || baseline.Services == nil {
+	if baseline.Status.Epoch != 1 || baseline.Status.ActiveName != "a" || baseline.Status.Standbys[0].Name != "b" || baseline.Services == nil {
 		t.Fatalf("baseline = %+v", baseline)
 	}
 }

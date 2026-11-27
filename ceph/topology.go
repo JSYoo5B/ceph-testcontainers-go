@@ -1122,8 +1122,11 @@ func managerMapGID(status ManagerStatus, name string) (uint64, bool) {
 	return 0, false
 }
 
-// ManagerStatus reports active ownership and registered standbys.
+// ManagerStatus reports active ownership and registered standbys. Epoch is
+// the native MGRMap epoch of the same read, so two observations can be
+// ordered, and the fields of one ManagerStatus always belong to one map.
 type ManagerStatus struct {
+	Epoch      uint64 `json:"epoch"`
 	Available  bool   `json:"available"`
 	ActiveName string `json:"active_name"`
 	ActiveGID  uint64 `json:"active_gid"`

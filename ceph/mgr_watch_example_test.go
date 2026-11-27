@@ -47,7 +47,7 @@ func ExampleObserver_WatchManagers() {
 			continue
 		}
 		if event.Status.Available && event.Status.ActiveGID != baseline.Status.ActiveGID {
-			fmt.Printf("mgr.%s (GID %d) took over from mgr.%s at epoch %d\n", event.Status.ActiveName, event.Status.ActiveGID, baseline.Status.ActiveName, event.Epoch)
+			fmt.Printf("mgr.%s (GID %d) took over from mgr.%s at epoch %d\n", event.Status.ActiveName, event.Status.ActiveGID, baseline.Status.ActiveName, event.Status.Epoch)
 			// ... check that the SUT reconnects ...
 			return
 		}
