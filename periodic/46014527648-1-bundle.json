@@ -1,0 +1,506 @@
+{
+  "classification": "incomplete_or_failed",
+  "complete": false,
+  "elapsed_seconds": 1173.689,
+  "execution": "46014527648-1",
+  "plan": {
+    "budget_seconds": 6600,
+    "maximum_runner_minutes": 150,
+    "mode": "discovery",
+    "plan_sha256": "e21ddfe6727f7b991958d91ae9df9443d6e22884f77e116da661d84df419ca52",
+    "runs": [
+      {
+        "budget_seconds": 6600,
+        "catalogue_sha256": "265c1b87724826df1e0e2607721928b8a23fb446ce2ddec21657538df3c97cc4",
+        "cell": "19.2.5/279f6a58ca15",
+        "entries": [
+          {
+            "core": true,
+            "id": "short-default-32feb160-f5bd0f79be",
+            "native_seconds": 600,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "default",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "short",
+              "checker": "none",
+              "id": "short-default-32feb160",
+              "image_roles": "essential,client,cephfs,rgw",
+              "job_timeout": 35,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration/cephfs",
+              "profile": "short/default/internal-integration-cephfs",
+              "representative": "",
+              "requires_ceph": true,
+              "retry_job_timeout": 70,
+              "sources": [
+                "internal/integration/cephfs/cephfs_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_default",
+              "timeout": "20m"
+            },
+            "tests": [
+              "TestCephFSFilesystem"
+            ]
+          },
+          {
+            "core": true,
+            "id": "short-default-192c51f2-731dee1baf",
+            "native_seconds": 600,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "default",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "short",
+              "checker": "none",
+              "id": "short-default-192c51f2",
+              "image_roles": "essential,client,cephfs,rgw",
+              "job_timeout": 35,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration/rgw",
+              "profile": "short/default/internal-integration-rgw",
+              "representative": "",
+              "requires_ceph": true,
+              "retry_job_timeout": 70,
+              "sources": [
+                "internal/integration/rgw/rgw_admin_integration_test.go",
+                "internal/integration/rgw/rgw_integration_test.go",
+                "internal/integration/rgw/rgw_messenger_v2_sessions_integration_test.go",
+                "internal/integration/rgw/rgw_minimal_integration_test.go",
+                "internal/integration/rgw/rgw_rados_receipt_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_default",
+              "timeout": "20m"
+            },
+            "tests": [
+              "TestRGWS3"
+            ]
+          },
+          {
+            "core": true,
+            "id": "short-default-a488da21-e3bcc77f86",
+            "native_seconds": 600,
+            "network": "",
+            "profile": {
+              "architecture": "arm64",
+              "batch": "default",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "short",
+              "checker": "none",
+              "id": "short-default-a488da21",
+              "image_roles": "essential,client,cephfs,rgw",
+              "job_timeout": 35,
+              "network_tests": [
+                "TestPoolPolicies"
+              ],
+              "networks": [
+                "host",
+                "bridge"
+              ],
+              "package": "./internal/integration",
+              "profile": "short/default/internal-integration",
+              "representative": "",
+              "requires_ceph": true,
+              "retry_job_timeout": 70,
+              "sources": [
+                "internal/integration/ceph_integration_test.go",
+                "internal/integration/placement_integration_test.go",
+                "internal/integration/pool_integration_test.go",
+                "internal/integration/pool_pg_primary_integration_test.go",
+                "internal/integration/pool_pgs_integration_test.go",
+                "internal/integration/pool_policy_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_default",
+              "timeout": "20m"
+            },
+            "tests": [
+              "TestClusterLifecycle"
+            ]
+          },
+          {
+            "core": false,
+            "id": "multicluster-multicluster_topology_rgw_multisite_bridge-ed579334-d8650a215c",
+            "native_seconds": 1200,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "multicluster_topology_rgw_multisite_bridge",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "multicluster",
+              "checker": "none",
+              "id": "multicluster-multicluster_topology_rgw_multisite_bridge-ed579334",
+              "image_roles": "essential,client,rgw",
+              "job_timeout": 70,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration/rgw",
+              "profile": "multicluster/multicluster_topology_rgw_multisite_bridge/internal-integration-rgw",
+              "representative": "",
+              "requires_ceph": true,
+              "retry_job_timeout": 140,
+              "sources": [
+                "internal/integration/rgw/rgw_multicluster_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_multicluster,ci_batch,ci_batch_multicluster_topology_rgw_multisite_bridge",
+              "timeout": "60m"
+            },
+            "tests": [
+              "TestMultiClusterRGWMultisite"
+            ]
+          }
+        ],
+        "images": {
+          "codename": "squid",
+          "cpu_baseline": {},
+          "eligibility": "available",
+          "reference": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.5-all"
+        },
+        "maximum_runner_minutes": 150,
+        "mode": "discovery",
+        "plan_sha256": "ab8f5b270e894fe8b8811f260a0d19db3e580ab75fce7cca117c48951bd3c43b",
+        "platform": "linux/amd64",
+        "reason": "random_sample",
+        "release": "19.2.5",
+        "schema": "ceph-periodic-sample/v1",
+        "scope": "flaky_discovery_sample_not_support",
+        "selected_at": "2026-11-27T14:17:38.347958+00:00",
+        "source_sha": "2df98e1b6736b0b307b2b5a7bc9555e4da4a870b"
+      },
+      {
+        "budget_seconds": 6600,
+        "catalogue_sha256": "265c1b87724826df1e0e2607721928b8a23fb446ce2ddec21657538df3c97cc4",
+        "cell": "19.2.6/279f6a58ca15",
+        "entries": [
+          {
+            "core": true,
+            "id": "short-default-32feb160-f5bd0f79be",
+            "native_seconds": 600,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "default",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "short",
+              "checker": "none",
+              "id": "short-default-32feb160",
+              "image_roles": "essential,client,cephfs,rgw",
+              "job_timeout": 35,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration/cephfs",
+              "profile": "short/default/internal-integration-cephfs",
+              "representative": "",
+              "requires_ceph": true,
+              "retry_job_timeout": 70,
+              "sources": [
+                "internal/integration/cephfs/cephfs_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_default",
+              "timeout": "20m"
+            },
+            "tests": [
+              "TestCephFSFilesystem"
+            ]
+          },
+          {
+            "core": true,
+            "id": "short-default-192c51f2-731dee1baf",
+            "native_seconds": 600,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "default",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "short",
+              "checker": "none",
+              "id": "short-default-192c51f2",
+              "image_roles": "essential,client,cephfs,rgw",
+              "job_timeout": 35,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration/rgw",
+              "profile": "short/default/internal-integration-rgw",
+              "representative": "",
+              "requires_ceph": true,
+              "retry_job_timeout": 70,
+              "sources": [
+                "internal/integration/rgw/rgw_admin_integration_test.go",
+                "internal/integration/rgw/rgw_integration_test.go",
+                "internal/integration/rgw/rgw_messenger_v2_sessions_integration_test.go",
+                "internal/integration/rgw/rgw_minimal_integration_test.go",
+                "internal/integration/rgw/rgw_rados_receipt_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_default",
+              "timeout": "20m"
+            },
+            "tests": [
+              "TestRGWS3"
+            ]
+          },
+          {
+            "core": true,
+            "id": "short-default-a488da21-e3bcc77f86",
+            "native_seconds": 600,
+            "network": "",
+            "profile": {
+              "architecture": "arm64",
+              "batch": "default",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "short",
+              "checker": "none",
+              "id": "short-default-a488da21",
+              "image_roles": "essential,client,cephfs,rgw",
+              "job_timeout": 35,
+              "network_tests": [
+                "TestPoolPolicies"
+              ],
+              "networks": [
+                "host",
+                "bridge"
+              ],
+              "package": "./internal/integration",
+              "profile": "short/default/internal-integration",
+              "representative": "",
+              "requires_ceph": true,
+              "retry_job_timeout": 70,
+              "sources": [
+                "internal/integration/ceph_integration_test.go",
+                "internal/integration/placement_integration_test.go",
+                "internal/integration/pool_integration_test.go",
+                "internal/integration/pool_pg_primary_integration_test.go",
+                "internal/integration/pool_pgs_integration_test.go",
+                "internal/integration/pool_policy_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_default",
+              "timeout": "20m"
+            },
+            "tests": [
+              "TestClusterLifecycle"
+            ]
+          },
+          {
+            "core": false,
+            "id": "multicluster-multicluster_topology_rgw_multisite_bridge-ed579334-d8650a215c",
+            "native_seconds": 1200,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "multicluster_topology_rgw_multisite_bridge",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "multicluster",
+              "checker": "none",
+              "id": "multicluster-multicluster_topology_rgw_multisite_bridge-ed579334",
+              "image_roles": "essential,client,rgw",
+              "job_timeout": 70,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration/rgw",
+              "profile": "multicluster/multicluster_topology_rgw_multisite_bridge/internal-integration-rgw",
+              "representative": "",
+              "requires_ceph": true,
+              "retry_job_timeout": 140,
+              "sources": [
+                "internal/integration/rgw/rgw_multicluster_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_multicluster,ci_batch,ci_batch_multicluster_topology_rgw_multisite_bridge",
+              "timeout": "60m"
+            },
+            "tests": [
+              "TestMultiClusterRGWMultisite"
+            ]
+          }
+        ],
+        "images": {
+          "codename": "squid",
+          "cpu_baseline": {},
+          "eligibility": "available",
+          "reference": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-19.2.6-all"
+        },
+        "maximum_runner_minutes": 150,
+        "mode": "discovery",
+        "plan_sha256": "4fe311c496ac18d6a486e7cb0fb2e7b2779dedf2b711d64bb2ce27ec2a330618",
+        "platform": "linux/amd64",
+        "reason": "random_sample",
+        "release": "19.2.6",
+        "schema": "ceph-periodic-sample/v1",
+        "scope": "flaky_discovery_sample_not_support",
+        "selected_at": "2026-11-27T14:17:38.347958+00:00",
+        "source_sha": "2df98e1b6736b0b307b2b5a7bc9555e4da4a870b"
+      },
+      {
+        "budget_seconds": 6600,
+        "catalogue_sha256": "265c1b87724826df1e0e2607721928b8a23fb446ce2ddec21657538df3c97cc4",
+        "cell": "20.2.5/85b25c2363c9",
+        "entries": [
+          {
+            "core": true,
+            "id": "short-default-32feb160-f5bd0f79be",
+            "native_seconds": 600,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "default",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "short",
+              "checker": "none",
+              "id": "short-default-32feb160",
+              "image_roles": "essential,client,cephfs,rgw",
+              "job_timeout": 35,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration/cephfs",
+              "profile": "short/default/internal-integration-cephfs",
+              "representative": "",
+              "requires_ceph": true,
+              "retry_job_timeout": 70,
+              "sources": [
+                "internal/integration/cephfs/cephfs_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_default",
+              "timeout": "20m"
+            },
+            "tests": [
+              "TestCephFSFilesystem"
+            ]
+          },
+          {
+            "core": true,
+            "id": "short-default-192c51f2-731dee1baf",
+            "native_seconds": 600,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "default",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "short",
+              "checker": "none",
+              "id": "short-default-192c51f2",
+              "image_roles": "essential,client,cephfs,rgw",
+              "job_timeout": 35,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration/rgw",
+              "profile": "short/default/internal-integration-rgw",
+              "representative": "",
+              "requires_ceph": true,
+              "retry_job_timeout": 70,
+              "sources": [
+                "internal/integration/rgw/rgw_admin_integration_test.go",
+                "internal/integration/rgw/rgw_integration_test.go",
+                "internal/integration/rgw/rgw_messenger_v2_sessions_integration_test.go",
+                "internal/integration/rgw/rgw_minimal_integration_test.go",
+                "internal/integration/rgw/rgw_rados_receipt_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_default",
+              "timeout": "20m"
+            },
+            "tests": [
+              "TestRGWS3"
+            ]
+          },
+          {
+            "core": true,
+            "id": "short-default-a488da21-e3bcc77f86",
+            "native_seconds": 600,
+            "network": "",
+            "profile": {
+              "architecture": "arm64",
+              "batch": "default",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "short",
+              "checker": "none",
+              "id": "short-default-a488da21",
+              "image_roles": "essential,client,cephfs,rgw",
+              "job_timeout": 35,
+              "network_tests": [
+                "TestPoolPolicies"
+              ],
+              "networks": [
+                "host",
+                "bridge"
+              ],
+              "package": "./internal/integration",
+              "profile": "short/default/internal-integration",
+              "representative": "",
+              "requires_ceph": true,
+              "retry_job_timeout": 70,
+              "sources": [
+                "internal/integration/ceph_integration_test.go",
+                "internal/integration/placement_integration_test.go",
+                "internal/integration/pool_integration_test.go",
+                "internal/integration/pool_pg_primary_integration_test.go",
+                "internal/integration/pool_pgs_integration_test.go",
+                "internal/integration/pool_policy_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_default",
+              "timeout": "20m"
+            },
+            "tests": [
+              "TestClusterLifecycle"
+            ]
+          }
+        ],
+        "images": {
+          "codename": "tentacle",
+          "cpu_baseline": {},
+          "eligibility": "available",
+          "publication": "The official-20.2.5-all role aggregate is not published; this is the upstream aggregate.",
+          "reference": "quay.io/ceph/ceph:v20.2.5",
+          "release_notes": "https://docs.ceph.com/en/latest/releases/tentacle/#v20-2-5-tentacle",
+          "variant": "upstream_aggregate"
+        },
+        "maximum_runner_minutes": 150,
+        "mode": "discovery",
+        "plan_sha256": "900750a3da81531e2e9bd4a03ab5da7227d3c15d6b407569a50dc8cc041abda2",
+        "platform": "linux/amd64",
+        "reason": "random_sample",
+        "release": "20.2.5",
+        "schema": "ceph-periodic-sample/v1",
+        "scope": "flaky_discovery_sample_not_support",
+        "selected_at": "2026-11-27T14:17:38.347958+00:00",
+        "source_sha": "2df98e1b6736b0b307b2b5a7bc9555e4da4a870b"
+      }
+    ],
+    "schema": "ceph-periodic-sample/v1/bundle",
+    "scope": "flaky_discovery_sample_not_support",
+    "seed": "2df98e1b6736b0b307b2b5a7bc9555e4da4a870b:46014527648:1",
+    "selected_at": "2026-11-27T14:17:38.347958+00:00",
+    "source_sha": "2df98e1b6736b0b307b2b5a7bc9555e4da4a870b"
+  },
+  "receipt_sha256": "0dc7eb2bba68493e45a43f160e4fe5bb932ddb2b4d1d0fc6dc1764ed44c4383a",
+  "schema": "ceph-periodic-sample/v1/bundle",
+  "source_sha": "2df98e1b6736b0b307b2b5a7bc9555e4da4a870b",
+  "unstarted_versions": [],
+  "versions": [
+    {
+      "classification": "passed",
+      "complete": true,
+      "release": "19.2.5"
+    },
+    {
+      "classification": "incomplete_or_failed",
+      "complete": false,
+      "release": "19.2.6"
+    },
+    {
+      "classification": "passed",
+      "complete": true,
+      "release": "20.2.5"
+    }
+  ]
+}
