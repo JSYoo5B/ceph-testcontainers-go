@@ -4,7 +4,9 @@ Import `github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics` alongside `c
 to collect read-only evidence from a cluster for a failed test to save or
 report: a diagnostics report of its containers, networks, log tails and fixed
 Ceph queries, the crash metadata that its daemons wrote, and the redaction of
-the secrets that the cluster knows. Collection never starts, stops,
+the secrets that the cluster knows. During a test, it also reads a daemon's
+log since its latest process started and the MonClient refusals of a MGR's
+latest process, each with how much of its window it covered. Collection never starts, stops,
 reconfigures or adopts a container. A cluster needs nothing from this package
 to run. See [API purpose and purpose tags](../../docs/guides/api-purpose.md) for
 where this fits.
@@ -20,6 +22,14 @@ where this fits.
    | Container state, network addresses, log tails, fixed Ceph queries | `Collect` | `Report` |
    | Crash metadata files in `ceph.CrashDir` of the daemon containers | `CollectCrashMetadata` | `CrashMetadataReport` |
    | Output with the cluster's secrets replaced by `[REDACTED]` | `Redact` | the masked bytes |
+
+   During the test, read one daemon's process, which can start again inside
+   its container (a MGR or MDS respawns), with a bounded context:
+
+   | Evidence | Function | Result |
+   | --- | --- | --- |
+   | A daemon's log lines since its latest process started | `CollectProcessLog` | `ProcessLog` |
+   | A MGR's `(13) Permission denied` MonClient lines and the MON refusals of its entity since its latest process started | `CollectManagerRefusals` | `ManagerRefusals` |
 
 ```golang
 t.Cleanup(func() {
@@ -70,6 +80,13 @@ use the [finalize](../finalize/README.md) package instead.
   compares the raw bytes, not the output of `Redact`.
 - No crash records is not proof that no daemon crashed: a container removed
   earlier took its records along.
+- A process log is complete only when its `Status` is `LogComplete`. A
+  truncated window, a log without a process start (the log driver dropped it,
+  or the daemon has not logged it yet) and a container that restarted during
+  the read each say so, and a source that cannot be read is an error, never
+  an empty result. A MON window of `CollectManagerRefusals` is complete only
+  with the `json-file` log driver without `max-size`, since any other can drop
+  the lines it starts with.
 
 ## Reference
 

@@ -24,11 +24,10 @@ const managerWatchDefaultInterval = 3 * time.Second
 // Sequence starts at 1 with the baseline and increases by one for each event,
 // and no event is dropped, so consecutive numbers mean the consumer saw every
 // event the watch produced. Started and Finished are the local clock around
-// the read, not the time Ceph changed state. Epoch is the native MGRMap epoch
-// of that read.
+// the read, not the time Ceph changed state.
 //
-// Status is the MGRMap's active manager, its availability and the registered
-// standbys, as ManagerStatus reports them, with Standbys sorted by name and
+// Status is the MGRMap's epoch, active manager, its availability and the
+// registered standbys, as ManagerStatus reports them, with Standbys sorted by name and
 // GID. An empty ActiveName with Available false is a successful observation
 // of a map without an active manager, not a failed read. Services are the
 // service URLs of the same MGRMap, keyed by module name: the URLs that this
@@ -36,19 +35,22 @@ const managerWatchDefaultInterval = 3 * time.Second
 // separate query. An advertised URL does not prove that its listener accepts
 // requests.
 //
-// Status and Services are compared field by field; the same name with another
-// GID is a change, and an epoch change that leaves them equal produces no
-// event. Each event has its own slice and map, which the consumer may keep or
+// Status, except its epoch, and Services are compared field by field; the
+// same name with another GID is a change, and an epoch change that leaves
+// them equal produces no event. Each event has its own slice and map, which the consumer may keep or
 // change. Two events separated by a gap, or simply by the polling interval, do
 // not establish the transitions in between.
 type ManagerWatchEvent struct {
 	Sequence          uint64
 	Kind              WatchEventKind
 	Started, Finished time.Time
-	Epoch             uint64
-	Status            ManagerStatus
-	Services          map[string]string
-	Err               error
+	// Epoch is the native MGRMap epoch of the read.
+	//
+	// Deprecated: use Status.Epoch, which holds the same value.
+	Epoch    uint64
+	Status   ManagerStatus
+	Services map[string]string
+	Err      error
 }
 
 // ManagerWatch is a running watch of the active MGR and its standbys. One
@@ -135,7 +137,6 @@ func (o *Observer) WatchManagers(ctx context.Context, cfg WatchConfig) (*Manager
 
 // managerSample is one successful read of the MGRMap.
 type managerSample struct {
-	epoch    uint64
 	status   ManagerStatus
 	services map[string]string
 }
@@ -188,7 +189,7 @@ func startManagerWatch(ctx context.Context, settings watch.Settings, original or
 			e := ManagerWatchEvent{Err: err}
 			e.Sequence, e.Kind, e.Started, e.Finished = watchMeta(m)
 			if err == nil {
-				e.Epoch, e.Status, e.Services = s.epoch, s.status, maps.Clone(s.services)
+				e.Epoch, e.Status, e.Services = s.status.Epoch, s.status, maps.Clone(s.services)
 				e.Status.Standbys = slices.Clone(s.status.Standbys)
 			}
 			return e
@@ -250,8 +251,8 @@ func watchNativeFSID(run func(args ...string) ([]byte, error)) (string, error) {
 	return strings.TrimSpace(string(data)), nil
 }
 
-// decodeManagerMap decodes one mgr dump into the ManagerStatus fields, the
-// epoch and the services of the same map. Unlike ManagerStatus it refuses a
+// decodeManagerMap decodes one mgr dump into the ManagerStatus fields, its
+// epoch included, and the services of the same map. Unlike ManagerStatus it refuses a
 // map with a missing field, so a malformed reply is a failed read rather than
 // an empty map.
 func decodeManagerMap(data []byte) (managerSample, error) {
@@ -291,5 +292,6 @@ func decodeManagerMap(data []byte) (managerSample, error) {
 	}) int {
 		return cmp.Or(strings.Compare(a.Name, b.Name), cmp.Compare(a.GID, b.GID))
 	})
-	return managerSample{epoch: *shape.Epoch, status: status, services: services}, nil
+	status.Epoch = *shape.Epoch
+	return managerSample{status: status, services: services}, nil
 }

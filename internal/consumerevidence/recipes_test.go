@@ -30,13 +30,14 @@ const (
 	monCSessions = `[{"name": "mon.0", "entity_name": "", "con_type": "mon", "global_id": 0}]`
 )
 
+// managerMap is what ManagerStatus reports for a native dump.
 func managerMap(t *testing.T, dump string) ManagerMap {
 	t.Helper()
-	observed, err := decodeManagerMap([]byte(dump))
-	if err != nil {
+	var status ceph.ManagerStatus
+	if err := json.Unmarshal([]byte(dump), &status); err != nil {
 		t.Fatal(err)
 	}
-	return observed
+	return managerMapOf(status)
 }
 
 func sessions(t *testing.T, outputs ...string) []MonitorSessions {
@@ -52,24 +53,17 @@ func sessions(t *testing.T, outputs ...string) []MonitorSessions {
 	return all
 }
 
-func TestDecodeManagerMap(t *testing.T) {
+func TestManagerMapOf(t *testing.T) {
 	observed := managerMap(t, restoredDump)
-	if observed.Epoch != 7 || observed.Active != (Registration{"b", 4233}) || !slices.Equal(observed.Standbys, []Registration{{"a", 14263}}) {
-		t.Fatalf("decoded %+v", observed)
+	if !observed.Query.Complete() || observed.Epoch != 7 || observed.Active != (Registration{"b", 4233}) || !slices.Equal(observed.Standbys, []Registration{{"a", 14263}}) {
+		t.Fatalf("selected %+v", observed)
 	}
-	for name, test := range map[string]struct {
-		dump, status string
-	}{
-		"empty":            {"", StatusMissing},
-		"without epoch":    {`{"active_gid": 1, "active_name": "a", "available": true, "standbys": []}`, StatusMissing},
-		"truncated":        {`{"epoch": 4, "active_gid"`, StatusParse},
-		"active by halves": {`{"epoch": 4, "active_gid": 0, "active_name": "a", "available": true, "standbys": []}`, StatusParse},
-		"oversized":        {strings.Repeat(" ", managerDumpLimit+1), StatusTruncated},
-	} {
-		_, err := decodeManagerMap([]byte(test.dump))
-		if status := queryStatus(err); status != test.status {
-			t.Errorf("%s: status %s (%v), want %s", name, status, err, test.status)
-		}
+	sorted := managerMap(t, `{"epoch": 9, "active_gid": 0, "active_name": "", "available": false, "standbys": [{"gid": 9, "name": "c"}, {"gid": 8, "name": "a"}]}`)
+	if sorted.Epoch != 9 || sorted.Active != (Registration{}) || !slices.Equal(sorted.Standbys, []Registration{{"a", 8}, {"c", 9}}) {
+		t.Fatalf("selected %+v", sorted)
+	}
+	if empty := managerMapOf(ceph.ManagerStatus{Epoch: 3}); empty.Standbys == nil || len(empty.Standbys) != 0 {
+		t.Fatalf("a map without standbys = %+v", empty)
 	}
 }
 
@@ -181,35 +175,57 @@ func TestTransitionReceiptKeepsChanges(t *testing.T) {
 	}
 }
 
-func TestScanRefusals(t *testing.T) {
-	log := strings.Join([]string{
-		"2026-10-14T23:52:03.512+0000 7ff7ec39b640  0 cephx server mgr.b:  attempt to reclaim global_id 15059 using bad ticket",
-		"2026-10-14T23:52:03.513+0000 7ff7ec39b640  0 cephx server client.admin:  attempt to reclaim global_id 22 without presenting ticket\r",
-		"2026-10-14T23:52:03.514+0000 7ff7ec39b640  0 log_channel(audit) log [INF] : cmd=[cephx server mgr.b:  attempt to reclaim global_id 7 using bad ticket]",
-		"2026-10-14T23:52:03.515+0000 7ff7ec39b640  1 mon.a@0(leader) e3 handle_auth_request failed to assign global_id",
-	}, "\n") + "\n"
-	found, err := scanRefusals("a", strings.NewReader(log), 1<<20)
-	if err != nil {
-		t.Fatal(err)
+// refusalCase is an observation of mgr.a whose sources are all complete:
+// mon.a refused a reclaim of 14263 twice and of the module client 4179 once,
+// and mon.b refused an unexpected key.
+func refusalCase() *diagnostics.ManagerRefusals {
+	source := func(role, name string) diagnostics.LogSource {
+		return diagnostics.LogSource{Role: role, Name: name, Status: diagnostics.LogComplete}
 	}
-	want := []Refusal{{Monitor: "a", Entity: "mgr.b", GlobalID: 15059}, {Monitor: "a", Entity: "client.admin", GlobalID: 22}}
-	if len(found) != len(want) {
-		t.Fatalf("found %+v", found)
+	line := func(text string) diagnostics.LogLine { return diagnostics.LogLine{Text: text} }
+	return &diagnostics.ManagerRefusals{Manager: source("mgr", "a"), Monitors: []diagnostics.MonitorRefusals{
+		{LogSource: source("mon", "a"), Refusals: []diagnostics.MonitorRefusal{
+			{Reason: "using bad ticket", GlobalID: 14263, Line: line("first")},
+			{Reason: "using bad ticket", GlobalID: 14263, Line: line("again")},
+			{Reason: "using bad ticket", GlobalID: 4179, Line: line("module")},
+		}},
+		{LogSource: source("mon", "b"), Refusals: []diagnostics.MonitorRefusal{{Reason: "unexpected key", Line: line("key")}}},
+	}}
+}
+
+func TestRefusalsOf(t *testing.T) {
+	found, err := refusalsOf(refusalCase())
+	want := []Refusal{
+		{Monitor: "a", Entity: "mgr.a", Reason: "using bad ticket", GlobalID: 14263, Line: "first"},
+		{Monitor: "a", Entity: "mgr.a", Reason: "using bad ticket", GlobalID: 4179, Line: "module"},
+		{Monitor: "b", Entity: "mgr.a", Reason: "unexpected key", Line: "key"},
 	}
-	for i := range want {
-		if found[i].Monitor != want[i].Monitor || found[i].Entity != want[i].Entity || found[i].GlobalID != want[i].GlobalID {
-			t.Fatalf("refusal %d %+v, want %+v", i, found[i], want[i])
+	if err != nil || !slices.Equal(found, want) {
+		t.Fatalf("refusals = %+v, %v", found, err)
+	}
+	for name, test := range map[string]struct {
+		change func(*diagnostics.ManagerRefusals)
+		status string
+	}{
+		"truncated MGR log":   {func(r *diagnostics.ManagerRefusals) { r.Manager.Status = diagnostics.LogTruncated }, StatusTruncated},
+		"MGR start not found": {func(r *diagnostics.ManagerRefusals) { r.Manager.Status = diagnostics.LogStartNotFound }, StatusMissing},
+		"MGR restarted":       {func(r *diagnostics.ManagerRefusals) { r.Manager.Status = diagnostics.LogChanged }, StatusFailed},
+		"truncated MON log":   {func(r *diagnostics.ManagerRefusals) { r.Monitors[1].Status = diagnostics.LogTruncated }, StatusTruncated},
+		"rotating MON log":    {func(r *diagnostics.ManagerRefusals) { r.Monitors[0].Status = diagnostics.LogStartNotFound }, StatusMissing},
+		"no MON log":          {func(r *diagnostics.ManagerRefusals) { r.Monitors = nil }, StatusMissing},
+	} {
+		observed := refusalCase()
+		test.change(observed)
+		if found, err := refusalsOf(observed); queryStatus(err) != test.status || found != nil {
+			t.Errorf("%s: %+v, %v (status %s, want %s)", name, found, err, queryStatus(err), test.status)
 		}
-	}
-	if _, err := scanRefusals("a", strings.NewReader(log), 16); queryStatus(err) != StatusTruncated {
-		t.Fatalf("a log over its bound: %v", err)
 	}
 }
 
 // gateCase is a complete gate observation of the restored native maps.
 func gateCase(t *testing.T) GateReceipt {
 	return GateReceipt{Map: managerMap(t, restoredDump), Monitors: sessions(t, monASessions, monBRestored, monCSessions),
-		Control: &Control{Target: "mgr.b", Command: "tell version", Complete: true}, Queries: []Query{{Name: "log of mon.a", Status: StatusComplete}}}
+		Control: &Control{Target: "mgr.b", Command: "tell version", Complete: true}, Queries: []Query{{Name: "refusals of mgr.a", Status: StatusComplete}}}
 }
 
 func TestEvaluateGate(t *testing.T) {
@@ -415,32 +431,6 @@ func TestFinish(t *testing.T) {
 		if test.collectErr != nil && !errors.Is(err, test.collectErr) || test.terminateEr != nil && !errors.Is(err, test.terminateEr) {
 			t.Errorf("%s: a step's error was lost: %v", name, err)
 		}
-	}
-}
-
-// A log with many refusals keeps one line per refused session, so repeated
-// refusals of earlier MonClients never push out the current GID's refusal;
-// more distinct sessions than the gate keeps is an error, never a short list.
-func TestScanRefusalsKeepsEveryRefusedSession(t *testing.T) {
-	line := func(entity string, id int) string {
-		return fmt.Sprintf("2026-10-14T23:52:03.512+0000 7ff7ec39b640  0 cephx server %s:  attempt to reclaim global_id %d using bad ticket", entity, id)
-	}
-	var repeated []string
-	for range 2 * maxRefusedSessions {
-		repeated = append(repeated, line("mgr.a", 4179))
-	}
-	repeated = append(repeated, line("mgr.a", 14263))
-	found, err := scanRefusals("a", strings.NewReader(strings.Join(repeated, "\n")+"\n"), 1<<20)
-	if err != nil || len(found) != 2 || found[1].GlobalID != 14263 {
-		t.Fatalf("repeated refusals then the current GID: %+v, %v", found, err)
-	}
-	var distinct []string
-	for id := range maxRefusedSessions {
-		distinct = append(distinct, line("client.admin", 100+id))
-	}
-	distinct = append(distinct, line("mgr.a", 14263))
-	if found, err := scanRefusals("a", strings.NewReader(strings.Join(distinct, "\n")+"\n"), 1<<20); err == nil || queryStatus(err) == StatusComplete {
-		t.Fatalf("%d distinct refused sessions returned %d without an error", maxRefusedSessions+1, len(found))
 	}
 }
 

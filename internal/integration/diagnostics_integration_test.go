@@ -72,3 +72,15 @@ func TestPartialClusterDiagnostics(t *testing.T) {
 	}
 	t.Log("actual failed bootstrap: stopped MON inspection/logs and created network preserved, CLI failures retained; diagnostics created no replacement/control/client container and did not start the MON")
 }
+
+// TestDaemonProcessLog reads a MGR's latest process log and its MonClient
+// refusals around a container restart, a respawn and a refused key.
+func TestDaemonProcessLog(t *testing.T) {
+	testDaemonProcessLog(t)
+}
+
+// TestManagerReclaimRefusal attributes a MON's refused global_id reclaim to
+// the MGR whose MgrMap GID it names.
+func TestManagerReclaimRefusal(t *testing.T) {
+	testManagerReclaimRefusal(t)
+}

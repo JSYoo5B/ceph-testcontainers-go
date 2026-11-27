@@ -14,11 +14,22 @@ import (
 // wall-clock deadline. It reports no Deadline, so code that sizes its own
 // timeouts from the caller's deadline treats it as unbounded until it expires.
 //
+// A context derived from it (context.WithTimeout, WithCancel, ...) before
+// Expire is cancelled before Expire returns, as one derived from a standard
+// context is when that is cancelled: the code under test sees the deadline at
+// its next check, never a moment later. One derived after Expire starts out
+// cancelled.
+//
 //testdouble:shared-double
 type SignalDeadline struct {
 	context.Context
 	done chan struct{}
 	once sync.Once
+	// mu guards expired and after, the functions that AfterFunc registered
+	// and Expire has not run yet.
+	mu      sync.Mutex
+	expired bool
+	after   map[*func()]struct{}
 }
 
 // NewSignalDeadline derives a SignalDeadline from parent. Cancelling parent
@@ -29,9 +40,50 @@ func NewSignalDeadline(parent context.Context) *SignalDeadline {
 	return &SignalDeadline{Context: parent, done: make(chan struct{})}
 }
 
-// Expire passes the deadline. It is safe to call more than once and from any
-// goroutine.
-func (d *SignalDeadline) Expire() { d.once.Do(func() { close(d.done) }) }
+// Expire passes the deadline and cancels every context derived from d before
+// it returns. It is safe to call more than once and from any goroutine.
+func (d *SignalDeadline) Expire() {
+	d.once.Do(func() {
+		d.mu.Lock()
+		close(d.done)
+		d.expired = true
+		after := d.after
+		d.after = nil
+		d.mu.Unlock()
+		for f := range after {
+			(*f)()
+		}
+	})
+}
+
+// AfterFunc arranges for f to run when d expires: within Expire for a
+// function registered before, or in its own goroutine, as context.AfterFunc
+// runs it, for one registered after. The context package uses it to cancel
+// the contexts derived from d synchronously instead of from a goroutine that
+// watches Done. It registers a derived context while holding that context's
+// lock, and f takes the same lock, so f must not run inside the call. stop
+// reports whether it kept f from running.
+func (d *SignalDeadline) AfterFunc(f func()) (stop func() bool) {
+	d.mu.Lock()
+	if d.expired {
+		d.mu.Unlock()
+		go f()
+		return func() bool { return false }
+	}
+	key := &f
+	if d.after == nil {
+		d.after = map[*func()]struct{}{}
+	}
+	d.after[key] = struct{}{}
+	d.mu.Unlock()
+	return func() bool {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		_, pending := d.after[key]
+		delete(d.after, key)
+		return pending
+	}
+}
 
 // Deadline reports no deadline: the context expires on Expire, not at a time.
 func (d *SignalDeadline) Deadline() (time.Time, bool) { return time.Time{}, false }

@@ -67,8 +67,10 @@ func (o *Observer) Status(ctx context.Context) (Status, error) {
 	return readStatus(ctx, run)
 }
 
-// ManagerStatus reads active ownership and registered standbys from the
-// native MGR map.
+// ManagerStatus reads active ownership, registered standbys and the epoch
+// from one native MGR map. A reply without its epoch, active manager,
+// availability or standbys, or with a field of another type, is an error, not
+// a zero value.
 //
 //purpose:observation
 func (o *Observer) ManagerStatus(ctx context.Context) (ManagerStatus, error) {

@@ -1,18 +1,15 @@
 package consumerevidence
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics"
 )
 
 // GateSchema names the consumer's native MGR keyring gate receipt.
@@ -26,26 +23,22 @@ const (
 	SlotNoBeacon   = "no-beacon-session"
 )
 
-// GateBounds bounds a gate: each read, each MON log scan and the native
-// control.
+// GateBounds bounds a gate: each read, each MGR's refusal read and the
+// native control.
 type GateBounds struct {
 	Query, LogScan, Control time.Duration
-	// LogBytes bounds the bytes of each MON log that are scanned.
-	LogBytes int64
+	// LogBytes bounds each log window that a refusal read covers.
+	LogBytes int
 }
 
-// monitorReclaimRefusal matches the three native MON log entries that refuse
-// the global_id reclaim of a MonClient with EACCES: timestamp, thread, level
-// and the cephx server message, which names the entity and the global ID. The
-// same words quoted inside another entry, such as an audit line, do not
-// match.
-var monitorReclaimRefusal = regexp.MustCompile(`^\S+ [0-9a-f]+ +-?\d+ cephx server (\S+):\s+attempt to reclaim global_id (\d+) (without presenting ticket|using bad ticket|using mismatching ticket)$`)
-
-// Refusal is one MON log line that refused a global_id reclaim.
+// Refusal is one MON log line that refused an authentication of an owned
+// MGR's latest process: a global_id reclaim, which names GlobalID, or an
+// unexpected key, which names none.
 type Refusal struct {
 	Monitor  string `json:"monitor"`
 	Entity   string `json:"entity"`
-	GlobalID uint64 `json:"global_id"`
+	Reason   string `json:"reason"`
+	GlobalID uint64 `json:"global_id,omitempty"`
 	Line     string `json:"line"`
 }
 
@@ -84,66 +77,57 @@ type GateReceipt struct {
 	FixtureError       string            `json:"fixture_error,omitempty"`
 }
 
-// maxRefusedSessions bounds the distinct refused entity and global ID pairs
-// that one MON log scan keeps.
-const maxRefusedSessions = 64
-
-// scanRefusals returns the reclaim refusals of one MON log, one line for each
-// distinct entity and global ID, reading at most limit bytes. Repeated
-// refusals of one pair keep its first line, since the gate classifies pairs.
-// A log longer than limit, or with more than maxRefusedSessions distinct
-// pairs, is an error rather than a shorter list: a refusal that was not kept
-// must not read as absent.
-func scanRefusals(monitor string, logs io.Reader, limit int64) ([]Refusal, error) {
-	counted := &io.LimitedReader{R: logs, N: limit + 1}
-	scanner := bufio.NewScanner(counted)
-	scanner.Buffer(make([]byte, 64<<10), 1<<20)
-	var found []Refusal
-	seen := map[Session]bool{}
-	for scanner.Scan() {
-		match := monitorReclaimRefusal.FindStringSubmatch(strings.TrimSuffix(scanner.Text(), "\r"))
-		if match == nil {
-			continue
-		}
-		id, err := strconv.ParseUint(match[2], 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("%w: global_id %q", errMalformed, match[2])
-		}
-		key := Session{Entity: match[1], GlobalID: id}
-		if seen[key] {
-			continue
-		}
-		if len(found) == maxRefusedSessions {
-			return nil, fmt.Errorf("%w: more than %d refused sessions", errOversized, maxRefusedSessions)
-		}
-		seen[key] = true
-		found = append(found, Refusal{Monitor: monitor, Entity: match[1], GlobalID: id, Line: match[0]})
+// refusalsOf returns the MON refusals of one MGR's observation, one line for
+// each distinct MON, reason and global ID, since the gate classifies the
+// refused sessions. A source that did not cover its whole window is an
+// error rather than a shorter list: a refusal that was not read must not
+// read as absent.
+func refusalsOf(observed *diagnostics.ManagerRefusals) ([]Refusal, error) {
+	sources := []diagnostics.LogSource{observed.Manager}
+	for _, monitor := range observed.Monitors {
+		sources = append(sources, monitor.LogSource)
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
+	if len(observed.Monitors) == 0 {
+		return nil, fmt.Errorf("%w: no MON log", errMissing)
 	}
-	if counted.N <= 0 {
-		return nil, errOversized
+	for _, source := range sources {
+		switch source.Status {
+		case diagnostics.LogComplete:
+		case diagnostics.LogTruncated:
+			return nil, fmt.Errorf("%w: the log of %s.%s", errOversized, source.Role, source.Name)
+		case diagnostics.LogStartNotFound:
+			return nil, fmt.Errorf("%w: the log of %s.%s does not show where its window starts", errMissing, source.Role, source.Name)
+		default:
+			return nil, fmt.Errorf("the log of %s.%s is %s", source.Role, source.Name, source.Status)
+		}
+	}
+	found := []Refusal{}
+	seen := map[Refusal]bool{}
+	for _, monitor := range observed.Monitors {
+		for _, refusal := range monitor.Refusals {
+			key := Refusal{Monitor: monitor.Name, Entity: "mgr." + observed.Manager.Name, Reason: refusal.Reason, GlobalID: refusal.GlobalID}
+			if !seen[key] {
+				seen[key] = true
+				key.Line = refusal.Line.Text
+				found = append(found, key)
+			}
+		}
 	}
 	return found, nil
 }
 
-// readRefusals scans every MON's container log for reclaim refusals.
-func readRefusals(ctx context.Context, monitors []*ceph.MonitorContainer, bounds GateBounds) ([]Refusal, []Query) {
+// readRefusals reads, for every owned MGR, what the MONs refused of its
+// latest process.
+func readRefusals(ctx context.Context, cluster *ceph.Container, managers []*ceph.ManagerContainer, bounds GateBounds) ([]Refusal, []Query) {
 	refusals := []Refusal{}
 	var queries []Query
-	for _, monitor := range monitors {
-		queries = append(queries, bounded(ctx, bounds.LogScan, "log of mon."+monitor.DaemonName, func(ctx context.Context) error {
-			logs, err := monitor.Logs(ctx)
+	for _, manager := range managers {
+		queries = append(queries, bounded(ctx, bounds.LogScan, "refusals of mgr."+manager.DaemonName, func(ctx context.Context) error {
+			observed, err := diagnostics.CollectManagerRefusals(ctx, cluster, manager, diagnostics.LogConfig{MaxBytes: bounds.LogBytes})
 			if err != nil {
 				return err
 			}
-			stop := context.AfterFunc(ctx, func() { _ = logs.Close() })
-			found, err := scanRefusals(monitor.DaemonName, logs, bounds.LogBytes)
-			stop()
-			if err = errors.Join(err, logs.Close()); ctx.Err() != nil {
-				err = errors.Join(err, ctx.Err())
-			}
+			found, err := refusalsOf(observed)
 			if err == nil {
 				refusals = append(refusals, found...)
 			}
@@ -219,8 +203,9 @@ func EvaluateGate(receipt GateReceipt, owned []string) GateReceipt {
 
 // CheckGate reads the MgrMap, every owned MON's sessions and the MgrMap again,
 // taking another sample (at most three) while the two maps differ, so that
-// the sessions belong to one map; then every owned MON's log for reclaim
-// refusals and one native "tell" of the active MGR as a new native client.
+// the sessions belong to one map; then, for every owned MGR, what the owned
+// MONs refused of its latest process, and one native "tell" of the active
+// MGR as a new native client.
 // label is the consumer's name for the moment of the gate, such as the one
 // before the SUT dials and the one after its failure.
 func CheckGate(ctx context.Context, cluster *ceph.Container, label string, bounds GateBounds) (GateReceipt, error) {
@@ -238,7 +223,7 @@ func CheckGate(ctx context.Context, cluster *ceph.Container, label string, bound
 		func() ManagerMap { return readManagerMap(ctx, cluster, bounds.Query) },
 		func() []MonitorSessions { return readSessions(ctx, monitors, bounds.Query) })
 	var queries []Query
-	receipt.Refusals, queries = readRefusals(ctx, monitors, bounds)
+	receipt.Refusals, queries = readRefusals(ctx, cluster, managers, bounds)
 	receipt.Queries = append(receipt.Queries, queries...)
 	if receipt.Map.Query.Complete() && receipt.Map.Available && receipt.Map.Active.Name != "" {
 		control, query, _, stopErr := tellVersion(ctx, cluster, "mgr."+receipt.Map.Active.Name, bounds.Control, 4<<10)

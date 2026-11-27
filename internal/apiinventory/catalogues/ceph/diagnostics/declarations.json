@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph/diagnostics",
-  "count": 20,
+  "count": 34,
   "entries": [
     {
       "current": "ceph/diagnostics.Artifact",
@@ -22,6 +22,20 @@
       "kind": "function",
       "signature": "func(ctx context.Context, cluster *ceph.Container, config CrashMetadataConfig) (*CrashMetadataReport, error)",
       "proposed": "ceph/diagnostics.CollectCrashMetadata",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/diagnostics.CollectManagerRefusals",
+      "kind": "function",
+      "signature": "func(ctx context.Context, cluster *ceph.Container, manager *ceph.ManagerContainer, config LogConfig) (*ManagerRefusals, error)",
+      "proposed": "ceph/diagnostics.CollectManagerRefusals",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/diagnostics.CollectProcessLog",
+      "kind": "function",
+      "signature": "func(ctx context.Context, cluster *ceph.Container, daemon testcontainers.Container, config LogConfig) (*ProcessLog, error)",
+      "proposed": "ceph/diagnostics.CollectProcessLog",
       "decision": "baseline"
     },
     {
@@ -106,6 +120,78 @@
       "current": "ceph/diagnostics.CrashRecordsFound",
       "kind": "const",
       "proposed": "ceph/diagnostics.CrashRecordsFound",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/diagnostics.LogChanged",
+      "kind": "const",
+      "proposed": "ceph/diagnostics.LogChanged",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/diagnostics.LogComplete",
+      "kind": "const",
+      "proposed": "ceph/diagnostics.LogComplete",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/diagnostics.LogConfig",
+      "kind": "type",
+      "proposed": "ceph/diagnostics.LogConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/diagnostics.LogLine",
+      "kind": "type",
+      "proposed": "ceph/diagnostics.LogLine",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/diagnostics.LogSource",
+      "kind": "type",
+      "proposed": "ceph/diagnostics.LogSource",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/diagnostics.LogStartNotFound",
+      "kind": "const",
+      "proposed": "ceph/diagnostics.LogStartNotFound",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/diagnostics.LogStatus",
+      "kind": "type",
+      "proposed": "ceph/diagnostics.LogStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/diagnostics.LogTruncated",
+      "kind": "const",
+      "proposed": "ceph/diagnostics.LogTruncated",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/diagnostics.ManagerRefusals",
+      "kind": "type",
+      "proposed": "ceph/diagnostics.ManagerRefusals",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/diagnostics.MonitorRefusal",
+      "kind": "type",
+      "proposed": "ceph/diagnostics.MonitorRefusal",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/diagnostics.MonitorRefusals",
+      "kind": "type",
+      "proposed": "ceph/diagnostics.MonitorRefusals",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/diagnostics.ProcessLog",
+      "kind": "type",
+      "proposed": "ceph/diagnostics.ProcessLog",
       "decision": "baseline"
     },
     {

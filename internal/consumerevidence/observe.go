@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -35,10 +34,6 @@ var (
 	errMalformed = errors.New("malformed selected fields")
 	errOversized = errors.New("output over its bound")
 )
-
-// managerDumpLimit bounds the "mgr dump" output that is decoded. The dump
-// holds every module's option descriptions, a few hundred KB.
-const managerDumpLimit = 4 << 20
 
 // Query is the outcome of one bounded read.
 type Query struct {
@@ -100,9 +95,10 @@ type Registration struct {
 	GID  uint64 `json:"gid"`
 }
 
-// ManagerMap holds the selected fields of one "mgr dump". Observer's
-// ManagerStatus has no epoch, and the epoch is what tells two reads of the
-// same map from two maps, so the recipes read the native dump.
+// ManagerMap holds the selected fields of one MgrMap, as one
+// Observer.ManagerStatus read reports them. The epoch is what tells two reads
+// of the same map from two maps, and it comes from the same map as the
+// registrations.
 type ManagerMap struct {
 	Query     Query          `json:"query"`
 	Epoch     uint64         `json:"epoch,omitempty"`
@@ -141,54 +137,37 @@ func (m ManagerMap) names() []string {
 	return names
 }
 
-// decodeManagerMap decodes the selected fields of "mgr dump" output. Output
-// without them, an empty one included, is missing, never an empty map.
-func decodeManagerMap(data []byte) (ManagerMap, error) {
-	if len(data) > managerDumpLimit {
-		return ManagerMap{}, errOversized
-	}
-	if len(bytes.TrimSpace(data)) == 0 {
-		return ManagerMap{}, errMissing
-	}
-	var native struct {
-		Epoch      *uint64 `json:"epoch"`
-		Available  *bool   `json:"available"`
-		ActiveName *string `json:"active_name"`
-		ActiveGID  *uint64 `json:"active_gid"`
-		Standbys   *[]struct {
-			Name *string `json:"name"`
-			GID  *uint64 `json:"gid"`
-		} `json:"standbys"`
-	}
-	if err := json.Unmarshal(data, &native); err != nil {
-		return ManagerMap{}, err
-	}
-	if native.Epoch == nil || native.Available == nil || native.ActiveName == nil || native.ActiveGID == nil || native.Standbys == nil {
-		return ManagerMap{}, errMissing
-	}
-	observed := ManagerMap{Query: Query{Name: "mgr dump", Status: StatusComplete}, Epoch: *native.Epoch, Available: *native.Available,
-		Active: Registration{Name: *native.ActiveName, GID: *native.ActiveGID}, Standbys: []Registration{}}
-	if (observed.Active.Name == "") != (observed.Active.GID == 0) {
-		return ManagerMap{}, fmt.Errorf("%w: active %q with GID %d", errMalformed, observed.Active.Name, observed.Active.GID)
-	}
-	for _, standby := range *native.Standbys {
-		if standby.Name == nil || standby.GID == nil || *standby.Name == "" || *standby.GID == 0 {
-			return ManagerMap{}, fmt.Errorf("%w: a standby without its name or GID", errMalformed)
-		}
-		observed.Standbys = append(observed.Standbys, Registration{Name: *standby.Name, GID: *standby.GID})
+// managerMapOf selects the fields of one ManagerStatus read, which refuses a
+// map without its epoch, availability, active manager or standbys.
+func managerMapOf(status ceph.ManagerStatus) ManagerMap {
+	observed := ManagerMap{Query: Query{Name: "mgr dump", Status: StatusComplete}, Epoch: status.Epoch, Available: status.Available,
+		Active: Registration{Name: status.ActiveName, GID: status.ActiveGID}, Standbys: []Registration{}}
+	for _, standby := range status.Standbys {
+		observed.Standbys = append(observed.Standbys, Registration{Name: standby.Name, GID: standby.GID})
 	}
 	slices.SortFunc(observed.Standbys, func(a, b Registration) int { return strings.Compare(a.Name, b.Name) })
-	return observed, nil
+	return observed
+}
+
+// readManagerStatus reads one MgrMap through Observer.ManagerStatus.
+func readManagerStatus(ctx context.Context, cluster *ceph.Container) (ManagerMap, error) {
+	observer, err := ceph.Observe(cluster)
+	if err != nil {
+		return ManagerMap{}, err
+	}
+	status, err := observer.ManagerStatus(ctx)
+	if err != nil {
+		return ManagerMap{}, err
+	}
+	return managerMapOf(status), nil
 }
 
 // readManagerMap reads one MgrMap within bound.
 func readManagerMap(ctx context.Context, cluster *ceph.Container, bound time.Duration) ManagerMap {
 	var observed ManagerMap
 	query := bounded(ctx, bound, "mgr dump", func(ctx context.Context) error {
-		data, err := cluster.Ceph(ctx, "mgr", "dump", "--format", "json")
-		if err == nil {
-			observed, err = decodeManagerMap(data)
-		}
+		var err error
+		observed, err = readManagerStatus(ctx, cluster)
 		return err
 	})
 	if !query.Complete() {
