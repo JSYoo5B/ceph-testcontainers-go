@@ -87,7 +87,10 @@ The engine is the one testcontainers selects for this process, through the
 testcontainers configuration, `DOCKER_HOST` or the Docker context.
 testcontainers caches that selection for the process, so a fixture started
 next uses the same engine, and an engine it found unreachable stays
-unreachable for the process. Every `Observe` reads the engine again.
+unreachable for the process. The engine is `unavailable` only when every
+candidate endpoint failed to connect. An endpoint that answered with an
+error, a selection that found no candidate and a runtime provider that
+failed are `unknown`, with an error. Every `Observe` reads the engine again.
 
 ## Changing the engine
 

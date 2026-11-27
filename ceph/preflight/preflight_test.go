@@ -310,12 +310,14 @@ func TestUnreachableEngineIsUnavailable(t *testing.T) {
 	}
 }
 
-func TestEngineSelectionFailureIsUnavailable(t *testing.T) {
+// A selection failure that is not a typed connection failure proves
+// nothing, even when its text reads like one.
+func TestEngineSelectionFailureIsUnknown(t *testing.T) {
 	c := checker{engine: func(context.Context) (engineClient, error) {
 		return nil, errors.New(`check host "unix:///home/secret-user/docker.sock": connection refused`)
 	}}
 	report, err := c.check(t.Context(), Request{Capabilities: both})
-	if err != nil || report.Verdict(Engine) != Unavailable || report.Verdict(BlockIOEIO) != Unavailable {
+	if !errors.Is(err, ceph.ErrEnvironmentUnavailable) || report.Verdict(Engine) != Unknown || report.Verdict(BlockIOEIO) != Unknown {
 		t.Fatalf("%v\n%s", err, report)
 	}
 	requireShareable(t, report, err)
@@ -368,7 +370,10 @@ func TestRequestValidation(t *testing.T) {
 		"image without blockio":  {Level: Helper, HelperImage: "helper:v1"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			c := checker{engine: func(context.Context) (engineClient, error) { t.Fatal("an invalid request reached the engine"); return nil, nil }}
+			c := checker{engine: func(context.Context) (engineClient, error) {
+				t.Fatal("an invalid request reached the engine")
+				return nil, nil
+			}}
 			report, err := c.check(t.Context(), request)
 			if report != nil || !errors.Is(err, ceph.ErrInvalidRequest) {
 				t.Fatalf("%v %v", report, err)
@@ -430,5 +435,37 @@ func TestVerdictKeepsUnavailableAndUnknownApart(t *testing.T) {
 	}
 	if (*Report)(nil).Verdict(Engine) != NotRun {
 		t.Fatal("nil report")
+	}
+}
+
+// Only a selection whose every candidate failed to connect proves the
+// engine unreachable; one candidate that answered keeps it inconclusive.
+func TestOnlyConnectionFailures(t *testing.T) {
+	docker, err := client.New(client.WithHost("unix:///nonexistent/secret-host.example.internal/docker.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, refused := docker.Info(t.Context(), client.InfoOptions{})
+	if !client.IsErrConnectionFailed(refused) {
+		t.Fatalf("not a connection failure: %v", refused)
+	}
+	answered := errors.New("Error response from daemon: 500")
+	candidate := func(err error) error { return fmt.Errorf("check host: docker info: %w", err) }
+	for name, tc := range map[string]struct {
+		err  error
+		want bool
+	}{
+		"one refused":           {candidate(refused), true},
+		"all refused":           {errors.Join(candidate(refused), candidate(refused)), true},
+		"refused and answered":  {errors.Join(candidate(refused), candidate(answered)), false},
+		"answered":              {candidate(answered), false},
+		"wrapped join":          {fmt.Errorf("connect: %w", errors.Join(candidate(refused), candidate(answered))), false},
+		"wrapped refused joins": {fmt.Errorf("connect: %w", errors.Join(candidate(refused), candidate(refused))), true},
+		"empty join":            {errors.Join(), false},
+		"no candidate":          {errors.New("socket not found"), false},
+	} {
+		if got := onlyConnectionFailures(tc.err); got != tc.want {
+			t.Errorf("%s: %t, want %t", name, got, tc.want)
+		}
 	}
 }

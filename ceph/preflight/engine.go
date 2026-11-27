@@ -99,11 +99,17 @@ func (c checker) inspect(ctx context.Context, report *Report) (engineClient, boo
 	case ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
 		report.set(keyEngine, Unknown, "", "engine-info", "the engine selection was interrupted", engineGuidance)
 		return nil, false, cause(ctx, err, ceph.ErrEnvironmentUnavailable, "select the engine")
-	default:
-		// testcontainers pings each candidate endpoint and caches the result
-		// for the process, so a fixture started next fails the same way.
+	case onlyConnectionFailures(err):
+		// testcontainers reads the information of each candidate endpoint
+		// and caches the result for the process, so a fixture started next
+		// fails the same way.
 		report.set(keyEngine, Unavailable, EnvironmentKind, "engine-info", "testcontainers found no reachable engine", engineGuidance)
 		return nil, false, nil
+	default:
+		// A candidate answered with an error, no candidate was found, or the
+		// runtime provider failed: nothing proves the engine unreachable.
+		report.set(keyEngine, Unknown, "", "engine-info", "testcontainers could not select an engine", engineGuidance)
+		return nil, false, cause(ctx, err, ceph.ErrEnvironmentUnavailable, "select the engine")
 	}
 	report.Engine.Transport = transport(engine.DaemonHost())
 	info, err := engine.Info(ctx)
@@ -119,6 +125,42 @@ func (c checker) inspect(ctx context.Context, report *Report) (engineClient, boo
 	report.Engine = facts(info, report.Engine.Transport)
 	report.set(keyEngine, Observed, "", "engine-info", "", "")
 	return engine, true, nil
+}
+
+// onlyConnectionFailures reports whether every failure that err joins is a
+// failed connection to an engine. testcontainers wraps the failure of each
+// candidate endpoint and joins them, so one candidate that answered with an
+// error keeps the selection inconclusive.
+func onlyConnectionFailures(err error) bool {
+	switch e := err.(type) {
+	case nil:
+		return false
+	case interface{ Unwrap() []error }:
+		children := e.Unwrap()
+		if len(children) == 0 {
+			return false
+		}
+		for _, child := range children {
+			if !onlyConnectionFailures(child) {
+				return false
+			}
+		}
+		return true
+	}
+	if inner := errors.Unwrap(err); inner != nil && joins(inner) {
+		return onlyConnectionFailures(inner)
+	}
+	return client.IsErrConnectionFailed(err)
+}
+
+// joins reports whether err or an error it wraps joins several errors.
+func joins(err error) bool {
+	for ; err != nil; err = errors.Unwrap(err) {
+		if _, ok := err.(interface{ Unwrap() []error }); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // transport keeps only the scheme of an engine endpoint.
