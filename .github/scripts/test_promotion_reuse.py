@@ -8,7 +8,6 @@ import os
 import re
 from pathlib import Path
 import subprocess
-import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -16,6 +15,7 @@ import zipfile
 
 import git_flow as flow
 import promotion_reuse as reuse
+import scenario_history
 
 REPO = flow.REPO
 BASE, HEAD, TEST, MERGE, TREE = "a" * 40, "b" * 40, "c" * 40, "d" * 40, "e" * 40
@@ -342,11 +342,6 @@ class QualifyTests(unittest.TestCase):
     def test_the_row_digest_is_the_history_tools(self):
         """An evidence row is checked with the hash that the history tool
         gave it."""
-        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / ".github" / "scripts"))
-        try:
-            import scenario_history
-        finally:
-            sys.path.pop(0)
         row = Facts.entry(4, retried=True)["row"]
         self.assertEqual(reuse.row_digest(row), scenario_history.row_hash(row))
         self.assertEqual(scenario_history.SCHEMA, reuse.ROW_SCHEMA)

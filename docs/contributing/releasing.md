@@ -225,6 +225,9 @@ Before a separately authorized publication:
   the Go module proxy resolves that tag and that an external integration
   module builds with it. Do not claim published-tag consumption before this
   succeeds.
+- After publishing a tag from `main`, merge `main` into `develop` by PR, as
+  the [branch flow](git-flow.md#publish-the-checked-commit) describes, so
+  that the tag is an ancestor of ongoing development.
 - Remove a consumer's test-only `replace`/workspace wiring and validate the
   published dependency in that consumer. Consumer migration and actual
   client execution remain owned by the consumer project.

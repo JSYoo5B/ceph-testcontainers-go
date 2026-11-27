@@ -74,7 +74,16 @@ def checks(names, *, strict=False):
 
 
 def candidate(branch):
-    return ruleset(PREFIX + branch, "branch", ["refs/heads/" + branch], [checks([gate(branch)], strict=True)])
+    """Require the branch's own release candidate result.
+
+    A release or support line also requires an up-to-date head: its pull
+    requests are the line's update from develop or a patch, and the matrix
+    must qualify the line as it would be merged. main does not. Each
+    promotion leaves a merge commit that only main has, so the next
+    promotion is never up to date, and the push validation of the actual
+    merge already compares it with the commit the promotion tested."""
+    return ruleset(PREFIX + branch, "branch", ["refs/heads/" + branch],
+                   [checks([gate(branch)], strict=branch != "main")])
 
 
 def requested():
@@ -338,7 +347,7 @@ def cutover_ready(pr_number, branches):
     sha = pr["merge_commit_sha"]
     require(pr["merged"] and pr["base"]["ref"] == "main" and sha == branches["main"],
             "cutover requires the merged policy PR at the current main tip")
-    script = "scripts/release/git_flow.py"
+    script = ".github/scripts/git_flow.py"
     files = api(f"pulls/{pr_number}/files?per_page=100", pages=True)
     require(any(f["filename"] == script for f in files), "the PR did not deliver the cutover tool")
     merged = api(f"contents/{script}?ref={sha}")

@@ -167,7 +167,7 @@ The local commands for these jobs are in
 | --- | --- | --- |
 | Unit tests | 15 min | `make test` |
 | Race detector | 15 min | `make race` |
-| Vet, compile and CI tooling | 25 min | `make vet`, golangci-lint, `make tag-compile`, the Python tests in `.github/scripts` (`test_*.py`), actionlint and the go-ceph harness test |
+| Vet, compile and CI tooling | 25 min | `make vet`, golangci-lint, `make tag-compile`, the Python tests in `.github/scripts` and `scripts/desktop` (`test_*.py`), actionlint and the go-ceph harness test |
 | Compiled tag coverage and helpers | 25 min | `tag_scenarios.py plan --verify`, then `tag_scenarios.py code` (the Docker-free `code` batch); uploads `code-tag-coverage` |
 | Vulnerability check (Go 1.26.x and 1.27.x) | 20 min | `make vulncheck`; uploads `vulncheck-go-<version>` |
 
@@ -611,7 +611,7 @@ The rule is the ruleset `Git Flow / requested CI`, which requires the
 context from GitHub Actions on `main`, `develop` and every release and
 support line. Those are the branches whose pull requests start Code checks,
 and that request is what makes the gate publish the status on a new head.
-The ruleset is optional: `scripts/release/git_flow.py` creates it only when
+The ruleset is optional: `.github/scripts/git_flow.py` creates it only when
 asked, beside the other rulesets and without changing them, and `verify`
 checks it only where it is installed. Until then the status is advisory and
 step 5 of the reviewer steps is the reviewer's.
@@ -630,15 +630,15 @@ event will bring. Install it in this order:
    maintained branch whose head has no status yet:
 
    ```sh
-   python3 scripts/release/git_flow.py plan --requested-ci
+   python3 .github/scripts/git_flow.py plan --requested-ci
    ```
 
 4. Apply and verify. `apply` refuses while the plan still names a pull
    request, and after any drift of the existing rulesets:
 
    ```sh
-   python3 scripts/release/git_flow.py apply --requested-ci
-   python3 scripts/release/git_flow.py verify
+   python3 .github/scripts/git_flow.py apply --requested-ci
+   python3 .github/scripts/git_flow.py verify
    ```
 
 After that, a pull request opened or pushed later gets the status from the
@@ -1105,6 +1105,10 @@ ordinary development PR changes this matrix. The target-specific check (for exam
 `Release candidate validated (release/1.2)`) gives each branch rule a single
 result for its own complete matrix. A manual dispatch emits a different
 check name. The six Code checks also apply to each candidate.
+A release or support line requires that result on an up-to-date head;
+`main` does not, because each promotion leaves a merge commit that only
+`main` has, and the push validation of the actual merge checks it against
+the tested commit instead ([branch rules](git-flow.md)).
 
 For publication, verify the push event, protected branch, candidate SHA,
 workflow identity and successful required jobs. A PR test-merge run
@@ -1142,7 +1146,7 @@ promotion run already qualifies the pushed commit:
    result stays as it is; the failed job says before the merge that the
    push will run the full matrix.
 3. On a push to `main`, `Promotion reuse` runs
-   `scripts/release/promotion_reuse.py verify` and writes
+   `.github/scripts/promotion_reuse.py verify` and writes
    `promotion-reuse-receipt-<attempt>` with its decision and, on a reuse, its
    own copy of the evidence file.
 
