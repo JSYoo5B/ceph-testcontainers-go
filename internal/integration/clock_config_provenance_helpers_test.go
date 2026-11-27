@@ -143,8 +143,12 @@ type clockFileIdentity struct {
 }
 
 // clockOwnedFile is the controller's record of the file it created for one
-// target. ExpectedText is the text the controller last wrote.
+// target. ExpectedText is the text the controller last wrote. Namespace names
+// the mount namespace that Path resolves in, such as the container that holds
+// the file and runs the target; empty is the controller's own. A path alone
+// does not name a file once targets run in separate containers.
 type clockOwnedFile struct {
+	Namespace    string
 	Path         string
 	Identity     clockFileIdentity
 	ExpectedText string
