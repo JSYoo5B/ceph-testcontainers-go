@@ -78,3 +78,9 @@ func TestPartialClusterDiagnostics(t *testing.T) {
 func TestDaemonProcessLog(t *testing.T) {
 	testDaemonProcessLog(t)
 }
+
+// TestManagerReclaimRefusal attributes a MON's refused global_id reclaim to
+// the MGR whose MgrMap GID it names.
+func TestManagerReclaimRefusal(t *testing.T) {
+	testManagerReclaimRefusal(t)
+}

@@ -103,7 +103,9 @@ drops out of the MgrMap. Compare global IDs, not entity names.
 that each owned MON logged for its entity since that process started (the
 three refused reclaims with their global ID, and `unexpected key`, which
 names none). Each source has a status; only `complete` shows that a refusal it
-does not list was not logged. A MGR that respawns, after `mgr fail` for
+does not list was not logged. A MGR on Squid logs its MonClient refusal only at
+debug level 10, so its own side stays empty at the default level; the MON side
+still names the global IDs. A MGR that respawns, after `mgr fail` for
 example, can be refused before its new process logs its start line, so the
 process starts at the `respawn  exe_path` line of the one it replaced; a
 scan for the last `ceph version` line attributes that refusal to the
