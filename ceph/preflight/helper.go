@@ -78,8 +78,8 @@ func (h *dockerHelper) Terminate(ctx context.Context) error {
 
 const (
 	toolsGuidance   = "use a helper image that meets contract 1 of the blockio extension, such as blockio.HelperImage"
-	kernelGuidance  = "make the engine kernel provide loop devices and device-mapper; on Docker Desktop see Prepare the engine kernel in docs/guides/desktop-setup.md"
-	targetGuidance  = "register the device-mapper %s target in the engine kernel (feature %s in docs/guides/desktop-setup.md); the library loads no kernel module"
+	kernelGuidance  = "make the engine kernel provide loop devices and device-mapper; on Docker Desktop, prepare the engine kernel as the desktop setup guide of this module describes"
+	targetGuidance  = "register the device-mapper %s target in the engine kernel (kernel feature %s of the desktop setup guide); the library loads no kernel module"
 	refusedGuidance = "allow privileged containers with the engine host's /dev on this engine; rootless engines and authorization plugins can refuse them"
 )
 
