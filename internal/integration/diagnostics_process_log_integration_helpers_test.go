@@ -5,6 +5,7 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -18,8 +19,9 @@ import (
 // testDaemonProcessLog runs one MON and one MGR. It reads the MGR's process
 // log and refusals while it is healthy, with a bound smaller than the
 // process's log, after a container restart, and after the MONs' key of the
-// MGR was replaced and the MGR was failed, so that it respawns in its
-// container and authenticates with the key it still holds.
+// MGR was replaced and the MGR was failed. The MGR then authenticates with
+// the key it still holds, from a respawned process or from the running one,
+// depending on the release.
 func testDaemonProcessLog(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
@@ -91,6 +93,7 @@ func testDaemonProcessLog(t *testing.T) {
 	if err := json.Unmarshal(data, &entries); err != nil || len(entries) != 1 || len(entries[0].Caps) == 0 {
 		t.Fatalf("auth get mgr.a = %s, %v", data, err)
 	}
+	replaced := time.Now()
 	if _, err := cluster.Ceph(ctx, "auth", "rm", "mgr.a"); err != nil {
 		t.Fatal(err)
 	}
@@ -101,40 +104,61 @@ func testDaemonProcessLog(t *testing.T) {
 	if _, err := cluster.Ceph(ctx, add...); err != nil {
 		t.Fatal(err)
 	}
-	failed := time.Now()
 	if _, err := cluster.Ceph(ctx, "mgr", "fail", "a"); err != nil {
 		t.Fatal(err)
 	}
-	var refused *diagnostics.ManagerRefusals
-	deadline := time.Now().Add(2 * time.Minute)
-	for {
-		refused = refusals("refused key")
-		if refused.Manager.Status == diagnostics.LogComplete && refused.Start.Time.After(failed.Add(-time.Second)) && len(refused.Refusals) > 0 &&
-			len(refused.Monitors) == 1 && refused.Monitors[0].Status == diagnostics.LogComplete && len(refused.Monitors[0].Refusals) > 0 {
-			break
-		}
-		if time.Now().After(deadline) {
-			log := read("refused key process log", diagnostics.LogConfig{})
-			for _, line := range log.Lines {
-				t.Log(line.Time.Format(time.RFC3339Nano), line.Text)
-			}
-			t.Fatal("no attributed refusal of the respawned MGR")
-		}
-		time.Sleep(2 * time.Second)
+	// A MON refuses the MGR's old key either after "mgr fail" made it respawn
+	// (Tentacle) or right away, when the running process authenticates again
+	// (Squid). Either way the refusal lies in the MGR's latest process.
+	refusedAfter := func(result *diagnostics.ManagerRefusals) bool {
+		return len(result.Monitors) == 1 && result.Monitors[0].Status == diagnostics.LogComplete &&
+			slices.ContainsFunc(result.Monitors[0].Refusals, func(r diagnostics.MonitorRefusal) bool { return !r.Line.Time.Before(replaced) })
 	}
-	if !refused.Manager.ContainerStartedAt.Equal(restarted.ContainerStartedAt) || !refused.Start.Time.After(restarted.Start.Time) {
-		for _, line := range read("refused key process log", diagnostics.LogConfig{}).Lines {
-			t.Log(line.Time.Format(time.RFC3339Nano), line.Text)
-		}
-		t.Fatalf("the respawn is not a new process in the same container run: %+v start %+v, before %+v", refused.Manager, refused.Start, restarted.LogSource)
+	refused := awaitRefusals(t, "refused key", refusals, read, func(result *diagnostics.ManagerRefusals) bool {
+		return result.Manager.Status == diagnostics.LogComplete && refusedAfter(result)
+	})
+	if !refused.Manager.ContainerStartedAt.Equal(restarted.ContainerStartedAt) || refused.Start.Time.Before(restarted.Start.Time) {
+		t.Fatalf("the refused process is not in the restarted container run: %+v start %+v, before %+v", refused.Manager, refused.Start, restarted.LogSource)
+	}
+	respawned := refused.Start != restarted.Start
+	if respawned {
+		// The respawned process logs its refusal as it is refused.
+		refused = awaitRefusals(t, "refused respawn", refusals, read, func(result *diagnostics.ManagerRefusals) bool {
+			return result.Manager.Status == diagnostics.LogComplete && result.Start == refused.Start && len(result.Refusals) > 0 && refusedAfter(result)
+		})
 	}
 	for _, refusal := range refused.Monitors[0].Refusals {
 		if refusal.Reason != "unexpected key" || refusal.Line.Time.Before(refused.Start.Time) {
-			t.Fatalf("MON refusal = %+v", refusal)
+			t.Fatalf("MON refusal = %+v outside the process from %+v", refusal, refused.Start)
 		}
 	}
-	t.Logf("native process log: restart %s -> %s, respawn start %s, %d MGR refusals, %d MON refusals", healthy.ContainerStartedAt.Format(time.RFC3339Nano),
-		restarted.ContainerStartedAt.Format(time.RFC3339Nano), refused.Start.Time.Format(time.RFC3339Nano), len(refused.Refusals), len(refused.Monitors[0].Refusals))
+	for _, line := range refused.Refusals {
+		if line.Time.Before(refused.Start.Time) {
+			t.Fatalf("MGR refusal %+v before its process start %+v", line, refused.Start)
+		}
+	}
+	t.Logf("native process log: restart %s -> %s, refused process from %s (respawned %t), %d MGR refusals, %d MON refusals", healthy.ContainerStartedAt.Format(time.RFC3339Nano),
+		restarted.ContainerStartedAt.Format(time.RFC3339Nano), refused.Start.Time.Format(time.RFC3339Nano), respawned, len(refused.Refusals), len(refused.Monitors[0].Refusals))
+}
+
+// awaitRefusals reads until accept takes a read or two minutes pass, and
+// logs the MGR's process log when none does.
+func awaitRefusals(t *testing.T, what string, read func(string) *diagnostics.ManagerRefusals, processLog func(string, diagnostics.LogConfig) *diagnostics.ProcessLog, accept func(*diagnostics.ManagerRefusals) bool) *diagnostics.ManagerRefusals {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Minute)
+	for {
+		result := read(what)
+		if accept(result) {
+			return result
+		}
+		if time.Now().After(deadline) {
+			for _, line := range processLog(what+" process log", diagnostics.LogConfig{}).Lines {
+				t.Log(line.Time.Format(time.RFC3339Nano), line.Text)
+			}
+			t.Fatalf("%s: no accepted read", what)
+		}
+		time.Sleep(2 * time.Second)
+	}
 }
 
 // awaitProcessLog reads until accept takes a read or a minute passes.
