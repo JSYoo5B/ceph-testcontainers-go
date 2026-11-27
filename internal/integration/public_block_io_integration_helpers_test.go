@@ -20,14 +20,22 @@ import (
 
 var errBlockIORecoveryRead = errors.New("recovery read did not return acknowledged bytes")
 
+// blockIOHelperImage is the published helper, or the contract-1 helper that
+// CEPH_TEST_BLOCKIO_HELPER_IMAGE selects instead.
+func blockIOHelperImage(t *testing.T) string {
+	t.Helper()
+	image := os.Getenv("CEPH_TEST_BLOCKIO_HELPER_IMAGE")
+	if image == "" {
+		image = blockio.HelperImage
+	}
+	t.Logf("blockio helper: %s", image)
+	return image
+}
+
 func testBlockIOMainDeviceRecovery(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 18*time.Minute)
 	defer cancel()
-	helper := os.Getenv("CEPH_TEST_BLOCKIO_HELPER_IMAGE")
-	if helper == "" {
-		t.Fatal("CEPH_TEST_BLOCKIO_HELPER_IMAGE is required for this selected native batch")
-	}
-	backend, err := blockio.Run(ctx, helper, blockio.WithConfig(blockio.Config{Size: 1 << 30}))
+	backend, err := blockio.Run(ctx, blockIOHelperImage(t), blockio.WithConfig(blockio.Config{Size: 1 << 30}))
 	if backend != nil {
 		// Register the backend first, so the cluster is cleaned up first.
 		testcontainers.CleanupContainer(t, backend)
