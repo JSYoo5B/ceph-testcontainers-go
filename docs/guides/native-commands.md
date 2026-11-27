@@ -831,7 +831,8 @@ refuse to overwrite outside edits.
   `ControlContainer`, `ClientContainer`, `WithClient`, `CreateClient`,
   `ConnectionConfig`.
 - [`diagnostics`](../../ceph/diagnostics/README.md): `Collect`,
-  `CollectCrashMetadata`, `Redact`.
+  `CollectCrashMetadata`, `CollectProcessLog`, `CollectManagerRefusals`,
+  `Redact`.
 - [`finalize`](../../ceph/finalize/README.md): `TerminateOnCleanup`, which writes
   both reports into a failure archive.
 - [`override`](../../override/README.md): `SetConfig` and the other restorable

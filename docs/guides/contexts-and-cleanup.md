@@ -676,7 +676,8 @@ func TestSomething(t *testing.T) {
 - [`ceph`](../../ceph/README.md): `Run`, `Terminate`, `WithStartupTimeout`,
   `RunNativeCommand`, context-aware getters.
 - [`diagnostics`](../../ceph/diagnostics/README.md): `Collect`,
-  `CollectCrashMetadata`, `Redact`.
+  `CollectCrashMetadata`, `CollectProcessLog`, `CollectManagerRefusals`,
+  `Redact`.
 - [`finalize`](../../ceph/finalize/README.md): `TerminateOnCleanup` and the
   `Finalization` checks, cleanups and failure archive.
 - [`override`](../../override/README.md): the override calls and their

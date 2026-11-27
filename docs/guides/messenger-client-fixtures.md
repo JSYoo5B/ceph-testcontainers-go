@@ -96,9 +96,19 @@ A `(13) Permission denied` line in a MGR's log therefore does not say which
 client was refused. The registered MGR has lost its MON session only when an
 owned MON logs `attempt to reclaim global_id <N> using bad ticket` (or another
 refusal naming the global ID) for N equal to the MgrMap GID, and the MGR then
-drops out of the MgrMap. The MON logs are each MON container's output;
-`diagnostics.Collect` keeps a bounded tail. Compare global IDs, not entity
-names.
+drops out of the MgrMap. Compare global IDs, not entity names.
+
+`diagnostics.CollectManagerRefusals` reads both sides for one MGR handle: the
+`(13) Permission denied` lines of the MGR's latest process and the refusals
+that each owned MON logged for its entity since that process started (the
+three refused reclaims with their global ID, and `unexpected key`, which
+names none). Each source has a status; only `complete` shows that a refusal it
+does not list was not logged. A MGR that respawns, after `mgr fail` for
+example, can be refused before its new process logs its start line, so the
+process starts at the `respawn  exe_path` line of the one it replaced; a
+scan for the last `ceph version` line attributes that refusal to the
+replaced process. `diagnostics.Collect` keeps only a bounded log tail, and
+`diagnostics.CollectProcessLog` reads a whole process log of any daemon.
 
 ### MGR transition receipt
 
@@ -209,9 +219,9 @@ keeps its own.
 
 | Recipe | Inputs | Public primitives | Not natively observable | The consumer's part |
 | --- | --- | --- | --- | --- |
-| Authentication first-failure bundle (`CollectAuthBundle`) | the rejection as recorded; the FSID, MON names and target MGR name and GID, frozen right after it; provenance | `MonitorContainer.AdminSocket` (`mon_status`, `sessions`), `Observer.QuorumStatus`, `Container.Ceph` (`mgr dump`), `Container.Managers` and the handle's `State`, `Container.RunNativeCommand` in `ControlContainer` (`tell <mgr> version`), `diagnostics.Redact` | which rotating-key generation the issuing MON and the verifying MGR used; `debug_auth` would show it by printing the keys | the request and bundle schema, the budget and bounds, the verdict (target `registered`, `changed`, `absent` or `unavailable`), the secrecy check, that the tested authentication runs once and is never replayed |
-| MGR transition receipt (`RecordTransition`) | the owned MGRs and MONs; the MgrMap and each MGR container's ID and start time, frozen before the stop | `Container.Ceph` (`mgr dump`, for its epoch, which `Observer.ManagerStatus` does not carry), `MonitorContainer.AdminSocket` (`sessions`), the MGR handle's `Stop`, `Start` and `State` | every MgrMap epoch: reads sample, so the receipt keeps the distinct maps it read and counts the epochs between them that no read saw | the acceptance rule of a sample, the deadline, which MGR restarts, the retained samples |
-| Native MGR keyring gate of the short-ticket profile (`CheckGate`) | the owned MGRs and MONs; the consumer's label for the moment, such as before the SUT dials and after its failure | `Container.Ceph` (`mgr dump`), `MonitorContainer.AdminSocket` (`sessions`), the MON container's `Logs` for `attempt to reclaim global_id <N>` refusals, `RunNativeCommand` (`tell <active mgr> version`) | the rotating-secret equality between a MGR and the MONs, for the same reason | when the gate runs, the slot classification, that a stale native MGR or a failed native control makes a SUT failure a fixture error rather than product evidence, and that nothing is restarted to clear the condition |
+| Authentication first-failure bundle (`CollectAuthBundle`) | the rejection as recorded; the FSID, MON names and target MGR name and GID, frozen right after it; provenance | `MonitorContainer.AdminSocket` (`mon_status`, `sessions`), `Observer.QuorumStatus`, `Observer.ManagerStatus`, `Container.Managers` and the handle's `State`, `Container.RunNativeCommand` in `ControlContainer` (`tell <mgr> version`), `diagnostics.Redact` | which rotating-key generation the issuing MON and the verifying MGR used; `debug_auth` would show it by printing the keys | the request and bundle schema, the budget and bounds, the verdict (target `registered`, `changed`, `absent` or `unavailable`), the secrecy check, that the tested authentication runs once and is never replayed |
+| MGR transition receipt (`RecordTransition`) | the owned MGRs and MONs; the MgrMap and each MGR container's ID and start time, frozen before the stop | `Observer.ManagerStatus` (its epoch comes from the same MgrMap as the registrations), `MonitorContainer.AdminSocket` (`sessions`), the MGR handle's `Stop`, `Start` and `State` | every MgrMap epoch: reads sample, so the receipt keeps the distinct maps it read and counts the epochs between them that no read saw | the acceptance rule of a sample, the deadline, which MGR restarts, the retained samples |
+| Native MGR keyring gate of the short-ticket profile (`CheckGate`) | the owned MGRs and MONs; the consumer's label for the moment, such as before the SUT dials and after its failure | `Observer.ManagerStatus`, `MonitorContainer.AdminSocket` (`sessions`), `diagnostics.CollectManagerRefusals` for each owned MGR (`attempt to reclaim global_id <N>` refusals since its latest process started), `RunNativeCommand` (`tell <active mgr> version`) | the rotating-secret equality between a MGR and the MONs, for the same reason | when the gate runs, the slot classification, that a stale native MGR or a failed native control makes a SUT failure a fixture error rather than product evidence, and that nothing is restarted to clear the condition |
 
 Each read in these recipes has its own bound, records its status and is not
 retried; a read that does not complete is never an observed absence. A
