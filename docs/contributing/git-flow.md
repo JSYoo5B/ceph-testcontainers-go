@@ -20,13 +20,13 @@ Run the commands from this repository with an authenticated `gh`. Planning reads
 3. From the merged checkout, run the plan and then substitute the merged policy PR number in the apply command.
 
    ```sh
-   python3 scripts/release/git_flow.py plan
-   python3 scripts/release/git_flow.py apply --policy-pr <number>
-   python3 scripts/release/git_flow.py verify
+   python3 .github/scripts/git_flow.py plan
+   python3 .github/scripts/git_flow.py apply --policy-pr <number>
+   python3 .github/scripts/git_flow.py verify
    ```
 
    The tool adds its own rulesets, leaves the existing history and main rulesets in place, prohibits creation of unregistered release/support lines, and seeds `develop` at the policy merge. The catch-all maintained-branch rule blocks force pushes and deletion. The tag rule blocks updates and deletion of `v*` tags. It permits creation of a new release tag. Verify reads back active repository rulesets and each maintained branch's effective rules, including the unregistered-line creation guard. GitHub exposes effective rules for branch names; tag protection is checked through the active tag ruleset's target, exact pattern, rules and empty bypass list.
-4. List in-flight PRs with `gh pr list --state open --base main`. Retarget development work individually with `gh pr edit <number> --base develop`. Keep only intentional production promotions on main. Recheck the diff, review and required runs at the new base. A base edit alone may not trigger every workflow. Reopen the PR or push its reviewed update to obtain the new target's checks before merging. Verify the effective rules on both branches and the scheduled workflows, CI command and structural publisher on protected `develop`. Switch the GitHub default with `gh repo edit --default-branch develop` and confirm with `gh repo view --json defaultBranchRef` and `python3 scripts/release/git_flow.py verify`. New ordinary PRs then target `develop` by default. Release promotions explicitly select `--base main`. Existing clones can refresh their remote HEAD with `git remote set-head origin -a`.
+4. List in-flight PRs with `gh pr list --state open --base main`. Retarget development work individually with `gh pr edit <number> --base develop`. Keep only intentional production promotions on main. Recheck the diff, review and required runs at the new base. A base edit alone may not trigger every workflow. Reopen the PR or push its reviewed update to obtain the new target's checks before merging. Verify the effective rules on both branches and the scheduled workflows, CI command and structural publisher on protected `develop`. Switch the GitHub default with `gh repo edit --default-branch develop` and confirm with `gh repo view --json defaultBranchRef` and `python3 .github/scripts/git_flow.py verify`. New ordinary PRs then target `develop` by default. Release promotions explicitly select `--base main`. Existing clones can refresh their remote HEAD with `git remote set-head origin -a`.
 
 If an API write fails, rerun the same command after checking its plan and the live refs. Equal rulesets and matching branch seeds are reused. A registration retry checks the existing ref against the requested seed, including after the creation guard has been updated. Use `verify` for routine rules checks after a branch advances. A conflicting ruleset, existing ref at another SHA, or unexpected managed line requires reconciliation. The tool never resets a branch, rewrites the original main or history rulesets, publishes a tag, or retargets a PR.
 
@@ -35,9 +35,9 @@ If an API write fails, rerun the same command after checking its plan and the li
 To freeze a feature line, use `plan` and `apply` with the same line and source, then run `verify`. The plan shows the current seed SHA. Pass this exact SHA to apply with `--at`. A changed source requires a new plan. A line's exact candidate rule is installed and inspected before its name is released from the wildcard creation guard. Unregistered names remain reserved.
 
 ```sh
-python3 scripts/release/git_flow.py plan --line release/1.1 --from develop
-python3 scripts/release/git_flow.py apply --line release/1.1 --from develop --at <planned-seed-sha>
-python3 scripts/release/git_flow.py verify
+python3 .github/scripts/git_flow.py plan --line release/1.1 --from develop
+python3 .github/scripts/git_flow.py apply --line release/1.1 --from develop --at <planned-seed-sha>
+python3 .github/scripts/git_flow.py verify
 ```
 
 Ordinary fixes land on `develop` with their regression coverage. The maintainer checks the [maintained line](releasing.md#maintained-line-and-patches), the latest published stable one, and any active stabilization line against the original defect. For each affected target, branch from its tip, cherry-pick the fix and tests with `git cherry-pick -x <fix-commit>`, adapt them as needed, and open a PR against that target. Record the source PR, target PRs and the reason for skipping unaffected lines. Skip fixes already present. Features and API removals stay on the development path under the [compatibility policy](releasing.md#stable-versions-and-public-apis).
@@ -53,7 +53,7 @@ When the next feature release becomes production, the preceding line stops recei
 Use merge commits for maintained-branch PRs so the promoted branch remains in history. A publication PR's test merge, its head, and the actual production or support merge can have different SHAs. Freeze the **post-merge** SHA on the publishing branch and qualify that exact SHA via its own push workflows. Its Code checks always run on it. Its Release matrix push run either executes the full matrix or, on `main`, [reuses the promotion PR's run](ci.md#promotion-reuse) when the test merge and the protected merge have the same tree and parents. The read-only evidence command requires that the SHA is still the branch tip, confirms the workflow path, push event, branch, commit, run and attempt, and checks the successful named jobs on that attempt. For `main` it also reports which of the two qualified the commit, and for a reuse it verifies the promotion run, its candidate receipt, the preserved job records and the tested commit again from the repository, requires the publication run's own copy of those records to be the file that qualified it, and prints the source run, the tested commit, the number of job records and the number of first failures that a retry passed. Review native artifacts and earlier failed attempts as described in [Preparing a release](releasing.md).
 
 ```sh
-python3 scripts/release/git_flow.py evidence --branch main --sha <full-production-merge-sha>
+python3 .github/scripts/git_flow.py evidence --branch main --sha <full-production-merge-sha>
 # For an approved patch on an earlier line use --branch support/X.Y and its actual merge SHA.
 ```
 

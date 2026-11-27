@@ -97,7 +97,7 @@ jobs:
         id: verify
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/release/promotion_reuse.py verify --coverage artifacts/release-coverage.json --output artifacts/promotion-reuse
+        run: python3 .github/scripts/promotion_reuse.py verify --coverage artifacts/release-coverage.json --output artifacts/promotion-reuse
       # The decision and, on a reuse, this publication's own copy of the job
       # records that qualified it.
       - uses: actions/upload-artifact@v7
@@ -189,7 +189,7 @@ jobs:
       - name: Record the candidate receipt and its evidence
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/release/promotion_reuse.py record --coverage artifacts/coverage/release-coverage.json --output artifacts/release-candidate
+        run: python3 .github/scripts/promotion_reuse.py record --coverage artifacts/coverage/release-coverage.json --output artifacts/release-candidate
       - uses: actions/upload-artifact@v7
         if: always()
         with:

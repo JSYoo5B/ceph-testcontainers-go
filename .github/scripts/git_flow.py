@@ -338,7 +338,7 @@ def cutover_ready(pr_number, branches):
     sha = pr["merge_commit_sha"]
     require(pr["merged"] and pr["base"]["ref"] == "main" and sha == branches["main"],
             "cutover requires the merged policy PR at the current main tip")
-    script = "scripts/release/git_flow.py"
+    script = ".github/scripts/git_flow.py"
     files = api(f"pulls/{pr_number}/files?per_page=100", pages=True)
     require(any(f["filename"] == script for f in files), "the PR did not deliver the cutover tool")
     merged = api(f"contents/{script}?ref={sha}")

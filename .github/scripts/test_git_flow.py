@@ -373,7 +373,7 @@ class RequestedCITests(unittest.TestCase):
 class BootstrapTests(unittest.TestCase):
     def test_requires_policy_merge_at_main_and_exact_delivered_tool(self):
         sha = "a" * 40
-        path = "scripts/release/git_flow.py"
+        path = ".github/scripts/git_flow.py"
         pr = {"merged": True, "base": {"ref": "main"}, "merge_commit_sha": sha}
         content = base64.b64encode(Path(flow.__file__).read_bytes()).decode()
         replies = {"pulls/7": pr, "pulls/7/files?per_page=100": [{"filename": path}],

@@ -569,7 +569,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             self.assertEqual(scalar(header, "if"), "github.event_name == 'push' && (github.ref == 'refs/heads/main' || "
                              "github.ref == 'refs/heads/rehearsal/promotion')")
             self.assertEqual(scalar(header, "reused"), "${{ steps.verify.outputs.reused }}")
-            self.assertIn("python3 scripts/release/promotion_reuse.py verify --coverage artifacts/release-coverage.json "
+            self.assertIn("python3 .github/scripts/promotion_reuse.py verify --coverage artifacts/release-coverage.json "
                           "--output artifacts/promotion-reuse\n", reuse)
             self.assertIn("name: promotion-reuse-receipt-${{ github.run_attempt }}", reuse)
             self.assertEqual(scalar(steps(reuse)[-1], "path"), "artifacts/promotion-reuse/")
@@ -597,7 +597,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             # actions/download-artifact lists, so no step downloads them
             # by pattern.
             self.assertNotIn("pattern:", receipt)
-            self.assertIn("python3 scripts/release/promotion_reuse.py record --coverage artifacts/coverage/release-coverage.json "
+            self.assertIn("python3 .github/scripts/promotion_reuse.py record --coverage artifacts/coverage/release-coverage.json "
                           "--output artifacts/release-candidate\n", receipt)
             upload = steps(receipt)[-1]
             self.assertEqual(scalar(upload, "name"), "release-candidate-receipt-${{ github.run_attempt }}")
@@ -1181,7 +1181,6 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertIn("make vet", jobs["static"])
         self.assertIn("make tag-compile", jobs["static"])
         self.assertIn("python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v", jobs["static"])
-        self.assertIn("python3 -m unittest discover -s scripts/release -p 'test_*.py' -v", jobs["static"])
         self.assertTrue(list((ROOT / ".github/scripts").glob("test_*.py")))
         coverage_steps = steps(jobs["tag-coverage"])
         coverage = shlex.split(run_command(engine_step(coverage_steps, "plan")))

@@ -611,7 +611,7 @@ The rule is the ruleset `Git Flow / requested CI`, which requires the
 context from GitHub Actions on `main`, `develop` and every release and
 support line. Those are the branches whose pull requests start Code checks,
 and that request is what makes the gate publish the status on a new head.
-The ruleset is optional: `scripts/release/git_flow.py` creates it only when
+The ruleset is optional: `.github/scripts/git_flow.py` creates it only when
 asked, beside the other rulesets and without changing them, and `verify`
 checks it only where it is installed. Until then the status is advisory and
 step 5 of the reviewer steps is the reviewer's.
@@ -630,15 +630,15 @@ event will bring. Install it in this order:
    maintained branch whose head has no status yet:
 
    ```sh
-   python3 scripts/release/git_flow.py plan --requested-ci
+   python3 .github/scripts/git_flow.py plan --requested-ci
    ```
 
 4. Apply and verify. `apply` refuses while the plan still names a pull
    request, and after any drift of the existing rulesets:
 
    ```sh
-   python3 scripts/release/git_flow.py apply --requested-ci
-   python3 scripts/release/git_flow.py verify
+   python3 .github/scripts/git_flow.py apply --requested-ci
+   python3 .github/scripts/git_flow.py verify
    ```
 
 After that, a pull request opened or pushed later gets the status from the
@@ -1142,7 +1142,7 @@ promotion run already qualifies the pushed commit:
    result stays as it is; the failed job says before the merge that the
    push will run the full matrix.
 3. On a push to `main`, `Promotion reuse` runs
-   `scripts/release/promotion_reuse.py verify` and writes
+   `.github/scripts/promotion_reuse.py verify` and writes
    `promotion-reuse-receipt-<attempt>` with its decision and, on a reuse, its
    own copy of the evidence file.
 
