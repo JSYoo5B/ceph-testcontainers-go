@@ -66,7 +66,7 @@ type MonitorRefusal struct {
 // refusal is the SUT's, a module client's or a stale fixture's stays the
 // test's judgment.
 //
-//purpose:evidence
+//purpose:observation,evidence
 func CollectManagerRefusals(ctx context.Context, cluster *ceph.Container, manager *ceph.ManagerContainer, config LogConfig) (*ManagerRefusals, error) {
 	config, err := normalizeLogConfig(config)
 	if err != nil {

@@ -109,7 +109,7 @@ type ProcessLog struct {
 // what a line means beyond where a process starts; that stays the test's
 // judgment.
 //
-//purpose:evidence
+//purpose:observation,evidence
 func CollectProcessLog(ctx context.Context, cluster *ceph.Container, daemon testcontainers.Container, config LogConfig) (*ProcessLog, error) {
 	config, err := normalizeLogConfig(config)
 	if err != nil {
