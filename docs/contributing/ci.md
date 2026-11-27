@@ -1105,6 +1105,10 @@ ordinary development PR changes this matrix. The target-specific check (for exam
 `Release candidate validated (release/1.2)`) gives each branch rule a single
 result for its own complete matrix. A manual dispatch emits a different
 check name. The six Code checks also apply to each candidate.
+A release or support line requires that result on an up-to-date head;
+`main` does not, because each promotion leaves a merge commit that only
+`main` has, and the push validation of the actual merge checks it against
+the tested commit instead ([branch rules](git-flow.md)).
 
 For publication, verify the push event, protected branch, candidate SHA,
 workflow identity and successful required jobs. A PR test-merge run
