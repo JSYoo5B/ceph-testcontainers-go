@@ -36,6 +36,19 @@ func clockLedStep(label string, off int64, ack int64) clockOffsetStep {
 	}
 }
 
+// clockLedSeparateFile gives l its own owned file: another path and another
+// inode, in the owned record and in every observation of it.
+func clockLedSeparateFile(l *clockOffsetLedger, path string, inode uint64) {
+	l.Owned.Path, l.Env.TimestampFile = path, strPtr(path)
+	l.Owned.Identity.Inode, l.Initial.Identity.Inode = inode, inode
+	for i := range l.Steps {
+		l.Steps[i].File.Identity.Inode = inode
+	}
+	r := *l.Restore
+	r.File.Identity.Inode = inode
+	l.Restore = &r
+}
+
 func clockLedgerOK() clockOffsetLedger {
 	zero := "+0"
 	owned := clockOwnedFile{Path: cfgSelected, ExpectedText: zero,
@@ -312,8 +325,7 @@ func TestClockOffsetLedgerFleet(t *testing.T) {
 		b.Steps[i].Target = b.Target
 	}
 	b.Restore.Target = b.Target
-	b.Owned.Path = "owned-b.txt"
-	b.Env.TimestampFile = strPtr("owned-b.txt")
+	clockLedSeparateFile(&b, "owned-b.txt", 12)
 
 	res := judgeClockFleet([]clockFleetEntry{{"a", &a}, {"b", &b}})
 	for n, j := range res {
@@ -403,8 +415,7 @@ func TestClockOffsetLedgerFleetRejudgesLiveCleanup(t *testing.T) {
 	a.Cleanup, b.Cleanup = live, live
 
 	// Positive control: separate resources keep the live cleanup valid.
-	b.Owned.Path = "owned-b.txt"
-	b.Env.TimestampFile = strPtr("owned-b.txt")
+	clockLedSeparateFile(&b, "owned-b.txt", 12)
 	res := judgeClockFleet([]clockFleetEntry{{"a", &a}, {"b", &b}})
 	for n, j := range res {
 		if j.Restore != clockRestoreVerified || j.CleanupVerdict != clockProvenanceValid {
@@ -423,8 +434,7 @@ func TestClockOffsetLedgerFleetRejudgesLiveCleanup(t *testing.T) {
 	}
 
 	// Shared instance, same expectation.
-	b.Owned.Path = "owned-b.txt"
-	b.Env.TimestampFile = strPtr("owned-b.txt")
+	clockLedSeparateFile(&b, "owned-b.txt", 12)
 	b.Target = a.Target
 	res = judgeClockFleet([]clockFleetEntry{{"a", &a}, {"b", &b}})
 	for n, j := range res {
@@ -465,5 +475,55 @@ func TestClockRestoreNeedsAnObservedShift(t *testing.T) {
 				t.Fatalf("unwitnessed restore: %s", j)
 			}
 		})
+	}
+}
+
+// Three MON containers each own a file at the same path, as the native amd64
+// MON run of issue 1048 recorded: one path, three mount namespaces and three
+// device and inode pairs. That is three files, not one shared file. The same
+// path in one namespace, or one identity under two namespaces (a bind mount),
+// is still sharing.
+func TestClockOffsetLedgerFleetSamePathInSeparateNamespaces(t *testing.T) {
+	const path = "/var/lib/ctg-clock/faketime"
+	ledger := func(ns string, pid int, dev uint64) clockOffsetLedger {
+		l := clockLedgerOK()
+		l.Target = clockOffsetTarget{ID: "mon." + ns, PID: pid, StartTicks: 9001}
+		l.BaselineTarget = l.Target
+		for i := range l.Steps {
+			l.Steps[i].Target = l.Target
+			l.Steps[i].File.Identity.Device = dev
+		}
+		r := *l.Restore
+		r.Target, r.File.Identity.Device = l.Target, dev
+		l.Restore = &r
+		l.Owned.Namespace, l.Owned.Path, l.Env.TimestampFile = "container:mon."+ns, path, strPtr(path)
+		l.Owned.Identity.Device, l.Initial.Identity.Device = dev, dev
+		return l
+	}
+	a, b, c := ledger("a", 1, 50), ledger("b", 1, 54), ledger("c", 1, 67)
+	res := judgeClockFleet([]clockFleetEntry{{"a", &a}, {"b", &b}, {"c", &c}})
+	for n, j := range res {
+		if j.Admission.Verdict != clockProvenanceValid || j.Restore != clockRestoreVerified || j.FirstFailure != "" {
+			t.Errorf("%s: separate namespaces judged shared: %s", n, j)
+		}
+	}
+
+	// Without the namespace the path alone collides, as before.
+	a2, b2 := a, b
+	a2.Owned.Namespace, b2.Owned.Namespace = "", ""
+	res = judgeClockFleet([]clockFleetEntry{{"a", &a2}, {"b", &b2}})
+	for n, j := range res {
+		if j.Admission.Verdict != clockProvenanceInvalid || j.Restore == clockRestoreVerified {
+			t.Errorf("%s: same path without a namespace not rejected: %s", n, j)
+		}
+	}
+
+	// One file seen from two namespaces shares its device and inode.
+	b3 := ledger("b", 1, 50)
+	res = judgeClockFleet([]clockFleetEntry{{"a", &a}, {"b", &b3}})
+	for n, j := range res {
+		if j.Admission.Verdict != clockProvenanceInvalid || j.Restore == clockRestoreVerified {
+			t.Errorf("%s: shared identity under two namespaces not rejected: %s", n, j)
+		}
 	}
 }

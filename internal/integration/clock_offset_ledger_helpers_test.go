@@ -452,18 +452,29 @@ type clockFleetEntry struct {
 	Ledger *clockOffsetLedger
 }
 
+// clockOwnedPathKey is the owned file's path within its mount namespace.
+type clockOwnedPathKey struct{ Namespace, Path string }
+
 // judgeClockFleet judges targets independently and rejects sharing: one owned
-// path or one target instance in two ledgers means that one target's evidence
-// could be counted for another.
+// file or one target instance in two ledgers means that one target's evidence
+// could be counted for another. A file is shared when two ledgers name the same
+// path in the same mount namespace, or when their captured device and inode
+// are equal, whatever the paths say. The same path in two namespaces with
+// distinct identities is two files.
 func judgeClockFleet(entries []clockFleetEntry) map[string]clockLedgerJudgement {
 	out := map[string]clockLedgerJudgement{}
-	paths := map[string][]string{}
+	paths := map[clockOwnedPathKey][]string{}
+	idents := map[clockFileIdentity][]string{}
 	insts := map[clockOffsetTarget][]string{}
 	for _, e := range entries {
 		if e.Ledger == nil {
 			continue
 		}
-		paths[e.Ledger.Owned.Path] = append(paths[e.Ledger.Owned.Path], e.Name)
+		key := clockOwnedPathKey{e.Ledger.Owned.Namespace, e.Ledger.Owned.Path}
+		paths[key] = append(paths[key], e.Name)
+		if id := e.Ledger.Owned.Identity; id.HasIdentity {
+			idents[id] = append(idents[id], e.Name)
+		}
 		insts[e.Ledger.Target] = append(insts[e.Ledger.Target], e.Name)
 	}
 	for _, e := range entries {
@@ -475,7 +486,11 @@ func judgeClockFleet(entries []clockFleetEntry) map[string]clockLedgerJudgement 
 			continue
 		}
 		j := judgeClockOffsetLedger(*e.Ledger)
-		if len(paths[e.Ledger.Owned.Path]) > 1 || len(insts[e.Ledger.Target]) > 1 {
+		shared := len(paths[clockOwnedPathKey{e.Ledger.Owned.Namespace, e.Ledger.Owned.Path}]) > 1 || len(insts[e.Ledger.Target]) > 1
+		if id := e.Ledger.Owned.Identity; id.HasIdentity && len(idents[id]) > 1 {
+			shared = true
+		}
+		if shared {
 			j.Admission = provenanceResult(clockProvenanceInvalid, "owned file or target instance is shared between ledgers")
 			j.fail("admission invalid: %s", j.Admission.Reason)
 			for i := range j.Steps {

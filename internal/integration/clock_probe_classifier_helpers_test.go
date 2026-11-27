@@ -31,6 +31,12 @@ import (
 //     FAKETIME_TIMESTAMP_FILE in its environment; otherwise the call goes to
 //     the real syscall unchanged. Without the macro there is no wrapper at
 //     all.
+//   - Initialization parses FAKETIME when the variable is present, even
+//     empty, and then never reads the timestamp file (see the configuration
+//     provenance model). A controller's file update therefore cannot reach any
+//     route of a process with FAKETIME in its environment: the interposed
+//     routes follow the FAKETIME value instead, so no route has an expectation
+//     relative to the intended file offset.
 //   - Nothing in the library names a vDSO symbol or issues a raw architecture
 //     syscall instruction, so those two routes are expected to bypass it. This
 //     is a hypothesis from reading the source. The probe has to measure it.
@@ -184,7 +190,7 @@ func monotonicFaked(f clockProbeFacts) (faked, known bool) {
 func expectedClockRoute(p clockProbePath, f clockProbeFacts) clockExpectation {
 	switch p {
 	case clockPathPublic:
-		if f.Binding == clockBindInterposer {
+		if f.Binding == clockBindInterposer && f.Faketime == nil {
 			return clockExpectShift
 		}
 		if f.Binding == clockBindLibc {
@@ -197,7 +203,13 @@ func expectedClockRoute(p clockProbePath, f clockProbeFacts) clockExpectation {
 		if !*f.InterceptSyscall {
 			return clockExpectBypass
 		}
-		if f.Faketime != nil || f.TimestampFile != nil {
+		// The wrapper diverts the call when FAKETIME or
+		// FAKETIME_TIMESTAMP_FILE is present, but only the file follows the
+		// controller's update.
+		if f.Faketime != nil {
+			return clockExpectUnknown
+		}
+		if f.TimestampFile != nil {
 			return clockExpectShift
 		}
 		return clockExpectBypass
@@ -205,10 +217,15 @@ func expectedClockRoute(p clockProbePath, f clockProbeFacts) clockExpectation {
 		return clockExpectBypass
 	case clockPathMonotonic:
 		if faked, ok := monotonicFaked(f); ok {
-			if faked {
-				return clockExpectShift
+			if !faked {
+				return clockExpectBypass
 			}
-			return clockExpectBypass
+			// A faked monotonic clock follows FAKETIME when it is present,
+			// not the controller's file update.
+			if f.Faketime != nil {
+				return clockExpectUnknown
+			}
+			return clockExpectShift
 		}
 	}
 	return clockExpectUnknown
@@ -305,6 +322,8 @@ func judgeClockProbe(r clockProbeRecord) clockProbeJudgement {
 	}
 	if !f.EnvKnown {
 		j.add(clockProbeInconclusive, "probe process environment was not read")
+	} else if f.Faketime != nil {
+		j.add(clockProbeRejected, "FAKETIME is present in the probe environment, which disables file parsing, so the intended file offset cannot apply")
 	}
 	if f.StaticOrSetuid == nil {
 		j.add(clockProbeInconclusive, "static/setuid status was not recorded")
@@ -337,12 +356,16 @@ func judgeClockProbe(r clockProbeRecord) clockProbeJudgement {
 		}
 	}
 	if mr, ok := j.Paths[clockPathMonotonic]; ok {
+		// Eligibility depends on whether the clock is faked at all, not on
+		// whether it is expected to follow the file: with FAKETIME present a
+		// faked control has no file expectation but is still ineligible.
+		faked, known := monotonicFaked(f)
 		switch {
 		case mr.Unsupported:
 			j.add(clockProbeInconclusive, "monotonic control is unsupported")
-		case mr.Expectation == clockExpectShift:
+		case known && faked:
 			j.add(clockProbeRejected, "monotonic control is faked in this configuration, so it is not an eligible control")
-		case mr.Expectation == clockExpectUnknown:
+		case !known:
 			j.add(clockProbeInconclusive, "whether the monotonic control is faked is not known")
 		case mr.Before != clockAtBaseline || mr.During != clockAtBaseline || mr.After != clockAtBaseline:
 			j.add(clockProbeInconclusive, "monotonic control did not stay at baseline")
