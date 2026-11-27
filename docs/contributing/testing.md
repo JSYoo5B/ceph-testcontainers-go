@@ -16,6 +16,12 @@ described in [Continuous integration](ci.md).
 | Desktop setup tests | `scripts/desktop/test_*.py` | No | `python3 -m unittest` |
 | go-ceph consumer check | `internal/integration/goceph` | Yes, prepared Linux images | `goceph` tag and a harness |
 
+Repository tooling that CI or a maintainer runs, release tooling included,
+lives flat in `.github/scripts/`, so one `unittest discover` covers its tests
+and its modules import each other by name. Top-level `scripts/` holds only
+host tools that a guide under `docs/guides/` documents for library users,
+such as `scripts/desktop/`.
+
 Integration tests are excluded by build tags, not by `t.Skip`. The skips that
 exist only report a missing environment prerequisite of a local run, for
 example an undeclared `CEPH_TEST_NETWORK` mode (`harness.NetworkModes`), an
