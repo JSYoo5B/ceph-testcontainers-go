@@ -303,3 +303,37 @@ func TestClockProbeBypassPhaseContradictions(t *testing.T) {
 		wantProbe(t, string(p)+" flat", r, clockProbeAdmitted, "")
 	}
 }
+
+// With FAKETIME in the probe environment the file is never parsed, so the
+// controller's update reaches no route. Every route staying flat is then the
+// pinned behaviour, not a contradiction of the recorded facts: the record is
+// rejected for its configuration, and no route is offered as a reference.
+// This is the shape the native amd64 env-mode control recorded for both
+// builds (issue 1048).
+func TestClockProbeEnvironmentModeIsNotAFactContradiction(t *testing.T) {
+	for _, intercept := range []bool{false, true} {
+		r := probeBase()
+		r.Facts.InterceptSyscall = boolPtr(intercept)
+		r.Facts.Faketime = strPtr("+0")
+		r.Samples[clockPathPublic] = probeSeq(0, 0, 0)
+		j := wantProbe(t, "env mode", r, clockProbeRejected, "FAKETIME is present in the probe environment")
+		if strings.Contains(j.String(), "facts are wrong") || strings.Contains(j.String(), "did not shift") {
+			t.Errorf("intercept=%v: env mode blamed on the recorded facts or the public route: %s", intercept, j)
+		}
+		for _, p := range []clockProbePath{clockPathPublic, clockPathLibcSys} {
+			if intercept || p == clockPathPublic {
+				if got := j.Paths[p].Expectation; got != clockExpectUnknown {
+					t.Errorf("intercept=%v: %s expectation %s, want unknown", intercept, p, got)
+				}
+			}
+		}
+		if refs := clockReferencePaths(j); len(refs) != 0 {
+			t.Errorf("intercept=%v: references from a rejected record: %v", intercept, refs)
+		}
+	}
+
+	// An empty FAKETIME is still present and still disables the file.
+	r := probeBase()
+	r.Facts.Faketime = strPtr("")
+	wantProbe(t, "empty FAKETIME", r, clockProbeRejected, "FAKETIME is present in the probe environment")
+}
