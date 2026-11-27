@@ -277,7 +277,7 @@ func awaitProcessLog(t *testing.T, ctx context.Context, what string, read func(s
 
 // testManagerReclaimRefusal freezes the MGR for longer than the MONs keep
 // the rotating secret of its last auth ticket, under a short
-// auth_mon_ticket_ttl, and resumes it. The MGR's MonClient then renews with
+// auth_mon_ticket_ttl and a long mon_mgr_beacon_grace, and resumes it. The MGR's MonClient then renews with
 // that ticket and reclaims its global ID; the MON refuses the reclaim and
 // names the global ID, the MGR's GID in the MgrMap read before the freeze.
 func testManagerReclaimRefusal(t *testing.T) {
@@ -295,6 +295,16 @@ func testManagerReclaimRefusal(t *testing.T) {
 	status, err := harness.ObserveCluster(cluster).ManagerStatus(ctx)
 	if err != nil || status.ActiveName != "a" || status.ActiveGID == 0 {
 		t.Fatalf("manager status = %+v, %v", status, err)
+	}
+	// The freeze outlasts the default beacon grace: without a longer one the
+	// MONs drop the MGR from the MgrMap, and on resume it respawns as a fresh
+	// process, which authenticates anew, before its MonClients renew.
+	if _, err := cluster.Ceph(ctx, "config", "set", "mon", "mon_mgr_beacon_grace", "600"); err != nil {
+		t.Fatal(err)
+	}
+	frozenProcess, err := diagnostics.CollectProcessLog(ctx, cluster, manager, diagnostics.LogConfig{})
+	if err != nil || frozenProcess.Status != diagnostics.LogComplete {
+		t.Fatalf("process log before the freeze = %+v, %v", frozenProcess, err)
 	}
 	pause, err := fault.Pause(ctx, cluster, manager)
 	if err != nil {
@@ -341,6 +351,9 @@ func testManagerReclaimRefusal(t *testing.T) {
 		}
 		return found
 	})
+	if refused.Start != frozenProcess.Start || !refused.Manager.ContainerStartedAt.Equal(frozenProcess.ContainerStartedAt) {
+		t.Fatalf("the refusals belong to process %+v, not to the frozen one from %+v", refused.Start, frozenProcess.Start)
+	}
 	// Every MonClient of the process reclaims its own global ID: the beacon's
 	// is the MgrMap GID, the module clients' are others.
 	beacon := map[string]bool{}
