@@ -15,6 +15,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault/blockio"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -46,10 +47,7 @@ func testBlockIOMainDeviceRecovery(t *testing.T) {
 		}
 		t.Fatal(err)
 	}
-	image := os.Getenv("CEPH_TEST_IMAGE")
-	if image == "" {
-		image = ceph.DefaultImage
-	}
+	var image string
 	opts := []testcontainers.ContainerCustomizer{
 		ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs().WithPoolDefaults(1, 1)),
 		ceph.WithOSDStorage(ceph.OSDStorage{}.WithStartupBenchmark(ceph.OSDBenchmarkSkip)),
@@ -61,6 +59,10 @@ func testBlockIOMainDeviceRecovery(t *testing.T) {
 		}
 		image = essential
 		opts = append(opts, ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(ceph.ImageSet{Essential: essential, Client: clientImage})))
+	} else if image, err = harness.IntegrationImage(os.Getenv, "CEPH_TEST_IMAGE"); err != nil {
+		// CEPH_TEST_IMAGE or the default aggregate image; prepared role
+		// images replace that fallback in CI's image preparation.
+		t.Fatal(err)
 	}
 	cluster, err := ceph.Run(ctx, image, opts...)
 	if cluster != nil {
