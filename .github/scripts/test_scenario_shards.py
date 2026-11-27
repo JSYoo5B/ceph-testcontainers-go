@@ -42,26 +42,94 @@ class PublicBlockIOQualificationTests(unittest.TestCase):
         public = jobs['public-api']
         self.assertEqual(re.search(r'^    if: (.+)$', public, re.MULTILINE)[1],
                          "github.event_name == 'workflow_dispatch' && inputs.public_api")
-        prepare = next(step for step in steps(public) if 'uses: ./.github/actions/block-io-helper' in step)
+        public_steps = steps(public)
+        prepare = next(step for step in public_steps if 'uses: ./.github/actions/block-io-kernel' in step)
         self.assertEqual(scalar(prepare, 'prepare_kernel'), "${{ inputs.prepare_kernel && 'true' || 'false' }}")
-        action = (ROOT / '.github/actions/block-io-helper/action.yml').read_text()
-        self.assertIn('test "$RUNNER_ENVIRONMENT" = github-hosted', action)
-        self.assertIn("if: inputs.prepare_kernel == 'true'", action)
-        self.assertIn('sudo -n modprobe loop', action)
-        self.assertIn('sudo -n modprobe dm_delay', action)
-        self.assertIn('CEPH_TEST_BLOCKIO_REQUIRE_DELAY=1', action)
-        self.assertIn('CEPH_TEST_BLOCKIO_HELPER_IMAGE=$helper', action)
-        self.assertIn('extension_check.py --extension blockio --image "$helper"', action)
-        self.assertRegex(action, r'(?m)^        ref: [0-9a-f]{40}$')
-        self.assertNotIn('docker push', action)
+        self.assertEqual(set(re.findall(r'(?m)^          (\w+): ', prepare.split('        with:\n', 1)[1])),
+                         {'prepare_kernel'})
+        self.assertKernelPreparation((ROOT / BLOCK_IO_KERNEL).read_text())
+        # The tests name the helper, so it is pulled with the test images,
+        # after compilation and before the native batch, on the role layout.
+        self.assertEqual(scalar(public, 'SCENARIO_IMAGE_LAYOUT'), 'roles')
+        compiled = next(i for i, step in enumerate(public_steps) if 'tag_scenarios.py compile' in step)
+        pulled = next(i for i, step in enumerate(public_steps) if 'in_test_images.py' in step)
+        native = next(i for i, step in enumerate(public_steps) if 'tag_scenarios.py optional' in step)
+        self.assertLess(compiled, pulled)
+        self.assertLess(pulled, native)
+        self.assertEqual(scalar(public_steps[pulled], 'name'), 'Prepare Ryuk and the test images')
+        self.assertIn('--compile artifacts/blockio/compile', public_steps[pulled])
+        self.assertNotIn('continue-on-error', public_steps[pulled])
         self.assertIn('--category optional', public)
         self.assertIn('--batch block_io --package ./internal/integration', public)
         self.assertIn('--binary artifacts/blockio/compile', public)
         self.assertIn('steps.baseline.outcome ==', public)
         self.assertNotIn('docker push', public)
         self.assertNotIn('packages: write', workflow)
+        self.assertNoHelperBuild(workflow)
         source = (ROOT / 'internal/integration/public_block_io_integration_test.go').read_text()
         self.assertIn('integration && ci_optional && ci_batch_block_io', source)
+
+    def test_helper_is_selected_by_the_published_tag_with_an_override(self):
+        helpers = (ROOT / 'internal/integration/public_block_io_integration_helpers_test.go').read_text()
+        selection = helpers.split('func blockIOHelperImage(', 1)[1].split('\n}\n', 1)[0]
+        self.assertIn('os.Getenv("CEPH_TEST_BLOCKIO_HELPER_IMAGE")', selection)
+        self.assertIn('image = blockio.HelperImage', selection)
+        self.assertNotIn('Fatal', selection)
+        self.assertIn('blockio.Run(ctx, blockIOHelperImage(t),', helpers)
+        library = (ROOT / 'fault/blockio/blockio.go').read_text()
+        self.assertIn('const HelperImage = "ghcr.io/jsyoo5b/ceph-testcontainers-images:extension-blockio-v1"\n',
+                      library)
+
+    def test_no_workflow_action_or_script_builds_the_helper(self):
+        self.assertFalse((ROOT / '.github/actions/block-io-helper').exists())
+        sources = [path for directory in ('.github/workflows', '.github/actions')
+                   for path in sorted((ROOT / directory).rglob('*.yml'))]
+        sources += sorted((ROOT / 'scripts').rglob('*.py')) + sorted((ROOT / '.github/scripts').glob('[!t]*.py'))
+        self.assertTrue(sources)
+        for path in sources:
+            with self.subTest(path=path.relative_to(ROOT)):
+                self.assertNoHelperBuild(path.read_text())
+
+    def test_helper_build_guards_reject_the_former_preparation(self):
+        # Each line of the preparation that built the helper from a pinned
+        # images commit is rejected on its own.
+        former = (
+            "        repository: JSYoo5B/ceph-testcontainers-images",
+            "        ref: 711be98130c5173ef63ce56edf48fbdbdfe086ba",
+            "        docker build --tag blockio-qualification:local block-io-helper-source/image/extensions/blockio",
+            "        docker buildx build --load --tag helper block-io-helper-source",
+            "        helper=$(docker image inspect --format '{{.Id}}' blockio-qualification:local)",
+            '        python3 block-io-helper-source/image/extension_check.py --extension blockio --image "$helper"',
+            '        printf \'%s\\n\' "CEPH_TEST_BLOCKIO_HELPER_IMAGE=$helper" >> "$GITHUB_ENV"',
+        )
+        for line in former:
+            with self.subTest(line=line.strip()), self.assertRaises(AssertionError):
+                self.assertNoHelperBuild(line + "\n")
+        with self.assertRaises(AssertionError):
+            self.assertKernelPreparation((ROOT / BLOCK_IO_KERNEL).read_text() + "\n".join(former) + "\n")
+
+    def assertKernelPreparation(self, action):
+        self.assertIn('name: Prepare the Block I/O kernel', action)
+        self.assertIn('test "$RUNNER_ENVIRONMENT" = github-hosted', action)
+        self.assertIn("if: inputs.prepare_kernel == 'true'", action)
+        self.assertIn('sudo -n modprobe loop', action)
+        self.assertIn('sudo -n modprobe dm_delay', action)
+        self.assertIn('CEPH_TEST_BLOCKIO_REQUIRE_DELAY=1', action)
+        self.assertEqual(set(re.findall(r'(?m)^  (\w+):$', action.split('\ninputs:\n', 1)[1].split('\nruns:\n', 1)[0])),
+                         {'prepare_kernel'})
+        self.assertNoHelperBuild(action)
+
+    def assertNoHelperBuild(self, text):
+        self.assertNotRegex(text, r'repository:\s*JSYoo5B/ceph-testcontainers-images\b')
+        self.assertNotRegex(text, r'docker (?:buildx )?build\b')
+        self.assertNotIn('extension_check.py', text)
+        self.assertNotIn('image/extensions/blockio', text)
+        self.assertNotRegex(text, r'CEPH_TEST_BLOCKIO_HELPER_IMAGE=')
+        self.assertNotRegex(text, r"\{\{\.Id\}\}")
+        self.assertNotRegex(text, r'(?m)^\s+ref: [0-9a-f]{40}$')
+
+
+BLOCK_IO_KERNEL = '.github/actions/block-io-kernel/action.yml'
 
 
 def blocks(text, pattern):
@@ -909,19 +977,27 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
                                   for job in engine.network_matrix(plan["include"], "default")},
                                  {("optional", "block_io"), ("recovery", "scratch_tmpfs")})
         runtime = steps(self.jobs["tagged-runtime.yml"]["runtime"])
-        checkout = next(step for step in runtime if "sparse-checkout: .github/actions/block-io-helper" in step)
-        prepare = next(step for step in runtime if "uses: ./block-io-workflow-source/.github/actions/block-io-helper" in step)
+        checkout = next(step for step in runtime if "sparse-checkout: .github/actions/block-io-kernel" in step)
+        prepare = next(step for step in runtime if "uses: ./block-io-workflow-source/.github/actions/block-io-kernel" in step)
         self.assertEqual(scalar(checkout, "ref"), "${{ github.workflow_sha }}")
         for step in (checkout, prepare):
             self.assertEqual(scalar(step, "if"), "matrix.category == 'optional' && matrix.batch == 'block_io'")
             self.assertNotIn("continue-on-error", step)
         self.assertEqual(scalar(prepare, "prepare_kernel"), "'true'")
-        self.assertEqual(scalar(prepare, "directory"), "artifacts/scenario/blockio-helper")
-        baseline, native, cleanup = (next(i for i, step in enumerate(runtime) if "        id: " + phase + "\n" in step)
-                                     for phase in ("docker_baseline", "native", "cleanup"))
+        self.assertEqual(set(re.findall(r"(?m)^          (\w+): ", prepare.split("        with:\n", 1)[1])),
+                         {"prepare_kernel"})
+        self.assertEqual(scalar(prepare, "name"), "Prepare the Block I/O kernel")
+        baseline, test_images, native, cleanup = (
+            next(i for i, step in enumerate(runtime) if "        id: " + phase + "\n" in step)
+            for phase in ("docker_baseline", "test_images", "native", "cleanup"))
         self.assertLess(baseline, runtime.index(checkout))
         self.assertLess(runtime.index(checkout), runtime.index(prepare))
-        self.assertLess(runtime.index(prepare), native)
+        # The helper is a test image of the batch: the test image preparation
+        # pulls it, unconditionally and before the native batch.
+        self.assertLess(runtime.index(prepare), test_images)
+        self.assertNotIn("        if: ", runtime[test_images])
+        self.assertIn("in_test_images.py", runtime[test_images])
+        self.assertLess(test_images, native)
         self.assertLess(native, cleanup)
         self.assertIn("always()", scalar(runtime[cleanup], "if"))
 
@@ -984,7 +1060,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertEqual(scalar(plan, "SCENARIO_REPETITIONS"), "${{ inputs.repetitions }}")
         self.assertIn('elif [ "$SCENARIO_CATEGORY" = representative ]; then', plan)
         # Plan and runtime check out the source to test. Block I/O also
-        # checks out the helper action from the workflow's commit.
+        # checks out its kernel preparation from the workflow's commit.
         self.assertEqual(reusable.count("uses: actions/checkout@v7"), 3)
         self.assertEqual(reusable.count("          ref: ${{ inputs.ref }}\n"), 2)
         runtime_steps = steps(runtime)

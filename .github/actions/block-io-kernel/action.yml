@@ -1,0 +1,23 @@
+name: Prepare the Block I/O kernel
+description: Load loop and dm_delay on a disposable GitHub-hosted runner and require the delay window
+inputs:
+  prepare_kernel:
+    description: Allow loading loop and dm_delay on this disposable runner
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - name: Confirm the runner is disposable
+      shell: bash
+      run: test "$RUNNER_ENVIRONMENT" = github-hosted
+    - name: Prepare the kernel
+      if: inputs.prepare_kernel == 'true'
+      shell: bash
+      run: |
+        sudo -n modprobe loop
+        sudo -n modprobe dm_delay
+    # The tests select blockio.HelperImage, or CEPH_TEST_BLOCKIO_HELPER_IMAGE
+    # when a caller sets it; the image is pulled with the other test images.
+    - name: Require the delay window
+      shell: bash
+      run: echo "CEPH_TEST_BLOCKIO_REQUIRE_DELAY=1" >> "$GITHUB_ENV"

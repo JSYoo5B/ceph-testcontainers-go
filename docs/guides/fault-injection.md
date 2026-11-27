@@ -13,7 +13,7 @@ extension whose separate helper image alone gets `NET_ADMIN` (see
 a cluster with zones uses the same helper image for its routers and route
 agents (see [A routed boundary between logical zones](#a-routed-boundary-between-logical-zones)).
 Block I/O faults run a privileged keeper container from their own helper
-image (see [Delaying or failing an OSD's device](#delaying-or-failing-an-osds-device)).
+image, such as `blockio.HelperImage` (see [Delaying or failing an OSD's device](#delaying-or-failing-an-osds-device)).
 
 | Condition you want | API | What peers observe | Host network | Undo |
 | --- | --- | --- | --- | --- |
@@ -566,7 +566,9 @@ zones.
 
 [`fault/blockio`](../../fault/blockio/README.md) owns a disposable OSD main
 device: a sparse backing file, a loop device and a device-mapper mapping
-held by a privileged keeper container from an explicitly built helper image.
+held by a privileged keeper container from an explicitly selected helper
+image: `blockio.HelperImage`, the published one, or another image that meets
+its contract.
 `blockio.Run` starts the backend before the cluster, `Container.AttachOSD`
 adds an OSD on that device to a cluster started without initial OSDs, and
 `Container.Apply` installs a bounded delay or EIO table that

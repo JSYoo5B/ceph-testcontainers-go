@@ -15,19 +15,28 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault/blockio"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/testcontainers/testcontainers-go"
 )
 
 var errBlockIORecoveryRead = errors.New("recovery read did not return acknowledged bytes")
 
+// blockIOHelperImage is the published helper, or the contract-1 helper that
+// CEPH_TEST_BLOCKIO_HELPER_IMAGE selects instead.
+func blockIOHelperImage(t *testing.T) string {
+	t.Helper()
+	image := os.Getenv("CEPH_TEST_BLOCKIO_HELPER_IMAGE")
+	if image == "" {
+		image = blockio.HelperImage
+	}
+	t.Logf("blockio helper: %s", image)
+	return image
+}
+
 func testBlockIOMainDeviceRecovery(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 18*time.Minute)
 	defer cancel()
-	helper := os.Getenv("CEPH_TEST_BLOCKIO_HELPER_IMAGE")
-	if helper == "" {
-		t.Fatal("CEPH_TEST_BLOCKIO_HELPER_IMAGE is required for this selected native batch")
-	}
-	backend, err := blockio.Run(ctx, helper, blockio.WithConfig(blockio.Config{Size: 1 << 30}))
+	backend, err := blockio.Run(ctx, blockIOHelperImage(t), blockio.WithConfig(blockio.Config{Size: 1 << 30}))
 	if backend != nil {
 		// Register the backend first, so the cluster is cleaned up first.
 		testcontainers.CleanupContainer(t, backend)
@@ -38,10 +47,7 @@ func testBlockIOMainDeviceRecovery(t *testing.T) {
 		}
 		t.Fatal(err)
 	}
-	image := os.Getenv("CEPH_TEST_IMAGE")
-	if image == "" {
-		image = ceph.DefaultImage
-	}
+	var image string
 	opts := []testcontainers.ContainerCustomizer{
 		ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs().WithPoolDefaults(1, 1)),
 		ceph.WithOSDStorage(ceph.OSDStorage{}.WithStartupBenchmark(ceph.OSDBenchmarkSkip)),
@@ -53,6 +59,10 @@ func testBlockIOMainDeviceRecovery(t *testing.T) {
 		}
 		image = essential
 		opts = append(opts, ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(ceph.ImageSet{Essential: essential, Client: clientImage})))
+	} else if image, err = harness.IntegrationImage(os.Getenv, "CEPH_TEST_IMAGE"); err != nil {
+		// CEPH_TEST_IMAGE or the default aggregate image; prepared role
+		// images replace that fallback in CI's image preparation.
+		t.Fatal(err)
 	}
 	cluster, err := ceph.Run(ctx, image, opts...)
 	if cluster != nil {
