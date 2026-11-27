@@ -1,0 +1,171 @@
+{
+  "schema": "ceph-api-naming/v2",
+  "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
+  "package": "ceph/preflight",
+  "count": 26,
+  "entries": [
+    {
+      "current": "ceph/preflight.BlockIODelay",
+      "kind": "const",
+      "proposed": "ceph/preflight.BlockIODelay",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.BlockIOEIO",
+      "kind": "const",
+      "proposed": "ceph/preflight.BlockIOEIO",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.Capability",
+      "kind": "type",
+      "proposed": "ceph/preflight.Capability",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.Check",
+      "kind": "type",
+      "proposed": "ceph/preflight.Check",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.Engine",
+      "kind": "const",
+      "proposed": "ceph/preflight.Engine",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.EngineFacts",
+      "kind": "type",
+      "proposed": "ceph/preflight.EngineFacts",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.EnvironmentKind",
+      "kind": "const",
+      "proposed": "ceph/preflight.EnvironmentKind",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.Helper",
+      "kind": "const",
+      "proposed": "ceph/preflight.Helper",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.HelperRun",
+      "kind": "type",
+      "proposed": "ceph/preflight.HelperRun",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.ImageKind",
+      "kind": "const",
+      "proposed": "ceph/preflight.ImageKind",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.Inspect",
+      "kind": "const",
+      "proposed": "ceph/preflight.Inspect",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.Kind",
+      "kind": "type",
+      "proposed": "ceph/preflight.Kind",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.Level",
+      "kind": "type",
+      "proposed": "ceph/preflight.Level",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.NotRun",
+      "kind": "const",
+      "proposed": "ceph/preflight.NotRun",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.Observe",
+      "kind": "function",
+      "signature": "func(ctx context.Context, request Request) (*Report, error)",
+      "proposed": "ceph/preflight.Observe",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.Observed",
+      "kind": "const",
+      "proposed": "ceph/preflight.Observed",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.Platform",
+      "kind": "type",
+      "proposed": "ceph/preflight.Platform",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.Report",
+      "kind": "type",
+      "proposed": "ceph/preflight.Report",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.Report.Lookup",
+      "kind": "method",
+      "signature": "func(key string) (Check, bool)",
+      "receiver": "*Report",
+      "proposed": "ceph/preflight.Report.Lookup",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.Report.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*Report",
+      "proposed": "ceph/preflight.Report.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.Report.Verdict",
+      "kind": "method",
+      "signature": "func(capability Capability) State",
+      "receiver": "*Report",
+      "proposed": "ceph/preflight.Report.Verdict",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.Request",
+      "kind": "type",
+      "proposed": "ceph/preflight.Request",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.SchemaVersion",
+      "kind": "const",
+      "proposed": "ceph/preflight.SchemaVersion",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.State",
+      "kind": "type",
+      "proposed": "ceph/preflight.State",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.Unavailable",
+      "kind": "const",
+      "proposed": "ceph/preflight.Unavailable",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.Unknown",
+      "kind": "const",
+      "proposed": "ceph/preflight.Unknown",
+      "decision": "baseline"
+    }
+  ]
+}
