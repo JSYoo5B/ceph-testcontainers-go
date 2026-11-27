@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "ceph/diagnostics",
-  "count": 67,
+  "count": 90,
   "types": {
     "ceph/diagnostics.Artifact": [
       "Artifact.ContainerID field string `json:\"container_id,omitempty\"`",
@@ -74,6 +74,43 @@
       "CrashRecord.Posted field bool `json:\"posted,omitempty\"`",
       "CrashRecord.Process field string `json:\"process,omitempty\"`",
       "CrashRecord.Timestamp field string `json:\"timestamp,omitempty\"`"
+    ],
+    "ceph/diagnostics.LogConfig": [
+      "LogConfig.MaxBytes field int",
+      "LogConfig.RedactValues field []string"
+    ],
+    "ceph/diagnostics.LogLine": [
+      "LogLine.Text field string `json:\"text\"`",
+      "LogLine.Time field time.Time `json:\"time\"`"
+    ],
+    "ceph/diagnostics.LogSource": [
+      "LogSource.ContainerID field string `json:\"container_id\"`",
+      "LogSource.ContainerStartedAt field time.Time `json:\"container_started_at\"`",
+      "LogSource.Name field string `json:\"name\"`",
+      "LogSource.Role field string `json:\"role\"`",
+      "LogSource.Running field bool `json:\"running\"`",
+      "LogSource.Since field time.Time `json:\"since\"`",
+      "LogSource.Status field LogStatus `json:\"status\"`"
+    ],
+    "ceph/diagnostics.ManagerRefusals": [
+      "ManagerRefusals.Manager field LogSource `json:\"manager\"`",
+      "ManagerRefusals.Monitors field []MonitorRefusals `json:\"monitors\"`",
+      "ManagerRefusals.Refusals field []LogLine `json:\"refusals\"`",
+      "ManagerRefusals.Start field LogLine `json:\"start\"`"
+    ],
+    "ceph/diagnostics.MonitorRefusal": [
+      "MonitorRefusal.GlobalID field uint64 `json:\"global_id,omitempty\"`",
+      "MonitorRefusal.Line field LogLine `json:\"line\"`",
+      "MonitorRefusal.Reason field string `json:\"reason\"`"
+    ],
+    "ceph/diagnostics.MonitorRefusals": [
+      "MonitorRefusals embed LogSource",
+      "MonitorRefusals.Refusals field []MonitorRefusal `json:\"refusals\"`"
+    ],
+    "ceph/diagnostics.ProcessLog": [
+      "ProcessLog embed LogSource",
+      "ProcessLog.Lines field []LogLine `json:\"lines\"`",
+      "ProcessLog.Start field LogLine `json:\"start\"`"
     ],
     "ceph/diagnostics.Report": [
       "Report.Artifacts field []Artifact `json:\"artifacts\"`",

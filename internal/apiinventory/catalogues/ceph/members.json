@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "ceph",
-  "count": 320,
+  "count": 321,
   "types": {
     "ceph.AuthConfig": [
       "AuthConfig.AllowedCiphers field []CephxCipher",
@@ -166,6 +166,7 @@
       "ManagerStatus.ActiveGID field uint64 `json:\"active_gid\"`",
       "ManagerStatus.ActiveName field string `json:\"active_name\"`",
       "ManagerStatus.Available field bool `json:\"available\"`",
+      "ManagerStatus.Epoch field uint64 `json:\"epoch\"`",
       "ManagerStatus.Standbys field []struct {\n\tName string `json:\"name\"`\n\tGID  uint64 `json:\"gid\"`\n} `json:\"standbys\"`",
       "ManagerStatus.Standbys[].GID field uint64 `json:\"gid\"`",
       "ManagerStatus.Standbys[].Name field string `json:\"name\"`"
