@@ -2,7 +2,6 @@ package blockio_test
 
 import (
 	"context"
-	"os"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -11,8 +10,8 @@ import (
 
 func ExampleRun() {
 	ctx := context.Background()
-	// Select an image containing the documented device-mapper helper tools.
-	backend, err := blockio.Run(ctx, os.Getenv("CEPH_TEST_BLOCKIO_HELPER_IMAGE"), blockio.WithConfig(blockio.Config{Size: 1 << 30}))
+	// HelperImage is the published helper; any image that meets its contract works.
+	backend, err := blockio.Run(ctx, blockio.HelperImage, blockio.WithConfig(blockio.Config{Size: 1 << 30}))
 	if backend != nil {
 		defer func() { _ = backend.Terminate(ctx) }()
 	}

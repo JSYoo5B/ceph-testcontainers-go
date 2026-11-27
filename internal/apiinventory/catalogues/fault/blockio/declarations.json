@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "fault/blockio",
-  "count": 20,
+  "count": 21,
   "entries": [
     {
       "current": "fault/blockio.Config",
@@ -68,6 +68,12 @@
       "current": "fault/blockio.DefaultSize",
       "kind": "const",
       "proposed": "fault/blockio.DefaultSize",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault/blockio.HelperImage",
+      "kind": "const",
+      "proposed": "fault/blockio.HelperImage",
       "decision": "baseline"
     },
     {

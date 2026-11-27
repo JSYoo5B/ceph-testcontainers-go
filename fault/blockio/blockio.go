@@ -35,6 +35,12 @@ const (
 	MaxDelay = 10 * time.Second
 )
 
+// HelperImage is the blockio helper that ceph-testcontainers-images publishes
+// for contract 1 of its blockio extension, for linux/amd64 and linux/arm64.
+// Run never selects it by itself: pass it, or another image that meets the
+// contract, as Run's img.
+const HelperImage = "ghcr.io/jsyoo5b/ceph-testcontainers-images:extension-blockio-v1"
+
 const operationTimeout = 2 * time.Minute
 
 const ownerLabel = "org.testcontainers.ceph.blockio-owner"
@@ -174,9 +180,10 @@ func (p Profile) table(sectors int64, lower string) (string, error) {
 }
 
 // Run prepares one disposable backend with the explicitly selected helper
-// image. The image supplies sh, sleep, python3, dmsetup, losetup and blockdev;
-// the Docker host grants privileged /dev access and registered linear support.
-// Individual faults check their own registered target before use. No host
+// image, such as HelperImage; img is used as given. The image supplies sh,
+// sleep, python3, dmsetup, losetup and blockdev; the Docker host grants
+// privileged /dev access and registered linear support. Individual faults
+// check their own registered target before use. No host
 // module is loaded. Customizers reach the keeper; its identity, private tmpfs,
 // command and image must remain intact. Register its CleanupContainer before
 // the cluster's so cluster teardown precedes backing release.
