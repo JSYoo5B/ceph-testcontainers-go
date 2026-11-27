@@ -341,7 +341,7 @@ engine VM, and that is the part this step prepares.
 | CephFS through the kernel client (`mount -t ceph`) | nothing beyond `mount` | `ceph` and `libceph` | `cephfs-kernel`, `libceph` |
 | Network delay, loss and rate faults | `tc` in the netem helper image | the netem qdisc, and with peers the prio qdisc and the u32 classifier | `netem`, `prio`, `u32` |
 | Packet capture | `tcpdump` in the capture helper image | packet sockets | `packet` |
-| Block faults on an OSD device | `dmsetup` and `losetup` in the block fault helper image | loop devices and device-mapper with its `linear`, `error` and `delay` targets | `loop`, `dm`, `dm-delay` |
+| Block faults on an OSD device | `dmsetup` and `losetup` in the block fault helper image (`blockio.HelperImage`) | loop devices and device-mapper with its `linear`, `error` and `delay` targets | `loop`, `dm`, `dm-delay` |
 | OSD on a LUKS2 store | `cryptsetup` in the client role image | loop devices and the device-mapper `crypt` target | `loop`, `dm`, `dm-crypt` |
 
 No fixture maps an image through krbd, and only the kernel subtest of the

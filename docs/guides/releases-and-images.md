@@ -384,9 +384,10 @@ baseline feature and no default uses it.
 | Extension | API | Helper image | Contract |
 | --- | --- | --- | --- |
 | netem packet delay and loss | `ApplyNetworkProfile` (see [Fault injection](fault-injection.md#delaying-packets-below-ceph)) | `fault.NetemHelperImage` | netem contract 1 with its selector profiles: `sh`, `sleep`, `tc` and `ip` with JSON output, netem, `prio` and u32, `python3`; the engine grants `NET_ADMIN` to the helper and has the netem qdisc, and for peers the `prio` qdisc and the u32 classifier |
+| OSD main-device delay and EIO | `blockio.Run` (see [Fault injection](fault-injection.md#delaying-or-failing-an-osds-device)) | `blockio.HelperImage` | blockio contract 1: `python3`, `sh`, `sleep`, `dmsetup`, `losetup` and `blockdev`; the engine runs the helper privileged with its `/dev`, and its kernel has loop devices and device-mapper with the `linear` target, and `error` or `delay` for the fault applied |
 
-`NET_ADMIN` is granted only to the opt-in helper, not to the Ceph daemons.
-This extension does not require Docker's privileged mode. It delays, drops,
+`NET_ADMIN` is granted only to the opt-in netem helper, not to the Ceph
+daemons. The netem extension does not require Docker's privileged mode. It delays, drops,
 rate-limits, reorders, duplicates or corrupts the packets that a container
 sends, on the whole interface or only to selected peers, families and TCP
 ports, and with `NetworkProfile.Direction` also what peers send to it (shaped

@@ -28,9 +28,11 @@ client under test. A busy or unconfirmed consumer prevents `Terminate` from
 releasing the mapping and keeper. Terminate the cluster, retry backend cleanup,
 and use `Status.Released` to confirm release.
 
-The [blockio helper source and quick-check contract](https://github.com/JSYoo5B/ceph-testcontainers-images/tree/711be98130c5173ef63ce56edf48fbdbdfe086ba/image/extensions/blockio)
-provide the required tools; build an explicit local image from that source.
-There is no default or automatically published helper tag.
+`blockio.HelperImage` is the helper that ceph-testcontainers-images publishes
+for contract 1 of its blockio extension, for linux/amd64 and linux/arm64.
+`Run` never selects it by itself: pass it, or another image that meets the
+contract, as `img`. A reference you pass, a digest reference included, is
+used as given.
 
 The helper image must contain Python 3, `sh`, `sleep`, `dmsetup`, `losetup` and
 `blockdev`. The Docker host must already expose usable loop/device-mapper
@@ -44,16 +46,16 @@ checks delay against baseline and restored writes when available, separates a
 missing delay target from successful delay verification, checks EIO against
 client and OSD evidence, then verifies acknowledged bytes and a new write after
 restoration and explicit OSD restart. It also checks busy-consumer retention
-and retryable final release. Select an immutable helper image and compatible
-Ceph images in the environment:
+and retryable final release. Select compatible Ceph images in the
+environment:
 
 ```sh
-CEPH_TEST_BLOCKIO_HELPER_IMAGE='<helper image reference>' \
-  python3 .github/scripts/tag_scenarios.py optional --batch block_io \
+python3 .github/scripts/tag_scenarios.py optional --batch block_io \
   --directory artifacts/blockio-native
 ```
 
-The batch requires `CEPH_TEST_BLOCKIO_HELPER_IMAGE`. With a role layout, set both
+The batch runs `blockio.HelperImage`; set `CEPH_TEST_BLOCKIO_HELPER_IMAGE` to
+run another contract-1 helper instead. With a role layout, set both
 `CEPH_TEST_ESSENTIAL_IMAGE` and `CEPH_TEST_CLIENT_IMAGE`; otherwise
 `CEPH_TEST_IMAGE` selects the aggregate image. An environment-unavailable setup
 fails the selected batch with its classified cause; it is not a successful
@@ -69,6 +71,7 @@ keeper identity rather than forcing removal of a retained backend.
 For disposable GitHub-hosted qualification, manually dispatch **Block fault
 probe** with `public_api=true`. Set `prepare_kernel=true` only when admitting
 module setup on that disposable runner. The library never loads modules. The
-job builds the source-pinned helper without publishing it and requires actual
-Delay and EIO effects, recovery and release on every supported Ceph release.
+job pulls the helper by tag with the other test images, so a failed pull stops
+it before the tests, and requires actual Delay and EIO effects, recovery and
+release on every supported Ceph release.
 An unavailable target fails this qualification instead of counting as a pass.

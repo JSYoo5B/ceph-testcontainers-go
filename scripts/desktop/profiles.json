@@ -49,7 +49,7 @@
         "dm-delay"
       ],
       "kernel_parameters": {},
-      "basis": "single-cluster. fault/blockio builds a loop device and device-mapper linear, error and delay tables on the engine host."
+      "basis": "single-cluster. The fault/blockio keeper, a blockio.HelperImage container, builds a loop device and device-mapper linear, error and delay tables on the engine host."
     },
     "network-faults": {
       "description": "single-cluster plus packet delay, loss and rate faults, with peer selection",

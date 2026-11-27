@@ -20,7 +20,7 @@ run tests locally and how to add them is described in [Testing](testing.md).
 | Experiments | `experiments.yml` | manual only | One known-defect case with `go test`: every result line `REPRODUCED` on its default image, then, when a fixed image is given, the same results `NOT_REPRODUCED` with it injected |
 | Native regressions | `native-regressions.yml` | manual only | One optional batch chosen from the workflow's `batch` input, taking only its pass or failure: an experiment case, another optional native check or the `failure_archive` proof (see [Native regressions](#native-regressions) for how to list and dispatch the choices) |
 | ARM64 | `arm64.yml` | weekly (Wednesday 05:37 UTC); pull request touching its planner, image, storage, runtime template, bootstrap or helper paths; manual | The source-owned arm64 cohort on a native GitHub-hosted ARM64 runner (see [Native ARM64 cohort](#native-arm64-cohort)); not a required check |
-| Block fault probe | `block-fault-probe.yml` | pull request touching its scripts or workflow, manual | A research probe of delay and I/O-error tables on a scratch loop and device-mapper mapping, without Ceph; manual `public_api` also qualifies the public API on every supported release using a source-pinned helper; not a required check |
+| Block fault probe | `block-fault-probe.yml` | pull request touching its scripts or workflow, manual | A research probe of delay and I/O-error tables on a scratch loop and device-mapper mapping, without Ceph; manual `public_api` also qualifies the public API on every supported release with the published helper (`blockio.HelperImage`); not a required check |
 | CI command | `ci-command.yml` | pull request comment `/ci run ...`, `/ci require ...`, `/ci retry ...` or `/ci drop ...` | The named runtime batches on the pull request's head commit (see [Running chosen batches from a comment](#running-chosen-batches-from-a-comment)); the last three also change the pull request's [required requested CI](#requiring-requested-ci-before-a-merge) |
 | Requested CI gate | `requested-ci-gate.yml` | every pull request run of Code checks, when it is requested; manual | Runs no test. Sets the commit status `Required requested CI` on the head of every open pull request (see [Requiring requested CI before a merge](#requiring-requested-ci-before-a-merge)) |
 
@@ -378,10 +378,12 @@ batches on Squid 19.2.5 role images. The run is added beside the usual checks.
   (`tag_scenarios.py vocabulary`). One unknown name refuses the whole command,
   and the reply lists every unknown name.
 - **Block I/O.** Selecting `optional/block_io` prepares `loop` and `dm_delay` on
-  its disposable GitHub-hosted runner, builds and checks the pinned helper,
-  and runs the native batch on each selected release. A helper, native
-  assertion or cleanup failure fails the selection. This applies to both
-  advisory and required runs.
+  its disposable GitHub-hosted runner, pulls the published helper
+  (`blockio.HelperImage`) by tag with the other test images, and runs the
+  native batch on each selected release. A failed helper pull fails the test
+  image preparation before the batch runs; a native assertion or cleanup
+  failure fails the selection. This applies to both advisory and required
+  runs.
 - **Format.** The command must start its line and appear once per comment;
   quoted or fenced lines are ignored. Editing a comment does not run it.
 - **Authorization.** Only authors with association `OWNER`, `MEMBER` or
@@ -1415,7 +1417,9 @@ or require it with `/ci require optional/block_io`. To qualify it separately
 on every supported release, dispatch **Block fault probe**
 (`block-fault-probe.yml`) on the pull request branch with `public_api=true`
 and `prepare_kernel=true`. Verify that the run's commit is the pull
-request head. Both routes retain helper, native and cleanup results.
+request head. Both routes pull the helper by tag in their test image
+preparation, whose summary records what the engine reported for it, and
+retain native and cleanup results.
 
 `cephfs_fuse` (`TestCephFSFuseMount`) mounts CephFS with `ceph-fuse` in
 client containers given `/dev/fuse`, `CAP_SYS_ADMIN` and

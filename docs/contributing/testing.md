@@ -290,6 +290,16 @@ has FUSE allows: a Linux Docker Engine, or Docker Desktop (see
 privileges and, for its kernel subtest, a host kernel with the ceph filesystem
 type already registered.
 
+`block_io` (`TestBlockIOMainDeviceRecovery` and
+`TestBlockIORecoveryReadDeadline` in `internal/integration`) qualifies
+`fault/blockio` through its public API. It runs `blockio.HelperImage`, pulled
+by tag like any other test image; `CEPH_TEST_BLOCKIO_HELPER_IMAGE` selects
+another contract-1 helper instead. The engine host must already have loop
+devices and device-mapper with the `linear` and `error` targets. A missing
+`delay` target is recorded as not eligible, and fails the batch when
+`CEPH_TEST_BLOCKIO_REQUIRE_DELAY=1`, as CI sets it. See the
+[`fault/blockio` README](../../fault/blockio/README.md).
+
 `osd_encrypted_store` (`TestEncryptedBlockDeviceOSD` in `internal/integration`)
 runs one BlueStore OSD on a linear device-mapper node over a LUKS2 dm-crypt
 mapping of a loop device whose backing file lives on a privileged keeper's
