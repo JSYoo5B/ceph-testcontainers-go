@@ -97,6 +97,61 @@ def run_command(step):
     return "\n".join(lines)
 
 
+# The options of "python -m unittest discover" that take a value, by every
+# spelling. The selection options are mapped to their discovery field.
+DISCOVER_FIELDS = {"-s": "start", "--start-directory": "start", "-p": "pattern", "--pattern": "pattern",
+                   "-t": "top", "--top-level-directory": "top"}
+DISCOVER_VALUED = {"-k", "--durations"}
+
+
+def unittest_discoveries(text):
+    """The (start directory, pattern, top-level directory) of every unittest
+    discover command line in text, with unittest's defaults filled in and
+    output options such as -v ignored."""
+    found = set()
+    for line in text.splitlines():
+        try:
+            words = shlex.split(line, comments=True)
+        except ValueError:
+            continue
+        for index in range(len(words) - 2):
+            if words[index:index + 3] != ["-m", "unittest", "discover"]:
+                continue
+            fields, positional, rest = {}, [], iter(words[index + 3:])
+            for word in rest:
+                name, _, value = word.partition("=")
+                if name in DISCOVER_FIELDS:
+                    fields[DISCOVER_FIELDS[name]] = value if value else next(rest, "")
+                elif name in DISCOVER_VALUED:
+                    if not value:
+                        next(rest, None)
+                elif not word.startswith("-"):
+                    positional.append(word)
+            for field, value in zip(("start", "pattern", "top"), positional):
+                fields.setdefault(field, value)
+            found.add((fields.get("start", "."), fields.get("pattern", "test*.py"), fields.get("top")))
+    return found
+
+
+class UnittestDiscoveriesTests(unittest.TestCase):
+    def test_output_and_filter_options_do_not_change_the_discovery(self):
+        expected = {(".github/scripts", "test_*.py", None)}
+        for line in ("python3 -m unittest discover -s .github/scripts -p 'test_*.py'",
+                     "python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v",
+                     "python3 -m unittest discover -q -b -k name -s .github/scripts -p 'test_*.py'",
+                     "python3 -m unittest discover --start-directory=.github/scripts --pattern 'test_*.py' --locals",
+                     "  python3 -m unittest discover .github/scripts 'test_*.py'  # comment"):
+            with self.subTest(line=line):
+                self.assertEqual(unittest_discoveries(line), expected)
+
+    def test_directories_patterns_and_defaults_are_distinct(self):
+        self.assertEqual(unittest_discoveries("python3 -m unittest discover"), {(".", "test*.py", None)})
+        self.assertEqual(unittest_discoveries("python -m unittest discover -s a -p x.py -t .\n"
+                                              "python3 -m unittest discover -s b -p x.py -v"),
+                         {("a", "x.py", "."), ("b", "x.py", None)})
+        self.assertEqual(unittest_discoveries("python3 -m unittest test_module -v"), set())
+
+
 def engine_step(job_steps, operation):
     matches = [step for step in job_steps if re.search(
         r"\btag_scenarios\.py " + re.escape(operation) + r"(?:\s|$)", run_command(step))]
@@ -1185,11 +1240,10 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertTrue(list((ROOT / ".github/scripts").glob("test_*.py")))
         # A contributor who runs the testing guide's local checks runs every
         # Python test that CI discovers.
-        discovered = re.findall(r"python3 -m unittest discover (-s \S+ -p \S+) -v", jobs["static"])
-        guide = (ROOT / "docs/contributing/testing.md").read_text()
+        discovered = unittest_discoveries(jobs["static"])
+        guide = unittest_discoveries((ROOT / "docs/contributing/testing.md").read_text())
         self.assertTrue(discovered)
-        for command in discovered:
-            self.assertIn(f"python3 -m unittest discover {command}\n", guide)
+        self.assertLessEqual(discovered, guide, "CI discovers Python tests that the testing guide does not run")
         coverage_steps = steps(jobs["tag-coverage"])
         coverage = shlex.split(run_command(engine_step(coverage_steps, "plan")))
         self.assertIn("--verify", coverage)
