@@ -41,7 +41,9 @@ const (
 
 // LogConfig bounds one CollectProcessLog or CollectManagerRefusals. MaxBytes
 // bounds the text of each log window that is read, the lines' Docker
-// timestamps excluded; zero selects 8 MiB, and at most 64 MiB is accepted.
+// timestamps excluded; zero selects 8 MiB, and at most 64 MiB is accepted. A
+// process log keeps its start line even when that line alone exceeds
+// MaxBytes, and then reports LogTruncated.
 // RedactValues are additional secrets to mask, as in Config: at most 128
 // values of up to 4096 bytes. Invalid limits are refused with an error that
 // matches ceph.ErrInvalidRequest.
@@ -294,7 +296,10 @@ type logWindow struct {
 // once full.
 func (w *logWindow) add(line LogLine, cut bool) bool {
 	if w.process && processBoundary(line.Text) {
-		w.started, w.full, w.cut, w.size, w.lines = true, false, cut, len(line.Text), []LogLine{line}
+		// The start line is kept even when it alone exceeds max; the window
+		// is then truncated like any other that does.
+		w.started, w.cut, w.size, w.lines = true, cut, len(line.Text), []LogLine{line}
+		w.full = w.size > w.max
 		return true
 	}
 	if w.full {

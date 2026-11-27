@@ -166,10 +166,12 @@ func TestProcessLogStatus(t *testing.T) {
 		lines   int
 		started bool
 	}{
-		"complete":           {&fakeLogContainer{started: []time.Duration{10 * time.Second}, entries: lines}, 1 << 20, LogComplete, 3, true},
-		"truncated":          {&fakeLogContainer{started: []time.Duration{10 * time.Second}, entries: lines}, len(start.text) + 50, LogTruncated, 2, true},
-		"bound at the start": {&fakeLogContainer{started: []time.Duration{10 * time.Second}, entries: lines}, 1, LogTruncated, 1, true},
-		"no start line":      {&fakeLogContainer{started: []time.Duration{10 * time.Second}, entries: lines[1:]}, 1 << 20, LogStartNotFound, 2, false},
+		"complete":                {&fakeLogContainer{started: []time.Duration{10 * time.Second}, entries: lines}, 1 << 20, LogComplete, 3, true},
+		"truncated":               {&fakeLogContainer{started: []time.Duration{10 * time.Second}, entries: lines}, len(start.text) + 50, LogTruncated, 2, true},
+		"bound at the start":      {&fakeLogContainer{started: []time.Duration{10 * time.Second}, entries: lines}, 1, LogTruncated, 1, true},
+		"only an oversized start": {&fakeLogContainer{started: []time.Duration{10 * time.Second}, entries: lines[:1]}, 1, LogTruncated, 1, true},
+		"only a start that fits":  {&fakeLogContainer{started: []time.Duration{10 * time.Second}, entries: lines[:1]}, len(start.text), LogComplete, 1, true},
+		"no start line":           {&fakeLogContainer{started: []time.Duration{10 * time.Second}, entries: lines[1:]}, 1 << 20, LogStartNotFound, 2, false},
 		"start before the run": {&fakeLogContainer{started: []time.Duration{20 * time.Second},
 			entries: append(lines, cephEntry(21*time.Second, " 0", "after"))}, 1 << 20, LogStartNotFound, 1, false},
 		"restarted":     {&fakeLogContainer{started: []time.Duration{10 * time.Second, 30 * time.Second}, entries: lines}, 1 << 20, LogChanged, 3, true},
@@ -202,6 +204,12 @@ func TestProcessLogStartsAgainAfterATruncatedProcess(t *testing.T) {
 	log, err := readProcessLog(t.Context(), newProcessLogDocker(map[string]*fakeLogContainer{"m": ctr}), logMember("mgr", "a", "m"), LogConfig{MaxBytes: 600}, noRedaction, nil)
 	if err != nil || log.Status != LogComplete || len(log.Lines) != 2 || !log.Start.Time.Equal(processLogEpoch.Add(4*time.Second)) {
 		t.Fatalf("log = %+v, %v", log, err)
+	}
+	// A later start that alone exceeds the bound truncates the new window.
+	ctr.entries = append(ctr.entries[:3:3], startEntry(4*time.Second, "ceph-mgr", 7))
+	log, err = readProcessLog(t.Context(), newProcessLogDocker(map[string]*fakeLogContainer{"m": ctr}), logMember("mgr", "a", "m"), LogConfig{MaxBytes: 100}, noRedaction, nil)
+	if err != nil || log.Status != LogTruncated || len(log.Lines) != 1 || !log.Start.Time.Equal(processLogEpoch.Add(4*time.Second)) {
+		t.Fatalf("oversized later start = %+v, %v", log, err)
 	}
 }
 
