@@ -228,3 +228,38 @@ subprocess.run = run
 		})
 	}
 }
+
+// The keeper's probe reads the image tools through the probe it shares with
+// ceph/preflight and keeps the classification Run reports: a missing tool is
+// an image capability, before the private tmpfs or host gates are read.
+func TestOwnerProbeClassifiesMissingToolsAsImageCapability(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 is not available")
+	}
+	shell, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh is not available")
+	}
+	dir := t.TempDir()
+	for _, name := range []string{"sh", "sleep", "losetup"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!"+shell+"\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	script := strings.Replace(ownerScript, "generation=instance()", `generation="test-keeper"`, 1)
+	program := filepath.Join(dir, "owner.py")
+	if err := os.WriteFile(program, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	b := &Container{name: "owned", size: 64 << 20}
+	b.nativeCommand = func(ctx context.Context, args ...string) ([]byte, error) {
+		cmd := exec.CommandContext(ctx, python, append([]string{"-I", program}, args[3:]...)...)
+		cmd.Env = []string{"PATH=" + dir}
+		return cmd.Output()
+	}
+	_, err = b.owner(t.Context(), "probe")
+	if !errors.Is(err, ceph.ErrImageCapability) || !strings.Contains(err.Error(), "missing executables: dmsetup, blockdev") {
+		t.Fatalf("missing tools were not an image capability: %v", err)
+	}
+}

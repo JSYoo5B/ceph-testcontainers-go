@@ -175,35 +175,27 @@ def spawn(which, attempt=""):
             save(work+"/create.json",{"lease":name,"instance":generation,"done":True,"Error":str(error),"build_not_launched":True})
         else:
             raise
-if expected and expected!=generation:
+` + control.ProbeSource + `if expected and expected!=generation:
     raise SystemExit("keeper generation changed; refusing action")
 if action=="exec":
     os.environ["TC_DM_UUID"]="TC-BLK-"+name
     os.execvp(sys.argv[5],sys.argv[5:])
 elif action=="probe":
-    missing=[p for p in ("sh","sleep","dmsetup","losetup","blockdev") if shutil.which(p) is None]
-    if missing: emit({"ErrorKind":"image","Error":"missing executables: "+", ".join(missing)})
-    else:
-        try:
-            command("losetup","--version");command("blockdev","--version");command("dmsetup","help")
-        except Exception as e: emit({"ErrorKind":"image","Error":str(e)});sys.exit(0)
-        roots=[]
-        with open("/proc/self/mountinfo") as f:
-            for line in f:
-                left,_,right=line.partition(" - ")
-                if left.split()[4]==work: roots.append(right.split()[0])
-        if roots!=["tmpfs"]: emit({"ErrorKind":"environment","Error":"private tmpfs mount was not retained"});sys.exit(0)
-        cap=os.statvfs(work);total=cap.f_blocks*cap.f_frsize
-        if not size+(64<<20)<=total<size+(64<<20)+4096:
-            emit({"ErrorKind":"environment","Error":"private tmpfs size differs from the requested bound"});sys.exit(0)
-        # Check driver registration before dmsetup can try to load dm_mod.
-        if not os.path.exists("/sys/class/misc/device-mapper") or not os.path.exists("/sys/class/misc/loop-control"):
-            emit({"ErrorKind":"environment","Error":"device-mapper or loop driver is not registered"});sys.exit(0)
-        if not all(os.path.exists(p) and stat.S_ISCHR(os.stat(p).st_mode) and os.access(p,os.R_OK|os.W_OK) for p in ("/dev/mapper/control","/dev/loop-control")):
-            emit({"ErrorKind":"environment","Error":"host control devices are not accessible"});sys.exit(0)
-        try: targets=[line.split()[0] for line in command("dmsetup","targets").splitlines() if line.strip()]
-        except Exception as e: emit({"ErrorKind":"environment","Error":str(e)});sys.exit(0)
-        emit({"targets":targets})
+    tools=probe_tools(command)[0]
+    if tools["state"]!="observed": emit({"ErrorKind":tools["kind"],"Error":tools["error"]});sys.exit(0)
+    roots=[]
+    with open("/proc/self/mountinfo") as f:
+        for line in f:
+            left,_,right=line.partition(" - ")
+            if left.split()[4]==work: roots.append(right.split()[0])
+    if roots!=["tmpfs"]: emit({"ErrorKind":"environment","Error":"private tmpfs mount was not retained"});sys.exit(0)
+    cap=os.statvfs(work);total=cap.f_blocks*cap.f_frsize
+    if not size+(64<<20)<=total<size+(64<<20)+4096:
+        emit({"ErrorKind":"environment","Error":"private tmpfs size differs from the requested bound"});sys.exit(0)
+    gates,targets=probe_host(command)
+    for gate in gates:
+        if gate["state"]!="observed": emit({"ErrorKind":gate["kind"],"Error":gate["error"]});sys.exit(0)
+    emit({"targets":targets})
 elif action=="start":
     spawn("build");emit({"done":False})
 elif action=="build":
