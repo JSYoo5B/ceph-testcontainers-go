@@ -282,7 +282,7 @@ func (s *debugLevelState) finish(state DebugLevelState, readback string, err err
 // sameGeneration checks the target against the window's incarnation: changed
 // is a terminal mismatch, and err is a check that could not be completed.
 func (s *debugLevelState) sameGeneration(ctx context.Context) (changed bool, err error) {
-	owned, identity, running, paused, err := s.target.Generation(ctx)
+	owned, identity, _, running, paused, err := s.target.Generation(ctx)
 	return overridehook.CheckDebugGeneration(owned, identity, running, paused, err, s.identity, s.setting.Daemon)
 }
 
@@ -330,7 +330,7 @@ func openDebugLevel(ctx context.Context, registry overridehook.DebugWindows, tar
 	}
 	s.lock <- struct{}{}
 	defer func() { <-s.lock }()
-	owner, identity, running, paused, err := target.Generation(ctx)
+	owner, identity, gid, running, paused, err := target.Generation(ctx)
 	if err == nil && (!owner || !running || paused || identity == "") {
 		err = fmt.Errorf("%s must be an owned running daemon", setting.Daemon)
 	}
@@ -340,7 +340,7 @@ func openDebugLevel(ctx context.Context, registry overridehook.DebugWindows, tar
 	s.identity = identity
 	s.mu.Lock()
 	s.receipt.Generation = identity
-	s.receipt.GID = overridehook.DebugIdentityGID(identity)
+	s.receipt.GID = gid
 	s.mu.Unlock()
 	prior, err := target.Get(ctx, setting.Name)
 	if err != nil {

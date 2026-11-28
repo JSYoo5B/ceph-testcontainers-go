@@ -18,8 +18,6 @@ package overridehook
 import (
 	"context"
 	"errors"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -214,8 +212,9 @@ type DebugTarget interface {
 	// when the cluster no longer owns the same descriptor or has terminated,
 	// and identity is the container ID and start time, followed for a
 	// running MDS or MGR by "/gid=<native GID>" and, for a MGR, its admin
-	// socket identity; see DebugIdentityGID.
-	Generation(ctx context.Context) (owned bool, identity string, running, paused bool, err error)
+	// socket identity. gid is that native GID, or 0 for an OSD and for an
+	// MDS or MGR that is not running or is paused.
+	Generation(ctx context.Context) (owned bool, identity string, gid uint64, running, paused bool, err error)
 	// Get reads the daemon's effective level of option name.
 	Get(ctx context.Context, name string) (string, error)
 	// Set issues the set only while the daemon runs generation identity. A
@@ -248,20 +247,6 @@ func OpenDebugTarget(ctx context.Context, c *ceph.Container, daemon string) (Deb
 		return nil, errors.New("overridehook: the debug target of package ceph has an unexpected shape")
 	}
 	return t, nil
-}
-
-// DebugIdentityGID returns the native GID that a debug target's identity
-// names, or 0 for an identity without one (an OSD's).
-func DebugIdentityGID(identity string) uint64 {
-	for _, part := range strings.Split(identity, "/")[1:] {
-		if value, ok := strings.CutPrefix(part, "gid="); ok {
-			gid, err := strconv.ParseUint(value, 10, 64)
-			if err == nil {
-				return gid
-			}
-		}
-	}
-	return 0
 }
 
 // DebugWindowRegistry returns the cluster's registry of open debug level
