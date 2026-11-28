@@ -2,7 +2,6 @@ package cephfs
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -115,9 +114,9 @@ func waitSurvivorAffinity(ctx context.Context, c *ceph.Container, survivors map[
 // survivor daemons it lists whose join_fscid is not the FSMap ID of their own
 // filesystem. survivors maps a filesystem's FSMap ID to its owned daemon names.
 func survivorAffinityLost(data []byte, survivors map[int64][]string) ([]string, error) {
-	var fsmap fsbase.FSMap
-	if err := json.Unmarshal(data, &fsmap); err != nil || fsmap.Filesystems == nil {
-		return nil, fmt.Errorf("decode FSMap after removal: %v", err)
+	fsmap, err := fsbase.DecodeFSMap(data)
+	if err != nil {
+		return nil, fmt.Errorf("decode FSMap after removal: %w", err)
 	}
 	want := make(map[string]int64)
 	for id, names := range survivors {

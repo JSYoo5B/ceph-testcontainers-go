@@ -62,7 +62,7 @@ func drainFilesystemForRemoval(ctx context.Context, c *ceph.Container, fs *Files
 	if err != nil {
 		return fmt.Errorf("read target before shutdown: %w", err)
 	}
-	if fs.base().Native() != nil && before.id != fs.base().Native().ID {
+	if before.id != fs.base().Native().ID {
 		return errors.New("filesystem identity changed before shutdown")
 	}
 	if _, err := c.Ceph(ctx, "fs", "set", fs.base().Name(), "down", "true"); err != nil {

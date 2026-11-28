@@ -222,49 +222,23 @@ func (f mdsFleet) beginMDSReadOnlyOperation(ctx context.Context) (context.Contex
 	return ctx, native, done, err
 }
 
-// readMDSReadOnlyTopology snapshots the owned daemons, reads one FSMap and
-// decodes the filesystem's MDS status with it. A terminated cluster and a
-// filesystem that was removed or recreated under the same name are
-// ceph.ErrInvalidRequest; the FSMap is returned for the GID search.
+// readMDSReadOnlyTopology is one MDS status read, as MDSStatus reads it,
+// that also refuses a filesystem that is not the one the fault captured. A
+// terminated cluster and a filesystem that was removed or recreated under the
+// same name are ceph.ErrInvalidRequest; the FSMap is returned for the GID
+// search.
 func (f mdsFleet) readMDSReadOnlyTopology(ctx context.Context, state *mdsReadOnlyState) (*FilesystemStatus, fsbase.FSMap, error) {
-	owner, err := f.ownerSample(ctx)
-	if err != nil {
-		return nil, fsbase.FSMap{}, err
-	}
-	name := f.core.Name()
-	switch {
-	case !owner.open:
-		return nil, fsbase.FSMap{}, mdsReadOnlyInvalid("CephFS MDS read-only fault: the cluster is terminated")
-	case !owner.registered || owner.native == nil:
-		return nil, fsbase.FSMap{}, mdsReadOnlyInvalid("CephFS MDS read-only fault: cephfs %q was removed or this handle no longer owns it", name)
-	case owner.native.ID != state.fsID || owner.native.MetadataPool != state.metadataPool || owner.native.DefaultPool != state.defaultPool:
-		return nil, fsbase.FSMap{}, mdsReadOnlyInvalid("CephFS MDS read-only fault: cephfs %q is not the filesystem of FSMap ID %d the fault captured", name, state.fsID)
-	}
-	data, err := f.readFSMap(ctx)
-	if err != nil {
-		return nil, fsbase.FSMap{}, fmt.Errorf("read cephfs MDS status: %w", err)
-	}
-	topology, err := decodeCephFSMDSTopology(data, name, owner.daemons)
-	if errors.Is(err, errFilesystemAbsent) {
-		if err := checkWatchedFSMap(data, name); err != nil {
-			return nil, fsbase.FSMap{}, err
-		}
-		return nil, fsbase.FSMap{}, mdsReadOnlyInvalid("CephFS MDS read-only fault: cephfs %q (FSMap ID %d) is absent from the FSMap", name, state.fsID)
+	sample, fsmap, err := f.readMDSStatus(ctx)
+	if errors.Is(err, ceph.ErrInvalidRequest) {
+		return nil, fsbase.FSMap{}, fmt.Errorf("CephFS MDS read-only fault: %w", err)
 	}
 	if err != nil {
 		return nil, fsbase.FSMap{}, err
 	}
-	if topology.status.FilesystemID != state.fsID || topology.metadataPool != state.metadataPool || topology.defaultPool != state.defaultPool {
-		if err := checkWatchedFSMap(data, name); err != nil {
-			return nil, fsbase.FSMap{}, err
-		}
-		return nil, fsbase.FSMap{}, mdsReadOnlyInvalid("CephFS MDS read-only fault: cephfs %q now has FSMap ID %d, not the captured %d: recreated under the same name", name, topology.status.FilesystemID, state.fsID)
+	if sample.status.FilesystemID != state.fsID {
+		return nil, fsbase.FSMap{}, mdsReadOnlyInvalid("CephFS MDS read-only fault: cephfs %q is not the filesystem of FSMap ID %d the fault captured", f.core.Name(), state.fsID)
 	}
-	var fsmap fsbase.FSMap
-	if err := json.Unmarshal(data, &fsmap); err != nil {
-		return nil, fsbase.FSMap{}, fmt.Errorf("decode cephfs FSMap: %w", err)
-	}
-	return topology.status, fsmap, nil
+	return &sample.status, fsmap, nil
 }
 
 // checkMDSReadOnlyOwner refuses, under the topology lock, a daemon handle
@@ -337,7 +311,7 @@ func (f mdsFleet) readMDSReadOnlyReplacement(ctx context.Context, state *mdsRead
 	if err != nil {
 		return MDSStatus{}, false, err
 	}
-	if mdsGIDRegistered(fsmap, state.target.GID) {
+	if fsmap.HasDaemon("", state.target.GID) {
 		return MDSStatus{}, false, nil
 	}
 	index := slices.IndexFunc(status.Active, func(active MDSStatus) bool { return active.Rank == state.target.Rank })
@@ -356,24 +330,6 @@ func (f mdsFleet) readMDSReadOnlyReplacement(ctx context.Context, state *mdsRead
 		return MDSStatus{}, false, err
 	}
 	return holder, true, nil
-}
-
-// mdsGIDRegistered reports whether any filesystem or the standby list of
-// fsmap names gid.
-func mdsGIDRegistered(fsmap fsbase.FSMap, gid uint64) bool {
-	for _, info := range fsmap.Standbys {
-		if info.GID == gid {
-			return true
-		}
-	}
-	for _, filesystem := range fsmap.Filesystems {
-		for _, info := range filesystem.MDSMap.Info {
-			if info.GID == gid {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // mdsProcessStatus is the part of ceph tell mds.<gid> status that binds a

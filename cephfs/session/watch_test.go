@@ -159,8 +159,7 @@ func gapRead(t *testing.T, s *sampler, want string) sample {
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("read error = %v, want a gap containing %q", err, want)
 	}
-	var ended watchEnded
-	if errors.As(err, &ended) {
+	if errors.Is(err, ceph.ErrInvalidRequest) {
 		t.Fatalf("a gap ended the watch: %v", err)
 	}
 	if out.sessions != nil || out.removed != nil || out.added != nil {
@@ -304,8 +303,7 @@ func TestSessionWatchEndsOnAReplacedOrRemovedFilesystem(t *testing.T) {
 	ended := func(t *testing.T, f *watchFake, want string) {
 		t.Helper()
 		_, err := newSampler(f.core, nil).read(t.Context())
-		var e watchEnded
-		if !errors.As(err, &e) || !strings.Contains(err.Error(), want) {
+		if !errors.Is(err, ceph.ErrInvalidRequest) || !strings.Contains(err.Error(), want) {
 			t.Fatalf("read error = %v, want the end of the watch with %q", err, want)
 		}
 	}

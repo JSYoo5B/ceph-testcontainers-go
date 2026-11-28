@@ -136,16 +136,16 @@ func (l *Lease) Watch(ctx context.Context, cfg ceph.WatchConfig) (*LeaseWatch, e
 	if err != nil {
 		return nil, servicehook.Invalid(fmt.Errorf("watch snapshot schedule: %v", err))
 	}
-	return startLeaseWatch(ctx, settings, fmt.Sprintf("watch snapshot schedule %s of %s", l.owned.repeat, l.owned.path), l.watchRead)
+	return startLeaseWatch(ctx, settings, l.watchName(), l.watchRead)
 }
 
 // watchRead is one admitted read of the lease's bound schedule. A refusal
-// that no later read can undo is a leaseWatchEnded error.
+// that no later read can undo ends the watch (watchEnded).
 func (l *Lease) watchRead(ctx context.Context) (Status, error) {
 	ctx, done, err := l.begin(ctx)
 	if err != nil {
 		if fsbase.IdentityChanged(err) {
-			return Status{}, leaseWatchEnded{err}
+			return Status{}, l.watchEnded(err)
 		}
 		return Status{}, err
 	}
@@ -153,9 +153,9 @@ func (l *Lease) watchRead(ctx context.Context) (Status, error) {
 	// Restore changes these under the admission that this read holds.
 	switch {
 	case l.restored:
-		return Status{}, leaseWatchEnded{errors.New("the lease was restored")}
+		return Status{}, l.watchEnded(errors.New("the lease was restored"))
 	case l.added == "":
-		return Status{}, leaseWatchEnded{errors.New("the lease's add was never confirmed: restore the lease")}
+		return Status{}, l.watchEnded(errors.New("the lease's add was never confirmed: restore the lease"))
 	}
 	listed, err := statuses(ctx, l.filesystem.Volumes(), l.owned.path)
 	if err != nil {
@@ -163,32 +163,30 @@ func (l *Lease) watchRead(ctx context.Context) (Status, error) {
 	}
 	status, err := l.match(listed)
 	if err != nil {
-		return Status{}, leaseWatchEnded{err}
+		return Status{}, l.watchEnded(err)
 	}
 	if status == nil {
-		return Status{}, leaseWatchEnded{fmt.Errorf("the module no longer lists the lease's schedule, added %s", l.added)}
+		return Status{}, l.watchEnded(fmt.Errorf("the module no longer lists the lease's schedule, added %s", l.added))
 	}
 	return *status, nil
 }
 
-// leaseWatchEnded is a read refusal that a later read cannot undo.
-type leaseWatchEnded struct{ err error }
+// watchName names the lease's watch in its errors.
+func (l *Lease) watchName() string {
+	return fmt.Sprintf("watch snapshot schedule %s of %s", l.owned.repeat, l.owned.path)
+}
 
-func (e leaseWatchEnded) Error() string { return e.err.Error() }
-func (e leaseWatchEnded) Unwrap() error { return e.err }
+// watchEnded is a read refusal that a later read cannot undo: it ends the
+// watch with ceph.ErrInvalidRequest, named by the watch.
+func (l *Lease) watchEnded(err error) error {
+	return watch.Fatal(servicehook.Invalid(fmt.Errorf("%s: %w", l.watchName(), err)))
+}
 
 func startLeaseWatch(ctx context.Context, settings watch.Settings, name string, read func(context.Context) (Status, error)) (*LeaseWatch, error) {
 	stream, err := watch.Start(ctx, watch.Spec[Status, LeaseWatchEvent]{
 		Name:     name,
 		Settings: settings,
-		Read: func(ctx context.Context) (Status, error) {
-			status, err := read(ctx)
-			var ended leaseWatchEnded
-			if errors.As(err, &ended) {
-				return Status{}, watch.Fatal(servicehook.Invalid(fmt.Errorf("%s: %w", name, ended.err)))
-			}
-			return status, err
-		},
+		Read:     read,
 		Equal: func(a, b Status) bool {
 			return a.Active == b.Active && a.Created == b.Created && a.Pruned == b.Pruned &&
 				a.First.Equal(b.First) && a.Last.Equal(b.Last) && maps.Equal(a.Retention, b.Retention)

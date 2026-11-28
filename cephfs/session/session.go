@@ -274,14 +274,6 @@ func readLimits(ctx context.Context, v fsbase.VolumeCommands, fsID int64) (Limit
 	return checkLimits(limits)
 }
 
-func parseLimits(data []byte, fsID int64) (Limits, error) {
-	var limits nativeLimits
-	if err := fsbase.DecodeMDSMap(data, fsID, "session timeouts", &limits); err != nil {
-		return Limits{}, err
-	}
-	return checkLimits(limits)
-}
-
 func checkLimits(limits nativeLimits) (Limits, error) {
 	if limits.SessionTimeout == nil || limits.SessionAutoclose == nil {
 		return Limits{}, errors.New("decode CephFS session timeouts")

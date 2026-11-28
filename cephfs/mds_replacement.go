@@ -45,11 +45,11 @@ type cephFSMDSReplacement struct {
 //purpose:construction,condition
 func (stopped *MDS) AddReplacement(ctx context.Context) (*MDS, error) {
 	if stopped == nil || stopped.identity == nil || stopped.identity.fleet.core == nil {
-		return nil, errors.New("original owned MDS creation identity is unavailable")
+		return nil, errMDSUnavailable
 	}
 	fleet := stopped.identity.fleet
 	if fleet.core.Cluster() == nil {
-		return nil, errors.New("original MDS replacement filesystem is unavailable")
+		return nil, errNilCluster
 	}
 	return fleet.addMDSReplacement(ctx, stopped, fleet.startService)
 }
@@ -59,7 +59,7 @@ func (f mdsFleet) addMDSReplacement(parent context.Context, stopped *MDS, start 
 		return nil, err
 	}
 	if stopped == nil || stopped.identity == nil {
-		return nil, errors.New("original owned MDS creation identity is unavailable")
+		return nil, errMDSUnavailable
 	}
 	c := f.core.Cluster()
 	ctx, cancel := context.WithTimeout(parent, servicehook.StartupTimeout(c))

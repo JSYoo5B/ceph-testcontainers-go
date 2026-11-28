@@ -341,7 +341,7 @@ func TestRemoveAfterPartialStartKeepsUnacquiredPools(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newCephStateFake()
-			f.Output["fs dump --format json"] = `{"filesystems":[]}`
+			f.Output["fs dump --format json"] = `{"standbys":[],"filesystems":[]}`
 			if tt.collision != "" {
 				f.AddFixturePool(tt.collision, false)
 			}
@@ -375,7 +375,7 @@ func TestRemoveAfterPartialStartKeepsUnacquiredPools(t *testing.T) {
 
 func TestRemoveRefusesUnconfirmedPartialPoolIdentity(t *testing.T) {
 	f := newCephStateFake()
-	f.Output["fs dump --format json"] = `{"filesystems":[]}`
+	f.Output["fs dump --format json"] = `{"standbys":[],"filesystems":[]}`
 	f.FailNext("osd pool application enable app-metadata cephfs", 1)
 	f.FailNext("osd pool ls detail --format json", 1)
 	cluster := poolFixtureCluster(poolSetupModel{f}, 3)
@@ -422,14 +422,14 @@ func (m filesystemSetupModel) Exec(ctx context.Context, args []string, opts ...t
 		for _, pool := range m.Pools {
 			ids[pool.Name] = pool.ID
 		}
-		m.Output["fs dump --format json"] = fmt.Sprintf(`{"filesystems":[{"id":41,"mdsmap":{"fs_name":"%s","metadata_pool":%d,"data_pools":[%d]}}]}`, words[2], ids[words[3]], ids[words[4]])
+		m.Output["fs dump --format json"] = fmt.Sprintf(`{"standbys":[],"filesystems":[{"id":41,"mdsmap":{"fs_name":"%s","metadata_pool":%d,"data_pools":[%d]}}]}`, words[2], ids[words[3]], ids[words[4]])
 		m.Output["fs get app --format json"] = shutdownMap(41, 0, `{}`)
 	}
 	return code, out, err
 }
 func TestPartialStartWithCapturedFilesystemCanBeRemoved(t *testing.T) {
 	model := newCephStateFake()
-	model.Output["fs dump --format json"] = `{"filesystems":[]}`
+	model.Output["fs dump --format json"] = `{"standbys":[],"filesystems":[]}`
 	model.FailNext("fs set app allow_standby_replay false", 1)
 	cluster := poolFixtureCluster(filesystemSetupModel{poolSetupModel{model}}, 3)
 	fs, err := Start(t.Context(), cluster, Config{Name: "app"})

@@ -52,17 +52,18 @@ type FSMap struct {
 	} `json:"filesystems"`
 }
 
-// DecodeFSMap decodes one fs dump reply. A reply that is not a JSON object or
-// lacks the filesystems list (absent or null) is refused, because an empty
-// list and a missing one mean different things; a missing standbys list is
-// an FSMap without standbys.
+// DecodeFSMap decodes one fs dump reply. Every FSMap reader uses it, so they
+// share one presence rule: a reply that is not a JSON object, or that lacks
+// the filesystems or the standbys list (absent or null), is refused, because
+// an empty list and a missing one mean different things: a missing list
+// would hide a filesystem or a daemon.
 func DecodeFSMap(data []byte) (FSMap, error) {
 	var fsmap FSMap
 	if err := json.Unmarshal(data, &fsmap); err != nil {
 		return FSMap{}, fmt.Errorf("decode FSMap: %w", err)
 	}
-	if fsmap.Filesystems == nil {
-		return FSMap{}, errors.New("decode FSMap: the filesystems list is missing")
+	if fsmap.Filesystems == nil || fsmap.Standbys == nil {
+		return FSMap{}, errors.New("decode FSMap: the filesystems or standbys list is missing")
 	}
 	return fsmap, nil
 }

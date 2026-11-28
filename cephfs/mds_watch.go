@@ -139,7 +139,7 @@ type mdsWatchRead func(context.Context) (owner mdsOwnerSample, data []byte, err 
 //purpose:observation
 func (fs *Filesystem) WatchMDSs(ctx context.Context, cfg ceph.WatchConfig) (*MDSWatch, error) {
 	if fs == nil || fs.base().Cluster() == nil {
-		return nil, mdsWatchInvalid("cephfs cluster is unavailable")
+		return nil, errNilCluster
 	}
 	settings, err := watch.Validate(cfg.Interval, cfg.QueryTimeout, cfg.Buffer, mdsWatchDefaultInterval)
 	if err != nil {
@@ -179,7 +179,11 @@ func startMDSWatch(ctx context.Context, settings watch.Settings, name string, re
 			if err != nil {
 				return mdsSample{}, err
 			}
-			return resolveWatchedMDSs(name, owner, data)
+			sample, _, err := resolveMDSStatus(name, owner, data)
+			if errors.Is(err, ceph.ErrInvalidRequest) {
+				return mdsSample{}, watch.Fatal(fmt.Errorf("%s: %w", mdsWatchOperation, err))
+			}
+			return sample, err
 		},
 		Equal: func(a, b mdsSample) bool { return mdsStatusEqual(a.status, b.status) },
 		Event: func(m watch.Meta, s mdsSample, err error) MDSWatchEvent {
@@ -194,39 +198,6 @@ func startMDSWatch(ctx context.Context, settings watch.Settings, name string, re
 		return nil, err
 	}
 	return &MDSWatch{stream: stream}, nil
-}
-
-// resolveWatchedMDSs checks one read against the watched identity and
-// decodes it. A refused owner state, an absent filesystem and an identity
-// change are fatal: a later read cannot undo them. A decode failure is a gap.
-func resolveWatchedMDSs(name string, owner mdsOwnerSample, data []byte) (mdsSample, error) {
-	switch {
-	case !owner.open:
-		return mdsSample{}, watch.Fatal(mdsWatchInvalid("the cluster is terminated"))
-	case !owner.registered:
-		return mdsSample{}, watch.Fatal(mdsWatchInvalid("cephfs %q was removed or this handle no longer owns it", name))
-	case owner.native == nil:
-		return mdsSample{}, watch.Fatal(mdsWatchInvalid("cephfs %q has no confirmed creation identity", name))
-	}
-	native := owner.native
-	topology, err := decodeCephFSMDSTopology(data, name, owner.daemons)
-	if errors.Is(err, errFilesystemAbsent) {
-		if err := checkWatchedFSMap(data, name); err != nil {
-			return mdsSample{}, err
-		}
-		return mdsSample{}, watch.Fatal(mdsWatchInvalid("cephfs %q (FSMap ID %d) is absent from the FSMap: the filesystem was removed", name, native.ID))
-	}
-	if err != nil {
-		return mdsSample{}, err
-	}
-	if topology.status.FilesystemID != native.ID || topology.metadataPool != native.MetadataPool || topology.defaultPool != native.DefaultPool {
-		if err := checkWatchedFSMap(data, name); err != nil {
-			return mdsSample{}, err
-		}
-		return mdsSample{}, watch.Fatal(mdsWatchInvalid("cephfs %q now has FSMap ID %d with metadata pool %d and default data pool %d instead of %d, %d and %d: recreated under the same name",
-			name, topology.status.FilesystemID, topology.metadataPool, topology.defaultPool, native.ID, native.MetadataPool, native.DefaultPool))
-	}
-	return mdsSample{epoch: topology.epoch, mdsMapEpoch: topology.mdsMapEpoch, status: *topology.status}, nil
 }
 
 // watchedFSMapSchema is the presence view of the FSMap fields that the

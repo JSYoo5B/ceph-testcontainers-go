@@ -187,7 +187,8 @@ func Watch(ctx context.Context, fs *cephfs.Filesystem, cfg ceph.WatchConfig, cli
 		return nil, servicehook.Invalid(errors.New(watchOperation + ": client ID 0 selects no session"))
 	}
 	core := coreOf(fs)
-	return startWatch(ctx, settings, fmt.Sprintf("%s of %q", watchOperation, core.Name()), newSampler(core, clients).read)
+	sampler := newSampler(core, clients)
+	return startWatch(ctx, settings, sampler.name, sampler.read)
 }
 
 // sessionKey is the identity of one session on one rank.
@@ -213,7 +214,9 @@ type sample struct {
 // sampler is the producer's read state: the selection and the last coherent
 // sample, against which the next one is compared. Only the producer uses it.
 type sampler struct {
-	core    *fsbase.Core
+	core *fsbase.Core
+	// name names the watch in the refusal that ends it.
+	name    string
 	clients map[uint64]bool
 	last    *coherent
 }
@@ -225,7 +228,7 @@ type coherent struct {
 }
 
 func newSampler(core *fsbase.Core, clients []uint64) *sampler {
-	s := &sampler{core: core}
+	s := &sampler{core: core, name: fmt.Sprintf("%s of %q", watchOperation, core.Name())}
 	if len(clients) > 0 {
 		s.clients = make(map[uint64]bool, len(clients))
 		for _, id := range clients {
@@ -235,18 +238,18 @@ func newSampler(core *fsbase.Core, clients []uint64) *sampler {
 	return s
 }
 
-// watchEnded is a read refusal that a later read cannot undo.
-type watchEnded struct{ err error }
-
-func (e watchEnded) Error() string { return e.err.Error() }
-func (e watchEnded) Unwrap() error { return e.err }
+// ended is a read refusal that a later read cannot undo: it ends the watch
+// with ceph.ErrInvalidRequest, named by the watch.
+func (s *sampler) ended(err error) error {
+	return watch.Fatal(servicehook.Invalid(fmt.Errorf("%s: %w", s.name, err)))
+}
 
 // read is one admitted, bracketed sample.
 func (s *sampler) read(ctx context.Context) (sample, error) {
 	ctx, fsID, done, err := begin(ctx, s.core)
 	if err != nil {
 		if errors.Is(err, ceph.ErrInvalidRequest) {
-			return sample{}, watchEnded{err}
+			return sample{}, s.ended(err)
 		}
 		return sample{}, err
 	}
@@ -296,13 +299,16 @@ func (s *sampler) read(ctx context.Context) (sample, error) {
 func (s *sampler) roster(ctx context.Context, fsID int64) (int, []RankHolder, error) {
 	ranks, err := s.core.ActiveRanks(ctx)
 	if err != nil {
+		if errors.Is(err, ceph.ErrInvalidRequest) {
+			return 0, nil, s.ended(err)
+		}
 		if _, identity := s.core.ReadNativePools(ctx); fsbase.IdentityChanged(identity) {
-			return 0, nil, watchEnded{identity}
+			return 0, nil, s.ended(identity)
 		}
 		return 0, nil, err
 	}
 	if ranks.FilesystemID != fsID {
-		return 0, nil, watchEnded{fmt.Errorf("the FSMap reports FSMap ID %d instead of %d: the filesystem was recreated under the same name", ranks.FilesystemID, fsID)}
+		return 0, nil, s.ended(fmt.Errorf("the FSMap reports FSMap ID %d instead of %d: the filesystem was recreated under the same name", ranks.FilesystemID, fsID))
 	}
 	holders := make([]RankHolder, 0, len(ranks.Active))
 	for _, active := range ranks.Active {
@@ -391,15 +397,8 @@ func startWatch(ctx context.Context, settings watch.Settings, name string, read 
 	stream, err := watch.Start(ctx, watch.Spec[sample, WatchEvent]{
 		Name:     name,
 		Settings: settings,
-		Read: func(ctx context.Context) (sample, error) {
-			s, err := read(ctx)
-			var ended watchEnded
-			if errors.As(err, &ended) {
-				return sample{}, watch.Fatal(servicehook.Invalid(fmt.Errorf("%s: %w", name, ended.err)))
-			}
-			return s, err
-		},
-		Equal: equalSamples,
+		Read:     read,
+		Equal:    equalSamples,
 		Event: func(m watch.Meta, s sample, err error) WatchEvent {
 			e := WatchEvent{Sequence: m.Sequence, Kind: ceph.WatchEventKind(m.Kind), Started: m.Started, Finished: m.Finished,
 				Before: slices.Clone(s.before), After: slices.Clone(s.after), Err: err}

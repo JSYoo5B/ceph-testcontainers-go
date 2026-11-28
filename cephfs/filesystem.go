@@ -3,7 +3,6 @@ package cephfs
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -203,13 +202,13 @@ func startFilesystem(ctx context.Context, c *ceph.Container, config Config, opts
 // readExistingFilesystems reads the FSMap before setup and refuses a
 // filesystem of the same name.
 func readExistingFilesystems(ctx context.Context, c *ceph.Container, name string) (fsbase.FSMap, error) {
-	var existing fsbase.FSMap
 	data, err := c.Ceph(ctx, "fs", "dump", "--format", "json")
 	if err != nil {
-		return existing, fmt.Errorf("check existing cephfs filesystems: %w", err)
+		return fsbase.FSMap{}, fmt.Errorf("check existing cephfs filesystems: %w", err)
 	}
-	if err := json.Unmarshal(data, &existing); err != nil || existing.Filesystems == nil {
-		return existing, fmt.Errorf("decode existing cephfs filesystems: invalid FSMap (decode error: %v)", err)
+	existing, err := fsbase.DecodeFSMap(data)
+	if err != nil {
+		return existing, fmt.Errorf("decode existing cephfs filesystems: %w", err)
 	}
 	for _, fs := range existing.Filesystems {
 		if fs.MDSMap.Name == name {
@@ -317,7 +316,7 @@ func (fs *Filesystem) ScaleMDS(ctx context.Context, active, standby int) (return
 		return err
 	}
 	if fs == nil {
-		return errors.New("cephfs cluster is unavailable")
+		return errNilCluster
 	}
 	return fs.fleet().scale(ctx, active, standby)
 }
@@ -326,11 +325,14 @@ func (fs *Filesystem) ScaleMDS(ctx context.Context, active, standby int) (return
 // from the same epoch. The registered handle and its captured filesystem and
 // original pool IDs must still match. Active ranks include external daemons
 // with Owned=false; standby lists contain only this fixture's daemons with matching affinity.
+// A nil filesystem, a terminated cluster, a filesystem that was removed or
+// has no native identity, one that a complete FSMap no longer lists and one
+// recreated under the same name are ceph.ErrInvalidRequest.
 //
 //purpose:observation
 func (fs *Filesystem) MDSStatus(ctx context.Context) (*FilesystemStatus, error) {
 	if fs == nil {
-		return nil, errors.New("cephfs cluster is unavailable")
+		return nil, errNilCluster
 	}
 	return fs.fleet().status(ctx)
 }
@@ -344,7 +346,7 @@ func (fs *Filesystem) MDSStatus(ctx context.Context) (*FilesystemStatus, error) 
 //purpose:observation
 func (fs *Filesystem) WaitReady(ctx context.Context) error {
 	if fs == nil {
-		return errors.New("cephfs cluster is unavailable")
+		return errNilCluster
 	}
 	return fs.fleet().waitReady(ctx)
 }
@@ -353,7 +355,7 @@ func (fs *Filesystem) WaitReady(ctx context.Context) error {
 // descriptor identity and creation order, including retained cleanup handles.
 func (f mdsFleet) mdsSnapshot(ctx context.Context) ([]*MDS, error) {
 	if f.core.Cluster() == nil {
-		return nil, errors.New("cephfs cluster is unavailable")
+		return nil, errNilCluster
 	}
 	if err := servicehook.LockTopology(ctx, f.core.Cluster()); err != nil {
 		return nil, err
@@ -365,7 +367,7 @@ func (f mdsFleet) mdsSnapshot(ctx context.Context) ([]*MDS, error) {
 // scale is ScaleMDS for validated counts.
 func (f mdsFleet) scale(ctx context.Context, active, standby int) (returnErr error) {
 	if f.core.Cluster() == nil {
-		return errors.New("cephfs cluster is unavailable")
+		return errNilCluster
 	}
 	c := f.core.Cluster()
 	release, err := lockSetupThenTopology(ctx, c)
@@ -809,19 +811,9 @@ func (f mdsFleet) retireMDS(ctx context.Context, candidate MDSStatus) error {
 		return fmt.Errorf("terminate surplus mds.%s: %w", daemon.ID, err)
 	}
 	servicehook.Lock(c)
-	service := "mds." + daemon.ID
-	if owned := servicehook.Service(c, service); owned != nil && owned.GetContainerID() == daemon.GetContainerID() {
-		servicehook.DeleteService(c, service)
-	}
-	f.mds.roster.remove(daemon)
-	if *f.first != nil && (*f.first).GetContainerID() == daemon.GetContainerID() {
-		*f.first = nil
-		if f.mds.roster.count() > 0 {
-			*f.first = f.mds.roster.at(0).Container
-		}
-	}
+	f.unpublishMDS(daemon)
 	servicehook.Unlock(c)
-	if _, err := c.Ceph(ctx, "auth", "del", "mds."+daemon.ID); err != nil {
+	if err := deleteMDSKey(ctx, c, daemon.ID); err != nil {
 		return fmt.Errorf("remove surplus mds.%s credentials: %w", daemon.ID, err)
 	}
 	servicehook.Lock(c)
@@ -834,7 +826,13 @@ func cephFSMDSSettled(status *FilesystemStatus, active, owned int) bool {
 	if status == nil || active < 1 || status.MaxMDS != active || len(status.Active) != active || len(status.Active)+len(status.Standby)+len(status.StandbyReplay) != owned {
 		return false
 	}
-	for rank, daemon := range status.Active {
+	return ownedActiveRanks(status.Active)
+}
+
+// ownedActiveRanks reports whether active holds ranks 0, 1, ... in order,
+// each by an owned daemon with a GID.
+func ownedActiveRanks(active []MDSStatus) bool {
+	for rank, daemon := range active {
 		if daemon.Rank != rank || !daemon.Owned || daemon.GID == 0 {
 			return false
 		}
@@ -859,43 +857,86 @@ func cephFSMDSRetirementCandidate(status *FilesystemStatus, daemons []*MDS, acti
 }
 
 func cephFSMDSAbsent(data []byte, name string, gid uint64) (bool, error) {
-	var fsmap fsbase.FSMap
-	if err := json.Unmarshal(data, &fsmap); err != nil || fsmap.Filesystems == nil {
-		return false, errors.New("decode FSMap while retiring MDS")
+	fsmap, err := fsbase.DecodeFSMap(data)
+	if err != nil {
+		return false, fmt.Errorf("decode FSMap while retiring MDS: %w", err)
 	}
-	for _, standby := range fsmap.Standbys {
-		if standby.Name == name || standby.GID == gid {
-			return false, nil
-		}
-	}
-	for _, fs := range fsmap.Filesystems {
-		for _, info := range fs.MDSMap.Info {
-			if info.Name == name || info.GID == gid {
-				return false, nil
-			}
-		}
-	}
-	return true, nil
+	return !fsmap.HasDaemon(name, gid), nil
 }
 
 // status is MDSStatus.
 func (f mdsFleet) status(ctx context.Context) (*FilesystemStatus, error) {
-	if f.core.Cluster() == nil {
-		return nil, errors.New("cephfs cluster is unavailable")
-	}
-	owner, err := f.ownerSample(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("snapshot owned CephFS MDSs: %w", err)
-	}
-	data, err := f.readFSMap(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("read cephfs MDS status: %w", err)
-	}
-	sample, err := resolveWatchedMDSs(f.core.Name(), owner, data)
+	sample, _, err := f.readMDSStatus(ctx)
 	if err != nil {
 		return nil, err
 	}
 	return &sample.status, nil
+}
+
+// readMDSStatus is one status read: the owner sample, refused before any
+// native command when it already refuses the filesystem, then one FSMap,
+// resolved against the creation identity. It returns the decoded FSMap too.
+func (f mdsFleet) readMDSStatus(ctx context.Context) (mdsSample, fsbase.FSMap, error) {
+	if f.core.Cluster() == nil {
+		return mdsSample{}, fsbase.FSMap{}, errNilCluster
+	}
+	owner, err := f.ownerSample(ctx)
+	if err != nil {
+		return mdsSample{}, fsbase.FSMap{}, fmt.Errorf("snapshot owned CephFS MDSs: %w", err)
+	}
+	if err := checkMDSOwner(f.core.Name(), owner); err != nil {
+		return mdsSample{}, fsbase.FSMap{}, err
+	}
+	data, err := f.readFSMap(ctx)
+	if err != nil {
+		return mdsSample{}, fsbase.FSMap{}, fmt.Errorf("read cephfs MDS status: %w", err)
+	}
+	return resolveMDSStatus(f.core.Name(), owner, data)
+}
+
+// checkMDSOwner refuses an owner sample that no FSMap can make readable: a
+// terminated cluster, a filesystem that is no longer registered and one
+// without a native identity, each as ceph.ErrInvalidRequest.
+func checkMDSOwner(name string, owner mdsOwnerSample) error {
+	switch {
+	case !owner.open:
+		return servicehook.Invalid(errors.New("the cluster is terminated"))
+	case !owner.registered:
+		return servicehook.Invalid(fmt.Errorf("cephfs %q was removed or this handle no longer owns it", name))
+	case owner.native == nil:
+		return servicehook.Invalid(fmt.Errorf("cephfs %q has no confirmed creation identity", name))
+	}
+	return nil
+}
+
+// resolveMDSStatus checks one read against the filesystem's creation
+// identity and decodes it, returning the status sample and the FSMap. A
+// refused owner state, a filesystem absent from a complete FSMap and an
+// identity change are ceph.ErrInvalidRequest: a later read cannot undo them.
+// A decode failure or an incomplete FSMap is a plain error.
+func resolveMDSStatus(name string, owner mdsOwnerSample, data []byte) (mdsSample, fsbase.FSMap, error) {
+	if err := checkMDSOwner(name, owner); err != nil {
+		return mdsSample{}, fsbase.FSMap{}, err
+	}
+	native := owner.native
+	topology, err := decodeCephFSMDSTopology(data, name, owner.daemons)
+	if errors.Is(err, errFilesystemAbsent) {
+		if err := checkWatchedFSMap(data, name); err != nil {
+			return mdsSample{}, fsbase.FSMap{}, err
+		}
+		return mdsSample{}, fsbase.FSMap{}, servicehook.Invalid(fmt.Errorf("cephfs %q (FSMap ID %d) is absent from the FSMap: the filesystem was removed", name, native.ID))
+	}
+	if err != nil {
+		return mdsSample{}, fsbase.FSMap{}, err
+	}
+	if topology.status.FilesystemID != native.ID || topology.metadataPool != native.MetadataPool || topology.defaultPool != native.DefaultPool {
+		if err := checkWatchedFSMap(data, name); err != nil {
+			return mdsSample{}, fsbase.FSMap{}, err
+		}
+		return mdsSample{}, fsbase.FSMap{}, servicehook.Invalid(fmt.Errorf("cephfs %q now has FSMap ID %d with metadata pool %d and default data pool %d instead of %d, %d and %d: recreated under the same name",
+			name, topology.status.FilesystemID, topology.metadataPool, topology.defaultPool, native.ID, native.MetadataPool, native.DefaultPool))
+	}
+	return mdsSample{epoch: topology.epoch, mdsMapEpoch: topology.mdsMapEpoch, status: *topology.status}, topology.fsmap, nil
 }
 
 // mdsOwnerSample is the owner side of one MDS status read, captured in one
@@ -915,7 +956,7 @@ type mdsOwnerSample struct {
 func (f mdsFleet) ownerSample(ctx context.Context) (mdsOwnerSample, error) {
 	c := f.core.Cluster()
 	if c == nil {
-		return mdsOwnerSample{}, errors.New("cephfs cluster is unavailable")
+		return mdsOwnerSample{}, errNilCluster
 	}
 	if err := servicehook.LockTopology(ctx, c); err != nil {
 		return mdsOwnerSample{}, err
@@ -936,7 +977,7 @@ func (f mdsFleet) readFSMap(ctx context.Context) ([]byte, error) {
 // waitReady is WaitReady.
 func (f mdsFleet) waitReady(ctx context.Context) error {
 	if f.core.Cluster() == nil {
-		return errors.New("cephfs cluster is unavailable")
+		return errNilCluster
 	}
 	ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(f.core.Cluster()))
 	defer cancel()
@@ -961,13 +1002,8 @@ func (f mdsFleet) waitReady(ctx context.Context) error {
 }
 
 func cephFSMDSReady(status *FilesystemStatus, config Config) bool {
-	if status.MaxMDS != config.ActiveMDS || len(status.Active) != config.ActiveMDS || len(status.Standby)+len(status.StandbyReplay) != config.StandbyMDS {
+	if status.MaxMDS != config.ActiveMDS || len(status.Active) != config.ActiveMDS || len(status.Standby)+len(status.StandbyReplay) != config.StandbyMDS || !ownedActiveRanks(status.Active) {
 		return false
-	}
-	for rank, mds := range status.Active {
-		if mds.Rank != rank || !mds.Owned || mds.GID == 0 {
-			return false
-		}
 	}
 	wantedReplay := 0
 	if config.StandbyReplay {
@@ -1000,43 +1036,21 @@ type mdsTopology struct {
 	epoch, mdsMapEpoch        uint64
 	metadataPool, defaultPool int64
 	status                    *FilesystemStatus
-}
-
-func parseCephFSMDSStatus(data []byte, name string, daemons []*MDS) (*FilesystemStatus, error) {
-	topology, err := decodeCephFSMDSTopology(data, name, daemons)
-	if err != nil {
-		return nil, err
-	}
-	return topology.status, nil
+	fsmap                     fsbase.FSMap
 }
 
 // decodeCephFSMDSTopology decodes one FSMap into the named filesystem's MDS
 // status, with daemons as the owned roster. An FSMap without the filesystem
 // is errFilesystemAbsent.
 func decodeCephFSMDSTopology(data []byte, name string, daemons []*MDS) (mdsTopology, error) {
-	var collections struct {
-		Standbys    *[]json.RawMessage `json:"standbys"`
-		Filesystems []struct {
-			MDSMap struct {
-				Name string                      `json:"fs_name"`
-				Info *map[string]json.RawMessage `json:"info"`
-			} `json:"mdsmap"`
-		} `json:"filesystems"`
+	fsmap, err := fsbase.DecodeFSMap(data)
+	if err != nil {
+		return mdsTopology{}, fmt.Errorf("decode cephfs MDS status: %w", err)
 	}
-	if err := json.Unmarshal(data, &collections); err != nil {
-		return mdsTopology{}, fmt.Errorf("decode cephfs FSMap collections: %w", err)
-	}
-	if collections.Standbys == nil {
-		return mdsTopology{}, errors.New("decode cephfs FSMap: standbys collection is missing")
-	}
-	for _, filesystem := range collections.Filesystems {
+	for _, filesystem := range fsmap.Filesystems {
 		if filesystem.MDSMap.Name == name && filesystem.MDSMap.Info == nil {
 			return mdsTopology{}, fmt.Errorf("decode cephfs FSMap: mds info of cephfs %q is missing", name)
 		}
-	}
-	var fsmap fsbase.FSMap
-	if err := json.Unmarshal(data, &fsmap); err != nil {
-		return mdsTopology{}, fmt.Errorf("decode cephfs FSMap: %w", err)
 	}
 	owned := make(map[string]bool, len(daemons))
 	for _, daemon := range daemons {
@@ -1076,7 +1090,7 @@ func decodeCephFSMDSTopology(data []byte, name string, daemons []*MDS) (mdsTopol
 		slices.SortFunc(status.Standby, less)
 		slices.SortFunc(status.StandbyReplay, less)
 		topology := mdsTopology{epoch: fsmap.Epoch, mdsMapEpoch: filesystem.MDSMap.Epoch,
-			metadataPool: filesystem.MDSMap.MetadataPool, defaultPool: -1, status: status}
+			metadataPool: filesystem.MDSMap.MetadataPool, defaultPool: -1, status: status, fsmap: fsmap}
 		if len(filesystem.MDSMap.DataPools) > 0 {
 			topology.defaultPool = filesystem.MDSMap.DataPools[0]
 		}

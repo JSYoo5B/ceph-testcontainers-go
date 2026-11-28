@@ -53,7 +53,7 @@ func cephFSMDSFullCID(cid string) bool {
 //purpose:condition,lifetime
 func (daemon *MDS) RemoveStopped(ctx context.Context) error {
 	if daemon == nil || daemon.identity == nil || daemon.identity.fleet.core == nil {
-		return errors.New("original owned MDS creation identity is unavailable")
+		return errMDSUnavailable
 	}
 	return daemon.identity.fleet.removeStoppedMDS(ctx, daemon)
 }
@@ -65,7 +65,7 @@ func (f mdsFleet) removeStoppedMDS(parent context.Context, daemon *MDS) error {
 		return err
 	}
 	if f.core.Cluster() == nil || daemon == nil || daemon.identity == nil {
-		return errors.New("original owned MDS creation identity is unavailable")
+		return errMDSUnavailable
 	}
 	c := f.core.Cluster()
 	ctx, cancel := context.WithTimeout(parent, servicehook.StartupTimeout(c))
@@ -97,11 +97,7 @@ func (f mdsFleet) removeStoppedMDS(parent context.Context, daemon *MDS) error {
 	if i.removed {
 		return nil
 	}
-	servicehook.DeleteService(c, "mds."+i.name)
-	f.mds.roster.remove(i.descriptor)
-	if *f.first == i.container {
-		*f.first = f.mds.roster.at(0).identity.container
-	}
+	f.unpublishMDS(i.descriptor)
 	i.removed = true
 	return nil
 }
