@@ -356,17 +356,10 @@ func (s *state) hostListeners(ctx context.Context, observer *ceph.Observer, addr
 // waitCommands waits until the loaded module accepts its commands; a module
 // that is enabled but still loading refuses them with ENOTSUP.
 func waitCommands(ctx context.Context, c *ceph.Container) error {
-	var last error
-	for {
-		if _, last = c.Ceph(ctx, "dashboard", "get-jwt-token-ttl"); last == nil {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return errors.Join(ctx.Err(), last)
-		case <-time.After(time.Second):
-		}
-	}
+	return retry(ctx, time.Second, func() (bool, error) {
+		_, err := c.Ceph(ctx, "dashboard", "get-jwt-token-ttl")
+		return false, err
+	})
 }
 
 // inputCommand runs a native Ceph command with a secret on standard input.
@@ -514,25 +507,31 @@ func (s *state) endpoint(ctx context.Context, report *probeReport, paths ...stri
 	if err != nil {
 		return "", err
 	}
-	var last error
-	for {
+	var url string
+	err = retry(ctx, 2*time.Second, func() (bool, error) {
 		listener, current, err := s.probeActive(ctx, observer, paths...)
 		if err == nil {
 			if report != nil {
 				*report = current
 			}
-			return listener.url, nil
+			url = listener.url
+			return false, nil
 		}
-		last = err
-		if readyErr := s.ready(); readyErr != nil {
-			return "", errors.Join(err, readyErr)
-		}
-		select {
-		case <-ctx.Done():
-			return "", errors.Join(ctx.Err(), last)
-		case <-time.After(2 * time.Second):
-		}
+		return s.stopUnlessReady(err)
+	})
+	if err != nil {
+		return "", err
 	}
+	return url, nil
+}
+
+// stopUnlessReady keeps a failed readiness attempt retryable while the
+// dashboard is still usable, and stops with both errors once it is not.
+func (s *state) stopUnlessReady(err error) (bool, error) {
+	if readyErr := s.ready(); readyErr != nil {
+		return true, errors.Join(err, readyErr)
+	}
+	return false, err
 }
 
 // activeListener is the listener that passed a readiness check: the URL the
@@ -634,22 +633,16 @@ func (d *Dashboard) HostEndpoint(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	var last error
-	for {
-		target, err := d.probeHost(ctx, observer, facts.UsesHostNetwork)
+	var target string
+	err = retry(ctx, 2*time.Second, func() (bool, error) {
+		var err error
+		target, err = d.probeHost(ctx, observer, facts.UsesHostNetwork)
 		if err == nil || errors.Is(err, ceph.ErrInvalidRequest) {
-			return target, err
+			return true, err
 		}
-		last = err
-		if readyErr := d.ready(); readyErr != nil {
-			return "", errors.Join(err, readyErr)
-		}
-		select {
-		case <-ctx.Done():
-			return "", errors.Join(ctx.Err(), last)
-		case <-time.After(2 * time.Second):
-		}
-	}
+		return d.stopUnlessReady(err)
+	})
+	return target, err
 }
 
 // probeHost runs the readiness check, translates the advertised URL to the
@@ -868,17 +861,10 @@ func (s *state) restore(ctx context.Context) error {
 // no manager is available, so a failure other than a refusal is retried
 // until ctx ends; the handle reconciles an earlier uncertain restoration.
 func restoreModule(ctx context.Context, module *override.MGRModuleHandle) error {
-	for {
+	return retry(ctx, 2*time.Second, func() (bool, error) {
 		err := module.Restore(ctx)
-		if err == nil || errors.Is(err, ceph.ErrInvalidRequest) {
-			return err
-		}
-		select {
-		case <-ctx.Done():
-			return errors.Join(ctx.Err(), err)
-		case <-time.After(2 * time.Second):
-		}
-	}
+		return errors.Is(err, ceph.ErrInvalidRequest), err
+	})
 }
 
 // waitServiceWithdrawn waits, when the restored module is disabled, until
@@ -890,34 +876,29 @@ func waitServiceWithdrawn(ctx context.Context, c *ceph.Container) error {
 	if err != nil {
 		return err
 	}
-	var last error
-	for {
+	return retry(ctx, 2*time.Second, func() (bool, error) {
 		modules, err := observer.MGRModules(ctx)
-		if err == nil {
-			enabled := false
-			for _, module := range modules {
-				if module.Name == "dashboard" {
-					enabled = module.Enabled
-				}
-			}
-			if enabled {
-				return nil
-			}
-			var services map[string]string
-			if services, err = observer.ManagerServices(ctx); err == nil {
-				if _, found := services["dashboard"]; !found {
-					return nil
-				}
-				err = errors.New("the MGR map still advertises the dashboard service")
+		if err != nil {
+			return false, err
+		}
+		enabled := false
+		for _, module := range modules {
+			if module.Name == "dashboard" {
+				enabled = module.Enabled
 			}
 		}
-		last = err
-		select {
-		case <-ctx.Done():
-			return errors.Join(ctx.Err(), last)
-		case <-time.After(2 * time.Second):
+		if enabled {
+			return false, nil
 		}
-	}
+		services, err := observer.ManagerServices(ctx)
+		if err != nil {
+			return false, err
+		}
+		if _, found := services["dashboard"]; found {
+			return false, errors.New("the MGR map still advertises the dashboard service")
+		}
+		return false, nil
+	})
 }
 
 // checkAccount verifies the creation marker in the native account. The
