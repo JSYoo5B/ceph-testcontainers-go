@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/watch"
 )
@@ -180,7 +180,7 @@ func (f *Fixture) WatchSync(ctx context.Context, cfg ceph.WatchConfig, zoneName 
 // zone selection that no longer resolves is fatal; everything else that fails
 // is a gap.
 func (f *Fixture) watchSyncRead(ctx context.Context, zoneName string, sources []string) (SyncStatus, error) {
-	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &f.topologyMu); err != nil {
 		return SyncStatus{}, err
 	}
 	defer f.topologyMu.Unlock()
@@ -350,7 +350,7 @@ type bucketSyncWatchPins struct {
 }
 
 func (p *bucketSyncWatchPins) read(ctx context.Context, f *Fixture, pipeID, sourceZone, destinationZone string) (BucketSyncStatus, error) {
-	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &f.topologyMu); err != nil {
 		return BucketSyncStatus{}, err
 	}
 	defer f.topologyMu.Unlock()
@@ -541,7 +541,7 @@ func (g *SyncGroup) WatchBucketPolicy(ctx context.Context, cfg ceph.WatchConfig,
 // destination has not imported is a successful read of that stage.
 func (g *SyncGroup) policyImportWatchBaseline(ctx context.Context, destinationZone string) (*policyImportTarget, BucketSyncPolicyStatus, error) {
 	f := g.owner
-	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &f.topologyMu); err != nil {
 		return nil, BucketSyncPolicyStatus{}, err
 	}
 	target, status, err := g.admitPolicyImport(ctx, destinationZone)
@@ -573,7 +573,7 @@ var errSampleLock = errors.New("the topology lock was not acquired")
 // take the lock returns errSampleLock with the lock wait's error.
 func (t *policyImportTarget) lockedSample(ctx context.Context) (BucketSyncPolicyStatus, bool, error) {
 	f := t.group.owner
-	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &f.topologyMu); err != nil {
 		return BucketSyncPolicyStatus{}, false, fmt.Errorf("%w: %w", errSampleLock, err)
 	}
 	defer f.topologyMu.Unlock()

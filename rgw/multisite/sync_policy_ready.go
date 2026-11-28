@@ -9,7 +9,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
 )
 
@@ -61,7 +61,7 @@ func (g *SyncGroup) WaitBucketPolicyReady(ctx context.Context, destinationZone s
 	}
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Minute)
 	defer cancel()
-	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &f.topologyMu); err != nil {
 		return BucketSyncPolicyStatus{}, err
 	}
 	attempt, stop := context.WithTimeout(ctx, 30*time.Second)

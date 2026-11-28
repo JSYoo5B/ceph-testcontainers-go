@@ -8,8 +8,8 @@ import (
 	"sync"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
-	"github.com/containerd/errdefs"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/network"
 )
@@ -61,43 +61,15 @@ func (r *Resources) AddOwned(ctr testcontainers.Container, owner *ceph.Container
 	}})
 }
 
-// IgnoreMissing treats missing resources as already cleaned up. A joined error is harmless only
-// when every non-nil child is missing: errors.Is alone could hide a real failure
-// alongside a not-found error. Inspect wrappers for joins before classifying
-// the original error, retaining SDK error classifiers carried by wrappers.
+// IgnoreMissing treats missing resources as already cleaned up: err is
+// harmless only when every non-nil error joined in it is a not-found error
+// (servicehook.OnlyMissingHostResource), so a not-found error never hides a
+// real failure joined next to it.
 func IgnoreMissing(err error) error {
-	if err == nil || EntirelyMissing(err) {
+	if servicehook.OnlyMissingHostResource(err) {
 		return nil
 	}
 	return err
-}
-
-// EntirelyMissing reports that every non-nil error in err is a not-found error.
-func EntirelyMissing(err error) bool {
-	if err == nil {
-		return true
-	}
-	for current := err; current != nil; {
-		if joined, ok := current.(interface{ Unwrap() []error }); ok {
-			hasChild := false
-			for _, child := range joined.Unwrap() {
-				if child == nil {
-					continue
-				}
-				hasChild = true
-				if !EntirelyMissing(child) {
-					return false
-				}
-			}
-			return hasChild
-		}
-		wrapped, ok := current.(interface{ Unwrap() error })
-		if !ok {
-			break
-		}
-		current = wrapped.Unwrap()
-	}
-	return errdefs.IsNotFound(err)
 }
 
 // Len returns the number of recorded cleanup actions, completed or not.
@@ -117,7 +89,7 @@ func (r *Resources) AddCleanup(name string, cleanup func(context.Context) error)
 // Terminate runs the recorded actions in reverse order. Completed actions are
 // kept so a partial failure can be retried.
 func (r *Resources) Terminate(ctx context.Context, opts ...testcontainers.TerminateOption) error {
-	if err := LockObservation(ctx, &r.mu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &r.mu); err != nil {
 		return err
 	}
 	defer r.mu.Unlock()

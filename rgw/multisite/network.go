@@ -9,6 +9,7 @@ import (
 	"strconv"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
@@ -23,7 +24,7 @@ func (f *Fixture) InterruptZoneLink(ctx context.Context, zoneName string) (*faul
 	if f == nil {
 		return nil, errors.New("RGW multisite is unavailable")
 	}
-	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &f.topologyMu); err != nil {
 		return nil, err
 	}
 	defer f.topologyMu.Unlock()
@@ -66,7 +67,7 @@ func (f *Fixture) ApplyZoneLinkProfile(ctx context.Context, zoneName, peerZone s
 	if zoneName == peerZone {
 		return nil, servicehook.Invalid(fmt.Errorf("RGW zone %s has no link to itself", zoneName))
 	}
-	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &f.topologyMu); err != nil {
 		return nil, err
 	}
 	defer f.topologyMu.Unlock()

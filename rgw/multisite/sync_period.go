@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
 )
@@ -31,7 +31,7 @@ func (g *SyncGroup) Apply(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &f.topologyMu); err != nil {
 		return err
 	}
 	defer f.topologyMu.Unlock()

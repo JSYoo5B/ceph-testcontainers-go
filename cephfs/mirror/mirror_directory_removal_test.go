@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/moby/moby/api/pkg/stdcopy"
 
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -612,7 +612,7 @@ func TestCephFSDirectoryRemovalProductionTransientQueriesFreshRetryAndCausalCanc
 		<-done
 		t.Fatal("public Wait never observed the known native failure")
 	}
-	gateErr := multicluster.LockObservation(gateCtx, &m.mu)
+	gateErr := clusterutil.LockMutex(gateCtx, &m.mu)
 	if gateErr != nil {
 		cancel()
 		<-done
@@ -805,7 +805,7 @@ func TestCephFSDirectoryRemovalProductionBusyLocksAndPollRelease(t *testing.T) {
 		_ = <-done
 		t.Fatal("Wait never observed the original tracked path")
 	}
-	err := multicluster.LockObservation(gateCtx, &m.mu)
+	err := clusterutil.LockMutex(gateCtx, &m.mu)
 	if err != nil {
 		cancel()
 		_ = <-done

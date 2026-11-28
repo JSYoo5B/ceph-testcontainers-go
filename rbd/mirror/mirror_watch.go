@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/rbdobservation"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
@@ -36,7 +36,7 @@ var errRBDWatchTerminated = errors.New("terminated")
 // outlasts is a query error.
 func (m *Container) checkWatchOpen(ctx context.Context, operation string) error {
 	observation := rbdobservation.Begin(ctx, "watch-open")
-	if err := multicluster.LockObservation(ctx, &m.mu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &m.mu); err != nil {
 		observation.Finish(ctx, err)
 		return rbdReceiverQuery(ctx, "admit "+operation, err)
 	}

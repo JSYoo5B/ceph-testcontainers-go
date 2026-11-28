@@ -9,7 +9,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/strictjson"
 )
 
@@ -415,7 +415,7 @@ func (r *DirectoryRemoval) statusWithAdmission(ctx context.Context, admitted *bo
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if err := multicluster.LockObservation(ctx, &r.scope.mirror.mu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &r.scope.mirror.mu); err != nil {
 		return result, err
 	}
 	defer r.scope.mirror.mu.Unlock()

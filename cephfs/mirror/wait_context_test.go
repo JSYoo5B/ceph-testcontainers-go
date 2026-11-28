@@ -11,7 +11,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 )
 
 func TestMultiClusterWaitManagerRejectsLateReadyCancellation(t *testing.T) {
@@ -150,7 +150,7 @@ func TestMultiClusterWaitRemovalRetainsReportAcrossOwnerAdmissionCancel(t *testi
 				case <-time.After(500 * time.Millisecond):
 					t.Fatal("wait never reached the original native failure")
 				}
-				if gateErr := multicluster.LockObservation(gate, &mirror.mu); gateErr != nil {
+				if gateErr := clusterutil.LockMutex(gate, &mirror.mu); gateErr != nil {
 					t.Fatal("wait held the owner across polls", gateErr)
 				}
 				held.Store(true)

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 
@@ -53,7 +54,7 @@ func (f *Fixture) AddZonegroup(ctx context.Context, image string, config Zonegro
 	if f == nil || !validRGWZoneName(config.Name) || len(config.Zones) == 0 {
 		return nil, servicehook.Invalid(errors.New("RGW zonegroup requires a valid name and at least one zone"))
 	}
-	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &f.topologyMu); err != nil {
 		return nil, err
 	}
 	defer f.topologyMu.Unlock()
@@ -119,7 +120,7 @@ func (f *Fixture) RemoveZone(ctx context.Context, name string) error {
 	if f == nil || !validRGWZoneName(name) {
 		return servicehook.Invalid(errors.New("invalid RGW fixture or zone name"))
 	}
-	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &f.topologyMu); err != nil {
 		return err
 	}
 	defer f.topologyMu.Unlock()

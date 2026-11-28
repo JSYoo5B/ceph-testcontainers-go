@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/strictjson"
@@ -294,7 +295,7 @@ func (f *Fixture) ZoneAdmin(ctx context.Context, name string, args ...string) ([
 	if err := gwbase.ValidateAdminArgs(args); err != nil {
 		return nil, err
 	}
-	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &f.topologyMu); err != nil {
 		return nil, err
 	}
 	var client testcontainers.Container
@@ -338,7 +339,7 @@ func (f *Fixture) AddZone(ctx context.Context, image string, config ZoneConfig, 
 	if f == nil || !validRGWZoneName(config.Name) {
 		return nil, servicehook.Invalid(errors.New("invalid RGW fixture or zone name"))
 	}
-	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &f.topologyMu); err != nil {
 		return nil, err
 	}
 	defer f.topologyMu.Unlock()

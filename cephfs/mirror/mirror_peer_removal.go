@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/google/uuid"
 )
 
@@ -225,7 +225,7 @@ func (r *PeerRemoval) statusWithAdmission(ctx context.Context, admitted *bool) (
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if err := multicluster.LockObservation(ctx, &r.scope.mirror.mu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &r.scope.mirror.mu); err != nil {
 		return result, err
 	}
 	defer r.scope.mirror.mu.Unlock()

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/strictjson"
@@ -68,7 +69,7 @@ func (g *SyncGroup) BucketSyncStatus(ctx context.Context, pipeID, sourceZone, de
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &f.topologyMu); err != nil {
 		return BucketSyncStatus{}, err
 	}
 	defer f.topologyMu.Unlock()
@@ -94,7 +95,7 @@ func (g *SyncGroup) WaitBucketSyncReady(ctx context.Context, pipeID, sourceZone,
 	}
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Minute)
 	defer cancel()
-	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &f.topologyMu); err != nil {
 		return BucketSyncStatus{}, err
 	}
 	// Resolve once: the checkpoint keeps value copies of the selected identities.
@@ -115,7 +116,7 @@ func (g *SyncGroup) WaitBucketSyncReady(ctx context.Context, pipeID, sourceZone,
 	observed := false
 	for {
 		attempt, stop := context.WithTimeout(ctx, 30*time.Second)
-		if err := multicluster.LockObservation(attempt, &f.topologyMu); err != nil {
+		if err := clusterutil.LockMutex(attempt, &f.topologyMu); err != nil {
 			stop()
 			return last, fmt.Errorf("wait RGW bucket sync checkpoint: %w", err)
 		}

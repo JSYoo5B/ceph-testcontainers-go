@@ -15,7 +15,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/rbdobservation"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
@@ -342,7 +342,7 @@ func TestRBDMirrorImageStatusWaitPinsIdentitiesAndPreservesCancellation(t *testi
 	finished := make(chan error, 1)
 	go func() { _, err := link.WaitReplayReady(waiting, "volume"); finished <- err }()
 	<-started
-	if err := multicluster.LockObservation(waiting, &link.mu); err != nil {
+	if err := clusterutil.LockMutex(waiting, &link.mu); err != nil {
 		t.Fatal("wait held mutation lock across polling sleep")
 	}
 	link.mu.Unlock()

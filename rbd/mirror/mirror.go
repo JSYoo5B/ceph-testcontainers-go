@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
@@ -398,7 +399,7 @@ func (m *Container) AddDaemon(ctx context.Context, name string, opts ...testcont
 	if err := validateRBDMirrorDaemonName(name); err != nil {
 		return nil, err
 	}
-	if err := multicluster.LockObservation(ctx, &m.mu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &m.mu); err != nil {
 		return nil, err
 	}
 	defer m.mu.Unlock()
@@ -506,7 +507,7 @@ func (d *Daemon) Remove(ctx context.Context, opts ...testcontainers.TerminateOpt
 		return servicehook.Invalid(errors.New("RBD mirror daemon is not owned by a fixture"))
 	}
 	m := d.owner
-	if err := multicluster.LockObservation(ctx, &m.mu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &m.mu); err != nil {
 		return err
 	}
 	defer m.mu.Unlock()
@@ -554,7 +555,7 @@ func (m *Container) Rebootstrap(ctx context.Context) (returnErr error) {
 	if m == nil {
 		return errors.New("RBD mirror setup clients are unavailable")
 	}
-	if err := multicluster.LockObservation(ctx, &m.mu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &m.mu); err != nil {
 		return err
 	}
 	defer m.mu.Unlock()
@@ -848,7 +849,7 @@ func (m *Container) EnableImage(ctx context.Context, imageName string) error {
 	if m == nil {
 		return servicehook.Invalid(errors.New("RBD mirror source setup client is unavailable"))
 	}
-	if err := multicluster.LockObservation(ctx, &m.mu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &m.mu); err != nil {
 		return err
 	}
 	defer m.mu.Unlock()

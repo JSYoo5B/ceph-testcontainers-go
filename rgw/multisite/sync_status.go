@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/strictjson"
 
@@ -65,7 +65,7 @@ func (f *Fixture) SyncStatus(ctx context.Context, zoneName string) (SyncStatus, 
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &f.topologyMu); err != nil {
 		return SyncStatus{}, err
 	}
 	defer f.topologyMu.Unlock()
@@ -102,7 +102,7 @@ func (f *Fixture) WaitSyncReady(ctx context.Context, zoneName string, sourceZone
 	sourceZones = slices.Clone(sourceZones)
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Minute)
 	defer cancel()
-	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &f.topologyMu); err != nil {
 		return SyncStatus{}, err
 	}
 	if _, err := f.syncStatusZones(zoneName, sourceZones); err != nil {
@@ -126,7 +126,7 @@ func (f *Fixture) WaitSyncReady(ctx context.Context, zoneName string, sourceZone
 	}
 	for {
 		attemptCtx, attemptCancel := context.WithTimeout(ctx, 30*time.Second)
-		if err := multicluster.LockObservation(attemptCtx, &f.topologyMu); err != nil {
+		if err := clusterutil.LockMutex(attemptCtx, &f.topologyMu); err != nil {
 			attemptCancel()
 			return expired(err)
 		}

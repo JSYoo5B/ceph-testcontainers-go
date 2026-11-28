@@ -2,8 +2,6 @@ package multicluster
 
 import (
 	"context"
-	"errors"
-	"sync"
 	"testing"
 	"time"
 
@@ -24,17 +22,4 @@ func TestResourcesCleanupNestedGateDeadlinePreservesRetry(t *testing.T) {
 	if err := operation(ctx); err != nil || probe.Terminations.Load() != 1 {
 		t.Fatalf("nested cleanup could not retry with fresh context: %v", err)
 	}
-}
-
-func TestLockObservationCanceledFreeGate(t *testing.T) {
-	var mutex sync.Mutex
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	if err := LockObservation(ctx, &mutex); !errors.Is(err, context.Canceled) {
-		t.Fatalf("canceled free gate returned %v", err)
-	}
-	if !mutex.TryLock() {
-		t.Fatal("canceled caller consumed the free gate")
-	}
-	mutex.Unlock()
 }

@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 )
 
 // ProcessQuiescenceAcknowledgment is the result of one explicit
@@ -50,7 +50,7 @@ func acknowledgeCephFSProcessQuiescence(ctx context.Context, receipt cephFSQuies
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if err := multicluster.LockObservation(ctx, &c.scope.mirror.mu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &c.scope.mirror.mu); err != nil {
 		return result, err
 	}
 	defer c.scope.mirror.mu.Unlock()
@@ -99,7 +99,7 @@ func confirmCephFSAcknowledgmentRetiredInventory(ctx context.Context, c *cephFSR
 		if w.daemon == nil {
 			return cephFSObserveGuard("original process acknowledgment daemon identity is unavailable")
 		}
-		if err := multicluster.LockObservation(ctx, &w.daemon.mu); err != nil {
+		if err := clusterutil.LockMutex(ctx, &w.daemon.mu); err != nil {
 			return err
 		}
 		removed := w.daemon.removed

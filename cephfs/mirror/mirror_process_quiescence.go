@@ -8,7 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/moby/moby/api/types/container"
 	mobycl "github.com/moby/moby/client"
 )
@@ -152,7 +153,7 @@ func (b *cephFSBoundOriginalProcess) inspect(ctx context.Context) (cephFSOrigina
 	if b == nil || b.docker == nil || b.engineID == "" || !validCephFSContainerID(b.containerID) {
 		return result, cephFSObserveGuard("original raw process binding is unavailable")
 	}
-	if err := multicluster.LockObservation(ctx, &b.mu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &b.mu); err != nil {
 		return result, err
 	}
 	defer b.mu.Unlock()
@@ -180,7 +181,7 @@ func (b *cephFSBoundOriginalProcess) inspect(ctx context.Context) (cephFSOrigina
 		return result, err
 	}
 	if inspectErr != nil {
-		if multicluster.EntirelyMissing(inspectErr) {
+		if servicehook.OnlyMissingHostResource(inspectErr) {
 			result.missing = true
 			return result, nil
 		}
@@ -196,7 +197,7 @@ func (b *cephFSBoundOriginalProcess) inspect(ctx context.Context) (cephFSOrigina
 }
 
 func (b *cephFSBoundOriginalProcess) close(ctx context.Context) error {
-	if err := multicluster.LockObservation(ctx, &b.mu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &b.mu); err != nil {
 		return err
 	}
 	defer b.mu.Unlock()
@@ -343,7 +344,7 @@ func observeCephFSReceiptProcessQuiescence(ctx context.Context, receipt cephFSQu
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if err := multicluster.LockObservation(ctx, &c.scope.mirror.mu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &c.scope.mirror.mu); err != nil {
 		return result, err
 	}
 	defer c.scope.mirror.mu.Unlock()

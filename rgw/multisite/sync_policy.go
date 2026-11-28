@@ -16,7 +16,6 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/mutation"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
@@ -193,7 +192,7 @@ func (f *Fixture) CreateSyncGroup(ctx context.Context, scope SyncPolicyScope, co
 	if f == nil {
 		return nil, servicehook.Invalid(errors.New("RGW multisite fixture is required"))
 	}
-	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &f.topologyMu); err != nil {
 		return nil, err
 	}
 	defer f.topologyMu.Unlock()
@@ -434,7 +433,7 @@ func (g *SyncGroup) Remove(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &f.topologyMu); err != nil {
 		return err
 	}
 	defer f.topologyMu.Unlock()
@@ -501,7 +500,7 @@ func (g *SyncGroup) change(ctx context.Context, change rgwSyncMutation) error {
 	if f == nil {
 		return servicehook.Invalid(errors.New("RGW multisite fixture is required"))
 	}
-	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &f.topologyMu); err != nil {
 		return err
 	}
 	defer f.topologyMu.Unlock()

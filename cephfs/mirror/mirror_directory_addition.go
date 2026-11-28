@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/google/uuid"
 )
 
@@ -309,7 +309,7 @@ func (r *DirectoryAddition) Status(ctx context.Context) (DirectoryAdditionStatus
 	result = DirectoryAdditionStatus{Directory: r.directory, PeerID: o.peerID, SourceFilesystem: o.pair.sourceFilesystem, DestinationFilesystem: o.pair.destinationFilesystem, SourceFilesystemID: o.pair.sourceFilesystemID, DestinationFilesystemID: o.pair.destinationFilesystemID}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if err := multicluster.LockObservation(ctx, &o.mirror.mu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &o.mirror.mu); err != nil {
 		return result, err
 	}
 	defer o.mirror.mu.Unlock()
