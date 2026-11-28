@@ -2,24 +2,30 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph/preflight",
-  "count": 26,
+  "count": 40,
   "entries": [
-    {
-      "current": "ceph/preflight.BlockIODelay",
-      "kind": "const",
-      "proposed": "ceph/preflight.BlockIODelay",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph/preflight.BlockIOEIO",
-      "kind": "const",
-      "proposed": "ceph/preflight.BlockIOEIO",
-      "decision": "baseline"
-    },
     {
       "current": "ceph/preflight.Capability",
       "kind": "type",
       "proposed": "ceph/preflight.Capability",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.CapabilityBlockIODelay",
+      "kind": "const",
+      "proposed": "ceph/preflight.CapabilityBlockIODelay",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.CapabilityBlockIOEIO",
+      "kind": "const",
+      "proposed": "ceph/preflight.CapabilityBlockIOEIO",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.CapabilityEngine",
+      "kind": "const",
+      "proposed": "ceph/preflight.CapabilityEngine",
       "decision": "baseline"
     },
     {
@@ -29,9 +35,63 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph/preflight.Engine",
+      "current": "ceph/preflight.CheckKey",
+      "kind": "type",
+      "proposed": "ceph/preflight.CheckKey",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.CheckKeyBlockIOControlAccess",
       "kind": "const",
-      "proposed": "ceph/preflight.Engine",
+      "proposed": "ceph/preflight.CheckKeyBlockIOControlAccess",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.CheckKeyBlockIODrivers",
+      "kind": "const",
+      "proposed": "ceph/preflight.CheckKeyBlockIODrivers",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.CheckKeyBlockIOEngineOS",
+      "kind": "const",
+      "proposed": "ceph/preflight.CheckKeyBlockIOEngineOS",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.CheckKeyBlockIOHelperStart",
+      "kind": "const",
+      "proposed": "ceph/preflight.CheckKeyBlockIOHelperStart",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.CheckKeyBlockIOImageTools",
+      "kind": "const",
+      "proposed": "ceph/preflight.CheckKeyBlockIOImageTools",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.CheckKeyBlockIOTargetDelay",
+      "kind": "const",
+      "proposed": "ceph/preflight.CheckKeyBlockIOTargetDelay",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.CheckKeyBlockIOTargetError",
+      "kind": "const",
+      "proposed": "ceph/preflight.CheckKeyBlockIOTargetError",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.CheckKeyBlockIOTargetLinear",
+      "kind": "const",
+      "proposed": "ceph/preflight.CheckKeyBlockIOTargetLinear",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.CheckKeyEngineInfo",
+      "kind": "const",
+      "proposed": "ceph/preflight.CheckKeyEngineInfo",
       "decision": "baseline"
     },
     {
@@ -41,33 +101,9 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph/preflight.EnvironmentKind",
-      "kind": "const",
-      "proposed": "ceph/preflight.EnvironmentKind",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph/preflight.Helper",
-      "kind": "const",
-      "proposed": "ceph/preflight.Helper",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph/preflight.HelperRun",
       "kind": "type",
       "proposed": "ceph/preflight.HelperRun",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph/preflight.ImageKind",
-      "kind": "const",
-      "proposed": "ceph/preflight.ImageKind",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph/preflight.Inspect",
-      "kind": "const",
-      "proposed": "ceph/preflight.Inspect",
       "decision": "baseline"
     },
     {
@@ -77,15 +113,33 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph/preflight.KindEnvironment",
+      "kind": "const",
+      "proposed": "ceph/preflight.KindEnvironment",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.KindImage",
+      "kind": "const",
+      "proposed": "ceph/preflight.KindImage",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph/preflight.Level",
       "kind": "type",
       "proposed": "ceph/preflight.Level",
       "decision": "baseline"
     },
     {
-      "current": "ceph/preflight.NotRun",
+      "current": "ceph/preflight.LevelHelper",
       "kind": "const",
-      "proposed": "ceph/preflight.NotRun",
+      "proposed": "ceph/preflight.LevelHelper",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.LevelInspect",
+      "kind": "const",
+      "proposed": "ceph/preflight.LevelInspect",
       "decision": "baseline"
     },
     {
@@ -93,12 +147,6 @@
       "kind": "function",
       "signature": "func(ctx context.Context, request Request) (*Report, error)",
       "proposed": "ceph/preflight.Observe",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph/preflight.Observed",
-      "kind": "const",
-      "proposed": "ceph/preflight.Observed",
       "decision": "baseline"
     },
     {
@@ -116,7 +164,7 @@
     {
       "current": "ceph/preflight.Report.Lookup",
       "kind": "method",
-      "signature": "func(key string) (Check, bool)",
+      "signature": "func(key CheckKey) (Check, bool)",
       "receiver": "*Report",
       "proposed": "ceph/preflight.Report.Lookup",
       "decision": "baseline"
@@ -150,21 +198,57 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph/preflight.Source",
+      "kind": "type",
+      "proposed": "ceph/preflight.Source",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.SourceEngineInfo",
+      "kind": "const",
+      "proposed": "ceph/preflight.SourceEngineInfo",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.SourceHelperProbe",
+      "kind": "const",
+      "proposed": "ceph/preflight.SourceHelperProbe",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.SourceHelperStart",
+      "kind": "const",
+      "proposed": "ceph/preflight.SourceHelperStart",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph/preflight.State",
       "kind": "type",
       "proposed": "ceph/preflight.State",
       "decision": "baseline"
     },
     {
-      "current": "ceph/preflight.Unavailable",
+      "current": "ceph/preflight.StateNotRun",
       "kind": "const",
-      "proposed": "ceph/preflight.Unavailable",
+      "proposed": "ceph/preflight.StateNotRun",
       "decision": "baseline"
     },
     {
-      "current": "ceph/preflight.Unknown",
+      "current": "ceph/preflight.StateObserved",
       "kind": "const",
-      "proposed": "ceph/preflight.Unknown",
+      "proposed": "ceph/preflight.StateObserved",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.StateUnavailable",
+      "kind": "const",
+      "proposed": "ceph/preflight.StateUnavailable",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph/preflight.StateUnknown",
+      "kind": "const",
+      "proposed": "ceph/preflight.StateUnknown",
       "decision": "baseline"
     }
   ]

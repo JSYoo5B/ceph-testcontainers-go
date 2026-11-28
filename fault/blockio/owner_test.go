@@ -3,15 +3,20 @@ package blockio
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	control "github.com/JSYoo5B/ceph-testcontainers-go/internal/blockio"
+	"github.com/moby/moby/api/types/container"
 )
 
 func TestOwnerBuildLaunchRefusalSettlesWithoutBacking(t *testing.T) {
@@ -261,5 +266,28 @@ func TestOwnerProbeClassifiesMissingToolsAsImageCapability(t *testing.T) {
 	_, err = b.owner(t.Context(), "probe")
 	if !errors.Is(err, ceph.ErrImageCapability) || !strings.Contains(err.Error(), "missing executables: dmsetup, blockdev") {
 		t.Fatalf("missing tools were not an image capability: %v", err)
+	}
+}
+
+// The keeper starts from the helper request that ceph/preflight's helper
+// starts from, and adds only its owner script and private tmpfs.
+func TestKeeperRequestIsTheSharedHelperConfiguration(t *testing.T) {
+	request := keeperRequest("registry.example/helper:v1", "tcblk-owned", MinSize)
+	shared := control.HelperRequest("registry.example/helper:v1", "tcblk-owned")
+	if request.Image != shared.Image || request.Name != shared.Name || !slices.Equal(request.Entrypoint, shared.Entrypoint) || !slices.Equal(request.Cmd, shared.Cmd) || request.User != shared.User {
+		t.Fatalf("keeper request %+v, shared request %+v", request, shared)
+	}
+	if len(request.Files) != 1 || request.Files[0].ContainerFilePath != ownerProgram {
+		t.Fatalf("keeper files: %+v", request.Files)
+	}
+	var got, want container.HostConfig
+	request.HostConfigModifier(&got)
+	shared.HostConfigModifier(&want)
+	if got.Tmpfs["/tc-blk"] != fmt.Sprintf("size=%d,mode=0700", MinSize+(64<<20)) {
+		t.Fatalf("keeper tmpfs: %v", got.Tmpfs)
+	}
+	got.Tmpfs = nil
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("keeper host configuration %+v, shared %+v", got, want)
 	}
 }

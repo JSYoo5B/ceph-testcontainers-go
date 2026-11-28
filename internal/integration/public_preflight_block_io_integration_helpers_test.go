@@ -23,7 +23,7 @@ const preflightNegativeImage = "busybox:1.37.0"
 
 const preflightOwnerLabel = "org.testcontainers.ceph.preflight-owner"
 
-var bothBlockIO = []preflight.Capability{preflight.BlockIODelay, preflight.BlockIOEIO}
+var bothBlockIO = []preflight.Capability{preflight.CapabilityBlockIODelay, preflight.CapabilityBlockIOEIO}
 
 func logPreflight(t *testing.T, name string, report *preflight.Report) {
 	t.Helper()
@@ -75,14 +75,14 @@ func requireOperationMatches(ctx context.Context, t *testing.T, backend *blockio
 	t.Helper()
 	err := backend.Apply(ctx, profile)
 	switch verdict {
-	case preflight.Observed:
+	case preflight.StateObserved:
 		if err != nil {
 			t.Fatalf("prerequisites of %+v were observed, but Apply failed: %v", profile, err)
 		}
 		if err := backend.Restore(ctx); err != nil {
 			t.Fatal(err)
 		}
-	case preflight.Unavailable:
+	case preflight.StateUnavailable:
 		if !errors.Is(err, ceph.ErrEnvironmentUnavailable) {
 			t.Fatalf("prerequisites of %+v were unavailable, but Apply returned %v", profile, err)
 		}
@@ -112,21 +112,21 @@ func testPreflightBlockIOMatchesOperation(t *testing.T) {
 	if !slices.Equal(beforeContainers, afterContainers) || !slices.Equal(beforeImages, afterImages) {
 		t.Fatalf("inspect changed the engine: containers %v -> %v, images %v -> %v", beforeContainers, afterContainers, beforeImages, afterImages)
 	}
-	if inspected.Helper != nil || inspected.Verdict(preflight.Engine) != preflight.Observed || inspected.Verdict(preflight.BlockIODelay) != preflight.Unknown {
+	if inspected.Helper != nil || inspected.Verdict(preflight.CapabilityEngine) != preflight.StateObserved || inspected.Verdict(preflight.CapabilityBlockIODelay) != preflight.StateUnknown {
 		t.Fatalf("inspect verdicts:\n%s", inspected)
 	}
 
 	// The negative control: the operation refuses the image the helper
 	// probe found lacking.
-	negative, err := preflight.Observe(ctx, preflight.Request{Capabilities: bothBlockIO, Level: preflight.Helper, HelperImage: preflightNegativeImage})
+	negative, err := preflight.Observe(ctx, preflight.Request{Capabilities: bothBlockIO, Level: preflight.LevelHelper, HelperImage: preflightNegativeImage})
 	if err != nil {
 		t.Fatal(err)
 	}
 	logPreflight(t, "negative control", negative)
-	if check, _ := negative.Lookup("blockio.image-tools"); check.State != preflight.Unavailable || check.Kind != preflight.ImageKind {
+	if check, _ := negative.Lookup("blockio.image-tools"); check.State != preflight.StateUnavailable || check.Kind != preflight.KindImage {
 		t.Fatalf("negative control tools check: %+v", check)
 	}
-	if negative.Verdict(preflight.BlockIODelay) != preflight.Unavailable || negative.Verdict(preflight.BlockIOEIO) != preflight.Unavailable || !negative.Helper.Released {
+	if negative.Verdict(preflight.CapabilityBlockIODelay) != preflight.StateUnavailable || negative.Verdict(preflight.CapabilityBlockIOEIO) != preflight.StateUnavailable || !negative.Helper.Released {
 		t.Fatalf("negative control verdicts:\n%s", negative)
 	}
 	refused, err := blockio.Run(ctx, preflightNegativeImage, blockio.WithConfig(blockio.Config{Size: blockio.MinSize}))
@@ -140,7 +140,7 @@ func testPreflightBlockIOMatchesOperation(t *testing.T) {
 	}
 
 	// The helper level report agrees with the operations on this engine.
-	report, err := preflight.Observe(ctx, preflight.Request{Capabilities: bothBlockIO, Level: preflight.Helper, HelperImage: helperImage})
+	report, err := preflight.Observe(ctx, preflight.Request{Capabilities: bothBlockIO, Level: preflight.LevelHelper, HelperImage: helperImage})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +149,7 @@ func testPreflightBlockIOMatchesOperation(t *testing.T) {
 		t.Fatalf("helper run: %+v", report.Helper)
 	}
 	requireNoPreflightHelpers(ctx, t, docker)
-	delay, eio := report.Verdict(preflight.BlockIODelay), report.Verdict(preflight.BlockIOEIO)
+	delay, eio := report.Verdict(preflight.CapabilityBlockIODelay), report.Verdict(preflight.CapabilityBlockIOEIO)
 	backend, err := blockio.Run(ctx, helperImage, blockio.WithConfig(blockio.Config{Size: blockio.MinSize}))
 	if backend != nil {
 		defer func() {
@@ -159,7 +159,7 @@ func testPreflightBlockIOMatchesOperation(t *testing.T) {
 		}()
 	}
 	if err != nil {
-		if !errors.Is(err, ceph.ErrEnvironmentUnavailable) || delay != preflight.Unavailable || eio != preflight.Unavailable {
+		if !errors.Is(err, ceph.ErrEnvironmentUnavailable) || delay != preflight.StateUnavailable || eio != preflight.StateUnavailable {
 			t.Fatalf("blockio.Run failed with delay %s and EIO %s: %v", delay, eio, err)
 		}
 		return

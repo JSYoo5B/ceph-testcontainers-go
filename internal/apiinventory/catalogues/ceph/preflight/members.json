@@ -7,10 +7,10 @@
     "ceph/preflight.Check": [
       "Check.Capabilities field []Capability `json:\"capabilities\"`",
       "Check.Guidance field string `json:\"guidance,omitempty\"`",
-      "Check.Key field string `json:\"key\"`",
+      "Check.Key field CheckKey `json:\"key\"`",
       "Check.Kind field Kind `json:\"kind,omitempty\"`",
       "Check.Reason field string `json:\"reason,omitempty\"`",
-      "Check.Source field string `json:\"source,omitempty\"`",
+      "Check.Source field Source `json:\"source,omitempty\"`",
       "Check.State field State `json:\"state\"`"
     ],
     "ceph/preflight.EngineFacts": [

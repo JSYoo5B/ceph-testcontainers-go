@@ -27,7 +27,7 @@ func (r *Report) String() string {
 		fmt.Fprintf(&b, "%s: %s\n", capability, r.Verdict(capability))
 	}
 	for _, check := range r.Checks {
-		if check.State == Observed {
+		if check.State == StateObserved {
 			continue
 		}
 		fmt.Fprintf(&b, "  %s: %s", check.Key, check.State)

@@ -2,7 +2,6 @@ package preflight
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -13,7 +12,6 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/containerd/errdefs"
 	"github.com/google/uuid"
-	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -37,20 +35,19 @@ type helperRunner interface {
 
 type dockerHelper struct{ ctr testcontainers.Container }
 
-// Start runs the helper with the privileges and device access of the block
-// I/O keeper: root, privileged, the engine host's /dev and no network.
-func (h *dockerHelper) Start(ctx context.Context, image string) (string, error) {
+// helperContainerRequest is the block I/O keeper's helper request, which runs image
+// with the keeper's privileges and device access: root, privileged, the
+// engine host's /dev and no network.
+func helperContainerRequest(image string) testcontainers.GenericContainerRequest {
 	name := "tcpre-" + uuid.NewString()
-	request := testcontainers.GenericContainerRequest{ContainerRequest: testcontainers.ContainerRequest{
-		Image: image, Name: name, Entrypoint: []string{"sleep"}, Cmd: []string{"infinity"}, User: "0",
-		Labels: map[string]string{ownerLabel: name},
-		HostConfigModifier: func(h *container.HostConfig) {
-			h.Privileged = true
-			h.Binds = append(h.Binds, "/dev:/dev")
-			h.NetworkMode = "none"
-		},
-	}, Started: true}
-	ctr, err := testcontainers.GenericContainer(ctx, request)
+	request := control.HelperRequest(image, name)
+	request.Labels = map[string]string{ownerLabel: name}
+	return testcontainers.GenericContainerRequest{ContainerRequest: request, Started: true}
+}
+
+// Start runs the helper from helperContainerRequest.
+func (h *dockerHelper) Start(ctx context.Context, image string) (string, error) {
+	ctr, err := testcontainers.GenericContainer(ctx, helperContainerRequest(image))
 	if ctr != nil {
 		h.ctr = ctr
 		return ctr.GetContainerID(), err
@@ -102,7 +99,7 @@ func (c checker) runHelper(ctx context.Context, engine engineClient, image strin
 		if probeErr != nil {
 			errs = append(errs, probeFailure(ctx, probeErr, report))
 		} else if probe, parseErr := control.ParseProbe(raw); parseErr != nil {
-			report.set(keyTools, Unknown, "", "helper-probe", "the helper probe returned invalid output", "")
+			report.set(CheckKeyBlockIOImageTools, StateUnknown, "", SourceHelperProbe, "the helper probe returned invalid output", "")
 			errs = append(errs, failure(ceph.ErrNativeFailure, "the helper probe returned invalid output"))
 		} else if err := record(probe, report); err != nil {
 			errs = append(errs, err)
@@ -126,80 +123,93 @@ func (c checker) runHelper(ctx context.Context, engine engineClient, image strin
 // the kernel checks not run.
 func startFailure(ctx context.Context, err error, report *Report) error {
 	switch {
-	case ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
-		report.set(keyHelperStart, Unknown, "", "helper-start", "the helper start was interrupted", "")
+	case interrupted(ctx, err):
+		report.set(CheckKeyBlockIOHelperStart, StateUnknown, "", SourceHelperStart, "the helper start was interrupted", "")
 		return cause(ctx, err, ceph.ErrEnvironmentUnavailable, "start the helper")
 	case errdefs.IsNotFound(err):
-		report.set(keyHelperStart, Unavailable, ImageKind, "helper-start", "the engine could not find or pull the helper image", "pass a helper image that the engine can pull, such as blockio.HelperImage")
+		report.set(CheckKeyBlockIOHelperStart, StateUnavailable, KindImage, SourceHelperStart, "the engine could not find or pull the helper image", "pass a helper image that the engine can pull, such as blockio.HelperImage")
 		return nil
 	case errdefs.IsPermissionDenied(err) || errdefs.IsUnauthorized(err):
-		report.set(keyHelperStart, Unavailable, EnvironmentKind, "helper-start", "the engine refused the helper's privileged configuration", refusedGuidance)
+		report.set(CheckKeyBlockIOHelperStart, StateUnavailable, KindEnvironment, SourceHelperStart, "the engine refused the helper's privileged configuration", refusedGuidance)
 		return nil
 	}
-	report.set(keyHelperStart, Unknown, "", "helper-start", "the helper did not start", "")
+	report.set(CheckKeyBlockIOHelperStart, StateUnknown, "", SourceHelperStart, "the helper did not start", "")
 	return failure(ceph.ErrEnvironmentUnavailable, "start the helper: the helper did not start")
 }
 
 // probeFailure classifies a probe that returned no output. A helper that
 // cannot run python3 lacks an image tool.
 func probeFailure(ctx context.Context, err error, report *Report) error {
-	report.set(keyHelperStart, Observed, "", "helper-start", "", "")
-	var exit *supervised.ExitError
-	if ctx.Err() == nil && errors.As(err, &exit) && (exit.Code == 126 || exit.Code == 127) {
-		report.set(keyTools, Unavailable, ImageKind, "helper-probe", "the helper image cannot run python3", toolsGuidance)
+	report.set(CheckKeyBlockIOHelperStart, StateObserved, "", SourceHelperStart, "", "")
+	if ctx.Err() == nil && supervised.MissingPython(err) {
+		report.set(CheckKeyBlockIOImageTools, StateUnavailable, KindImage, SourceHelperProbe, "the helper image cannot run python3", toolsGuidance)
 		return nil
 	}
-	report.set(keyTools, Unknown, "", "helper-probe", "the helper probe did not complete", "")
+	report.set(CheckKeyBlockIOImageTools, StateUnknown, "", SourceHelperProbe, "the helper probe did not complete", "")
 	return cause(ctx, err, ceph.ErrNativeFailure, "probe the helper")
 }
 
-// record maps the probe's gates onto the report. The targets are
-// conclusive only when the probe read the registered target list. A gate
+// probeChecks are the checks of the probe's gates before the targets, with
+// the reason and guidance of an unavailable gate.
+var probeChecks = []struct {
+	gate             control.GateKey
+	key              CheckKey
+	reason, guidance string
+}{
+	{control.GateTools, CheckKeyBlockIOImageTools, "the helper image lacks a required tool", toolsGuidance},
+	{control.GateDrivers, CheckKeyBlockIODrivers, "the engine kernel registers no device-mapper or loop driver", kernelGuidance},
+	{control.GateControl, CheckKeyBlockIOControlAccess, "the device-mapper or loop control device is not accessible", kernelGuidance},
+}
+
+// probeTargets are the target checks, with the device-mapper target each
+// needs and the kernel feature of the desktop setup guide that provides it.
+var probeTargets = []struct {
+	key             CheckKey
+	target, feature string
+}{
+	{CheckKeyBlockIOTargetLinear, "linear", "dm"},
+	{CheckKeyBlockIOTargetDelay, "delay", "dm-delay"},
+	{CheckKeyBlockIOTargetError, "error", "dm"},
+}
+
+var gateKinds = map[control.GateKind]Kind{control.GateImage: KindImage, control.GateEnvironment: KindEnvironment}
+
+// record maps the probe's gates onto the report, by gate key. The targets
+// are conclusive only when the probe read the registered target list. A gate
 // whose observation failed is unknown and returns an error.
 func record(probe control.Probe, report *Report) error {
 	var failed []string
-	report.set(keyHelperStart, Observed, "", "helper-start", "", "")
-	keys := map[string]string{"tools": keyTools, "drivers": keyDrivers, "control": keyControl}
-	reasons := map[string]string{
-		"tools":   "the helper image lacks a required tool",
-		"drivers": "the engine kernel registers no device-mapper or loop driver",
-		"control": "the device-mapper or loop control device is not accessible",
-	}
-	guidance := map[string]string{"tools": toolsGuidance, "drivers": kernelGuidance, "control": kernelGuidance}
-	for _, gate := range probe.Gates {
-		key, ok := keys[gate.Key]
-		if !ok {
-			continue
-		}
+	report.set(CheckKeyBlockIOHelperStart, StateObserved, "", SourceHelperStart, "", "")
+	for _, check := range probeChecks {
+		gate := probe.Gate(check.gate)
 		switch gate.State {
-		case "observed":
-			report.set(key, Observed, "", "helper-probe", "", "")
-		case "unavailable":
-			reason := reasons[gate.Key]
+		case control.GateObserved:
+			report.set(check.key, StateObserved, "", SourceHelperProbe, "", "")
+		case control.GateUnavailable:
+			reason := check.reason
 			if len(gate.Missing) > 0 {
 				reason = "the helper image lacks " + joinTools(gate.Missing)
 			}
-			report.set(key, Unavailable, Kind(gate.Kind), "helper-probe", reason, guidance[gate.Key])
-		case "unknown":
-			report.set(key, Unknown, "", "helper-probe", "the probe could not observe this gate", "")
-			failed = append(failed, key)
+			report.set(check.key, StateUnavailable, gateKinds[gate.Kind], SourceHelperProbe, reason, check.guidance)
+		case control.GateUnknown:
+			report.set(check.key, StateUnknown, "", SourceHelperProbe, "the probe could not observe this gate", "")
+			failed = append(failed, string(check.key))
 		}
 	}
-	targets := probe.Gates[len(probe.Gates)-1]
-	for key, target := range map[string]string{keyTargetLinear: "linear", keyTargetDelay: "delay", keyTargetError: "error"} {
+	targets := probe.Gate(control.GateTargets)
+	for _, check := range probeTargets {
 		switch targets.State {
-		case "observed":
-			if slices.Contains(probe.Targets, target) {
-				report.set(key, Observed, "", "helper-probe", "", "")
+		case control.GateObserved:
+			if slices.Contains(probe.Targets, check.target) {
+				report.set(check.key, StateObserved, "", SourceHelperProbe, "", "")
 			} else {
-				feature := map[string]string{"linear": "dm", "delay": "dm-delay", "error": "dm"}[target]
-				report.set(key, Unavailable, EnvironmentKind, "helper-probe", "dmsetup targets does not list "+target, fmt.Sprintf(targetGuidance, target, feature))
+				report.set(check.key, StateUnavailable, KindEnvironment, SourceHelperProbe, "dmsetup targets does not list "+check.target, fmt.Sprintf(targetGuidance, check.target, check.feature))
 			}
-		case "unknown":
-			report.set(key, Unknown, "", "helper-probe", "dmsetup targets could not be read", "")
+		case control.GateUnknown:
+			report.set(check.key, StateUnknown, "", SourceHelperProbe, "dmsetup targets could not be read", "")
 		}
 	}
-	if targets.State == "unknown" {
+	if targets.State == control.GateUnknown {
 		failed = append(failed, "the device-mapper target list")
 	}
 	if len(failed) > 0 {
@@ -208,11 +218,12 @@ func record(probe control.Probe, report *Report) error {
 	return nil
 }
 
-// joinTools names the missing tools of the fixed tool list only.
+// joinTools names the missing tools that the probe requires only, so that
+// the report holds no text of the helper.
 func joinTools(missing []string) string {
 	var names []string
 	for _, name := range missing {
-		if slices.Contains([]string{"sh", "sleep", "dmsetup", "losetup", "blockdev"}, name) {
+		if slices.Contains(control.ProbeTools, name) {
 			names = append(names, name)
 		}
 	}

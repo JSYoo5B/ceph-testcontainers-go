@@ -678,8 +678,8 @@ fixture loads no kernel module. Restoring the table does not restart an OSD
 that an EIO fault aborted. The README gives the cleanup order and the native
 recipe. To learn before the cluster starts whether the selected engine has
 these prerequisites, and to keep that answer with the test output, use
-[`ceph/preflight`](../../ceph/preflight/README.md) with `BlockIODelay` or
-`BlockIOEIO`.
+[`ceph/preflight`](../../ceph/preflight/README.md) with
+`CapabilityBlockIODelay` or `CapabilityBlockIOEIO`.
 
 ## Dropping or delaying messages
 

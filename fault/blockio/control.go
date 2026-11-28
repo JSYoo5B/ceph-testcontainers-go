@@ -33,8 +33,7 @@ func (b *Container) command(ctx context.Context, args ...string) ([]byte, error)
 }
 
 func commandError(err error) error {
-	var exit *supervised.ExitError
-	if errors.As(err, &exit) && (exit.Code == 126 || exit.Code == 127) {
+	if supervised.MissingPython(err) {
 		return failure(ceph.ErrImageCapability, "keeper cannot execute the Python supervisor: %v", err)
 	}
 	return err

@@ -2,6 +2,7 @@ package blockio
 
 import (
 	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -17,7 +18,6 @@ func TestParseRefusesIncompleteControlEvidence(t *testing.T) {
 		{"settled", `{"action":"settled","name":"owned","id":"step","done":true,"error":""}`},
 		{"settled", `{"action":"settled","name":"owned","id":"step","done":true,"rc":null,"error":""}`},
 		{"loopid", `{"action":"loopid","name":"owned","file":"/tc-blk/owned","inode":1}`},
-		{"create", `{"action":"create","name":"owned","created":null,"error":""}`},
 	} {
 		t.Run(sample.action+sample.raw, func(t *testing.T) {
 			if _, err := Parse([]byte(sample.raw), sample.action); err == nil {
@@ -52,12 +52,27 @@ func TestKeeperScriptsCompile(t *testing.T) {
 	if err != nil {
 		t.Skip("Python 3 is required for keeper syntax validation")
 	}
-	for name, script := range map[string]string{"control": Script, "test-control": TestScript} {
-		t.Run(name, func(t *testing.T) {
-			if out, err := exec.Command(python, "-I", "-c", "import sys; compile(sys.argv[1], 'keeper', 'exec')", script).CombinedOutput(); err != nil {
-				t.Fatalf("%v: %s", err, out)
-			}
-		})
+	if out, err := exec.Command(python, "-I", "-c", "import sys; compile(sys.argv[1], 'keeper', 'exec')", Script).CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+}
+
+// Script and Parse hold only the actions that fault/blockio dispatches:
+// creation, detachment and unlinking go through the keeper's owner script,
+// and the workload actions belong to the integration fixture.
+func TestScriptDispatchesOnlyProductionActions(t *testing.T) {
+	for _, action := range []string{"observe", "step", "settled", "loopid"} {
+		if !strings.Contains(Script, `action == "`+action+`"`) {
+			t.Errorf("Script does not dispatch %s", action)
+		}
+	}
+	for _, action := range []string{"create", "creation", "loop", "unloop", "rmfile", "write", "written", "read", "hold"} {
+		if strings.Contains(Script, `action == "`+action+`"`) {
+			t.Errorf("Script dispatches the test-only action %s", action)
+		}
+		if _, err := Parse([]byte(`{"action":"`+action+`","name":"owned"}`), action); err == nil {
+			t.Errorf("Parse accepts the test-only action %s", action)
+		}
 	}
 }
 

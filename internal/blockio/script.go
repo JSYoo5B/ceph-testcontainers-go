@@ -7,34 +7,13 @@ package blockio
 // Cancellation is not rollback; callers retain its step identity and poll it.
 const Script = scriptPrelude + scriptActions + scriptEnd
 
-// TestScript adds direct-I/O probes and a temporary loop opener to Script's
-// shared control implementation. Production control does not dispatch these
-// test workload actions.
-const TestScript = scriptPrelude + scriptTestPrelude + scriptActions + scriptTestActions + scriptEnd
-
-const scriptPrelude = `import hashlib, json, os, subprocess, sys, time
+const scriptPrelude = `import json, os, subprocess, sys, time
 action, name = sys.argv[1], sys.argv[2]
 work = "/tc-blk"
 out = {"action": action, "name": name}
-node = "/dev/mapper/" + name
 def run(*argv):
     r = subprocess.run(argv, capture_output=True, text=True, timeout=20)
     return r.returncode, r.stdout.strip(), r.stderr.strip()[-400:]
-def creation_path(token):
-    return "%s/ctl-create-%s-%s.json" % (work, name, token)
-def save_creation(token):
-    if token:
-        path = creation_path(token)
-        with open(path + ".tmp", "w") as f:
-            json.dump(dict(out, done=True), f)
-        os.replace(path + ".tmp", path)
-def remove_backing(path, inode):
-    rc, links, err = run("losetup", "--list", "--associated", path, "--noheadings", "--output", "NAME")
-    if rc != 0 or links:
-        raise RuntimeError("backing associations not confirmed absent: " + (err or links))
-    if os.stat(path, follow_symlinks=False).st_ino != inode:
-        raise RuntimeError("backing file identity changed")
-    os.unlink(path)
 def rcfile(tag):
     return "%s/ctl-%s-%s.rc" % (work, name, tag)
 def detached(tag, argv):
@@ -62,19 +41,7 @@ def settled(tag, wait):
         time.sleep(0.1)
 `
 
-const scriptActions = `if action == "create":
-    uuid, lower, sectors = sys.argv[3], sys.argv[4], int(sys.argv[5])
-    rc, _, err = run("dmsetup", "create", "--verifyudev", name, "--uuid", uuid, "--table", "0 %d linear %s 0" % (sectors, lower))
-    out["created"], out["error"] = rc == 0, err
-    save_creation(sys.argv[6] if len(sys.argv) > 6 else "")
-elif action == "creation":
-    try:
-        with open(creation_path(sys.argv[3])) as f:
-            out.update(json.load(f))
-        out["action"] = action
-    except FileNotFoundError:
-        out["done"] = False
-elif action == "observe":
+const scriptActions = `if action == "observe":
     rc, info, err = run("dmsetup", "info", name)
     out["exists"] = rc == 0
     if rc != 0:
@@ -132,21 +99,6 @@ elif action == "settled":
     out["id"] = sys.argv[3]
     out["started"] = os.path.exists(rcfile("step-" + sys.argv[3]) + ".started")
     out.update(settled("step-" + sys.argv[3], 0))
-elif action == "loop":
-    path, size = sys.argv[3], int(sys.argv[4])
-    out.update(loop="", file="", inode=0, error="")
-    try:
-        with open(path, "xb") as f:
-            out["file"], out["inode"] = path, os.fstat(f.fileno()).st_ino
-            f.truncate(size)
-        rc, loop, err = run("losetup", "--find", "--show", path)
-        out["loop"], out["error"] = loop if rc == 0 else "", err
-        if rc == 0:
-            st = os.stat(loop)
-            out["major"], out["minor"] = os.major(st.st_rdev), os.minor(st.st_rdev)
-    except OSError as e:
-        out["major"], out["minor"], out["error"] = 0, 0, str(e)
-    save_creation(sys.argv[5] if len(sys.argv) > 5 else "")
 elif action == "loopid":
     loop = sys.argv[3]
     try:
@@ -156,71 +108,6 @@ elif action == "loopid":
         out["holders"] = sorted(os.listdir("/sys/block/%s/holders" % os.path.basename(loop)))
     except OSError as e:
         out["error"] = str(e)
-elif action == "rmfile":
-    path, inode = sys.argv[3], int(sys.argv[4])
-    remove_backing(path, inode)
-    out["file_removed"] = True
-elif action == "unloop":
-    loop, path, inode = sys.argv[3], sys.argv[4], int(sys.argv[5])
-    base = os.path.basename(loop)
-    out.update(holders=[], detached=False, error="")
-    try:
-        with open("/sys/block/%s/loop/backing_file" % base) as f:
-            backing = f.read().strip()
-        if backing != path or os.stat(backing, follow_symlinks=False).st_ino != inode:
-            raise RuntimeError("loop backing identity changed")
-        holders = sorted(os.listdir("/sys/block/%s/holders" % base))
-        out["holders"] = holders
-        if holders:
-            raise RuntimeError("held by " + " ".join(holders))
-        rc, _, err = run("losetup", "-d", loop)
-        if rc != 0:
-            raise RuntimeError("loop detach: " + err)
-        # A busy loop uses lazy detach. Only an empty successful kernel
-        # association query permits removal of the backing file.
-        rc, links, err = run("losetup", "--list", "--associated", path, "--noheadings", "--output", "NAME")
-        if rc != 0:
-            raise RuntimeError("loop association: " + err)
-        out["detached"], out["lazy"] = not links, bool(links)
-        if not links:
-            remove_backing(path, inode)
-            out["file_removed"] = True
-    except (OSError, RuntimeError) as e:
-        out["error"] = str(e)
-`
-
-const scriptTestPrelude = `def pattern(seed, blocks):
-    block = hashlib.sha256(seed.encode()).digest() * (65536 // 32)
-    return block * blocks
-`
-
-const scriptTestActions = `elif action == "write":
-    offset, blocks, seed = int(sys.argv[3]), int(sys.argv[4]), sys.argv[5]
-    data = pattern(seed, blocks)
-    src = "%s/ctl-%s-pattern" % (work, name)
-    with open(src, "wb") as f:
-        f.write(data)
-    out["sha256"] = hashlib.sha256(data).hexdigest()
-    detached("write", ["dd", "if=" + src, "of=" + node, "bs=65536", "seek=%d" % offset, "count=%d" % blocks, "oflag=direct", "status=none"])
-    out["started"] = True
-elif action == "written":
-    out.update(settled("write", 0))
-elif action == "read":
-    offset, blocks = int(sys.argv[3]), int(sys.argv[4])
-    r = subprocess.run(["dd", "if=" + node, "bs=65536", "skip=%d" % offset, "count=%d" % blocks, "iflag=direct", "status=none"], capture_output=True, timeout=20)
-    out["rc"] = r.returncode
-    out["sha256"] = hashlib.sha256(r.stdout).hexdigest() if r.returncode == 0 else ""
-elif action == "hold":
-    mark = "%s/ctl-hold-%s" % (work, os.path.basename(sys.argv[3]))
-    try:
-        os.unlink(mark)
-    except FileNotFoundError:
-        pass
-    detached("hold", ["sh", "-c", 'exec 3<"$1"; : >"$3"; sleep "$2"', "sh", sys.argv[3], sys.argv[4], mark])
-    deadline = time.monotonic() + 10
-    while not os.path.exists(mark) and time.monotonic() < deadline:
-        time.sleep(0.05)
-    out["started"] = os.path.exists(mark)
 `
 
 const scriptEnd = `else:

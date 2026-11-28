@@ -66,7 +66,7 @@ func TestSelectionChild(t *testing.T) {
 }
 
 // fakeEngine is an HTTP server on a Unix socket that answers the read-only
-// endpoints Inspect needs, with infoStatus for /info, and records every
+// endpoints LevelInspect needs, with infoStatus for /info, and records every
 // request.
 type fakeEngine struct {
 	socket   string
@@ -165,7 +165,7 @@ func runSelectionChild(t *testing.T, extra ...string) (Report, string, string) {
 }
 
 // The engine that testcontainers selects through DOCKER_HOST is the
-// substitute engine. The report must come from it, and an Inspect level call
+// substitute engine. The report must come from it, and an LevelInspect level call
 // must send nothing but reads.
 func TestInspectUsesTheSelectedEngine(t *testing.T) {
 	if os.Getenv(selectionChildEnv) != "" {
@@ -179,7 +179,7 @@ func TestInspectUsesTheSelectedEngine(t *testing.T) {
 	if report.Engine.ServerVersion != "99.0.0-selected" || report.Engine.Transport != "unix" || report.Engine.Desktop == nil || !*report.Engine.Rootless {
 		t.Fatalf("report does not describe the selected engine: %+v", report.Engine)
 	}
-	if report.Verdict(Engine) != Observed || report.Verdict(BlockIODelay) != Unknown {
+	if report.Verdict(CapabilityEngine) != StateObserved || report.Verdict(CapabilityBlockIODelay) != StateUnknown {
 		t.Fatalf("verdicts:\n%s", report.String())
 	}
 	requests := engine.recorded()
@@ -209,15 +209,15 @@ func TestEngineSelectionKeepsAnsweredFailureUnknown(t *testing.T) {
 		name, host, category string
 		engine, delay        State
 	}{
-		{"information error", "unix://" + failing.socket, "environment", Unknown, Unknown},
-		{"nothing listening", "unix://" + missing, "none", Unavailable, Unavailable},
+		{"information error", "unix://" + failing.socket, "environment", StateUnknown, StateUnknown},
+		{"nothing listening", "unix://" + missing, "none", StateUnavailable, StateUnavailable},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			report, category, text := runSelectionChild(t, providerHostEnv+"="+tc.host, "TESTCONTAINERS_PROVIDER="+providerName)
 			if category != tc.category {
 				t.Fatalf("error category %s (%s), want %s", category, text, tc.category)
 			}
-			if report.Verdict(Engine) != tc.engine || report.Verdict(BlockIODelay) != tc.delay || report.Verdict(BlockIOEIO) != tc.delay {
+			if report.Verdict(CapabilityEngine) != tc.engine || report.Verdict(CapabilityBlockIODelay) != tc.delay || report.Verdict(CapabilityBlockIOEIO) != tc.delay {
 				t.Fatalf("verdicts:\n%s", report.String())
 			}
 			if strings.Contains(text, failing.socket) || strings.Contains(report.String(), failing.socket) {

@@ -6,8 +6,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -17,11 +19,10 @@ import (
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
-// These aliases keep the existing model and native fixtures on the production
-// state machine and keeper control script. Direct I/O is a test-only extension.
-const blockControlScript = blockio.TestScript
-
-type dmControlReply = blockio.View
+// These aliases keep the model and native fixtures on the production state
+// machine, and the actions that fault/blockio dispatches (observe, step,
+// settled, loopid) on its keeper control script.
+type dmView = blockio.View
 type dmRecord = blockio.Record
 type loopIdentity = blockio.LoopIdentity
 
@@ -36,20 +37,244 @@ const (
 	dmSuspended       = blockio.Suspended
 	dmSuspendedLoaded = blockio.SuspendedLoaded
 	dmSwappedOnHold   = blockio.SwappedOnHold
-	dmLoadRefused     = blockio.LoadRefused
 	dmReleasable      = blockio.Releasable
 	dmReleaseHeld     = blockio.ReleaseHeld
 )
 
 var (
-	parseDMControlReply = blockio.Parse
 	normTable           = blockio.Normalize
 	classifyDM          = blockio.Classify
 	dmForward           = blockio.Forward
-	dmRefuses           = blockio.Refuses
 	judgeDMRelease      = blockio.JudgeRelease
 	judgeLoopRelease    = blockio.JudgeLoopRelease
 )
+
+// blockTestScript runs the fixture's own keeper actions next to Script: it
+// builds and releases the scratch loops and mappings that the control acts
+// on (create, creation, loop, rmfile, unloop) and runs direct I/O and a loop
+// opener (write, written, read, hold). fault/blockio dispatches none of them:
+// its keeper creates, detaches and unlinks through its owner script.
+const blockTestScript = `import hashlib, json, os, subprocess, sys, time
+action, name = sys.argv[1], sys.argv[2]
+work = "/tc-blk"
+out = {"action": action, "name": name}
+node = "/dev/mapper/" + name
+def run(*argv):
+    r = subprocess.run(argv, capture_output=True, text=True, timeout=20)
+    return r.returncode, r.stdout.strip(), r.stderr.strip()[-400:]
+def creation_path(token):
+    return "%s/ctl-create-%s-%s.json" % (work, name, token)
+def save_creation(token):
+    if token:
+        path = creation_path(token)
+        with open(path + ".tmp", "w") as f:
+            json.dump(dict(out, done=True), f)
+        os.replace(path + ".tmp", path)
+def remove_backing(path, inode):
+    rc, links, err = run("losetup", "--list", "--associated", path, "--noheadings", "--output", "NAME")
+    if rc != 0 or links:
+        raise RuntimeError("backing associations not confirmed absent: " + (err or links))
+    if os.stat(path, follow_symlinks=False).st_ino != inode:
+        raise RuntimeError("backing file identity changed")
+    os.unlink(path)
+def rcfile(tag):
+    return "%s/ctl-%s-%s.rc" % (work, name, tag)
+def detached(tag, argv):
+    for suffix in ("", ".err"):
+        try:
+            os.unlink(rcfile(tag) + suffix)
+        except FileNotFoundError:
+            pass
+    script = '"$@" 2>"%s.err"; echo $? > "%s.tmp" && mv "%s.tmp" "%s"' % ((rcfile(tag),) * 4)
+    subprocess.Popen(["sh", "-c", script, "sh"] + argv, start_new_session=True,
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+def settled(tag, wait):
+    deadline = time.monotonic() + wait
+    while True:
+        try:
+            with open(rcfile(tag)) as f:
+                rc = int(f.read().strip())
+            with open(rcfile(tag) + ".err") as f:
+                err = f.read().strip()[-400:]
+            return {"done": True, "rc": rc, "error": err}
+        except FileNotFoundError:
+            pass
+        if time.monotonic() >= deadline:
+            return {"done": False}
+        time.sleep(0.1)
+def pattern(seed, blocks):
+    block = hashlib.sha256(seed.encode()).digest() * (65536 // 32)
+    return block * blocks
+if action == "create":
+    uuid, lower, sectors = sys.argv[3], sys.argv[4], int(sys.argv[5])
+    rc, _, err = run("dmsetup", "create", "--verifyudev", name, "--uuid", uuid, "--table", "0 %d linear %s 0" % (sectors, lower))
+    out["created"], out["error"] = rc == 0, err
+    save_creation(sys.argv[6] if len(sys.argv) > 6 else "")
+elif action == "creation":
+    try:
+        with open(creation_path(sys.argv[3])) as f:
+            out.update(json.load(f))
+        out["action"] = action
+    except FileNotFoundError:
+        out["done"] = False
+elif action == "loop":
+    path, size = sys.argv[3], int(sys.argv[4])
+    out.update(loop="", file="", inode=0, error="")
+    try:
+        with open(path, "xb") as f:
+            out["file"], out["inode"] = path, os.fstat(f.fileno()).st_ino
+            f.truncate(size)
+        rc, loop, err = run("losetup", "--find", "--show", path)
+        out["loop"], out["error"] = loop if rc == 0 else "", err
+        if rc == 0:
+            st = os.stat(loop)
+            out["major"], out["minor"] = os.major(st.st_rdev), os.minor(st.st_rdev)
+    except OSError as e:
+        out["major"], out["minor"], out["error"] = 0, 0, str(e)
+    save_creation(sys.argv[5] if len(sys.argv) > 5 else "")
+elif action == "rmfile":
+    path, inode = sys.argv[3], int(sys.argv[4])
+    remove_backing(path, inode)
+    out["file_removed"] = True
+elif action == "unloop":
+    loop, path, inode = sys.argv[3], sys.argv[4], int(sys.argv[5])
+    base = os.path.basename(loop)
+    out.update(holders=[], detached=False, error="")
+    try:
+        with open("/sys/block/%s/loop/backing_file" % base) as f:
+            backing = f.read().strip()
+        if backing != path or os.stat(backing, follow_symlinks=False).st_ino != inode:
+            raise RuntimeError("loop backing identity changed")
+        holders = sorted(os.listdir("/sys/block/%s/holders" % base))
+        out["holders"] = holders
+        if holders:
+            raise RuntimeError("held by " + " ".join(holders))
+        rc, _, err = run("losetup", "-d", loop)
+        if rc != 0:
+            raise RuntimeError("loop detach: " + err)
+        # A busy loop uses lazy detach. Only an empty successful kernel
+        # association query permits removal of the backing file.
+        rc, links, err = run("losetup", "--list", "--associated", path, "--noheadings", "--output", "NAME")
+        if rc != 0:
+            raise RuntimeError("loop association: " + err)
+        out["detached"], out["lazy"] = not links, bool(links)
+        if not links:
+            remove_backing(path, inode)
+            out["file_removed"] = True
+    except (OSError, RuntimeError) as e:
+        out["error"] = str(e)
+elif action == "write":
+    offset, blocks, seed = int(sys.argv[3]), int(sys.argv[4]), sys.argv[5]
+    data = pattern(seed, blocks)
+    src = "%s/ctl-%s-pattern" % (work, name)
+    with open(src, "wb") as f:
+        f.write(data)
+    out["sha256"] = hashlib.sha256(data).hexdigest()
+    detached("write", ["dd", "if=" + src, "of=" + node, "bs=65536", "seek=%d" % offset, "count=%d" % blocks, "oflag=direct", "status=none"])
+    out["started"] = True
+elif action == "written":
+    out.update(settled("write", 0))
+elif action == "read":
+    offset, blocks = int(sys.argv[3]), int(sys.argv[4])
+    r = subprocess.run(["dd", "if=" + node, "bs=65536", "skip=%d" % offset, "count=%d" % blocks, "iflag=direct", "status=none"], capture_output=True, timeout=20)
+    out["rc"] = r.returncode
+    out["sha256"] = hashlib.sha256(r.stdout).hexdigest() if r.returncode == 0 else ""
+elif action == "hold":
+    mark = "%s/ctl-hold-%s" % (work, os.path.basename(sys.argv[3]))
+    try:
+        os.unlink(mark)
+    except FileNotFoundError:
+        pass
+    detached("hold", ["sh", "-c", 'exec 3<"$1"; : >"$3"; sleep "$2"', "sh", sys.argv[3], sys.argv[4], mark])
+    deadline = time.monotonic() + 10
+    while not os.path.exists(mark) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    out["started"] = os.path.exists(mark)
+else:
+    raise SystemExit("unknown action " + action)
+print(json.dumps(out))`
+
+// dmLoadRefused is what apply returns when the kernel refused the wanted
+// table; the node keeps the recorded one.
+const dmLoadRefused = "load-refused"
+
+// dmRefuses reports the states in which the control does nothing at all to
+// the node: it is not the owned node, or another actor or an unsettled step
+// holds it.
+func dmRefuses(state string) bool {
+	return slices.Contains([]string{dmGone, dmIdentityChanged, dmForeign, dmStepUnsettled}, state)
+}
+
+// dmControlReply is a reply of either script: Script's fields and those of
+// the fixture's own actions.
+type dmControlReply struct {
+	dmView
+	Created     bool   `json:"created"`
+	SHA256      string `json:"sha256"`
+	Loop        string `json:"loop"`
+	Detached    bool   `json:"detached"`
+	FileRemoved bool   `json:"file_removed"`
+	// Lazy is a detach the kernel accepted for a busy loop and has not done.
+	Lazy bool `json:"lazy"`
+}
+
+// testActionFields are the fields each of blockTestScript's actions always
+// reports.
+var testActionFields = map[string][]string{
+	"create":   {"created", "error"},
+	"creation": {"done"},
+	"loop":     {"loop", "file", "inode", "error"},
+	"rmfile":   {"file_removed"},
+	"unloop":   {"holders", "detached", "error"},
+	"write":    {"sha256", "started"},
+	"written":  {"done"},
+	"read":     {"rc", "sha256"},
+	"hold":     {"started"},
+}
+
+// controlScript is the script that runs action.
+func controlScript(action string) string {
+	if _, test := testActionFields[action]; test {
+		return blockTestScript
+	}
+	return blockio.Script
+}
+
+// parseDMControlReply parses a reply of Script with blockio.Parse and one of
+// blockTestScript with the fields its action always reports.
+func parseDMControlReply(raw []byte, action string) (dmControlReply, error) {
+	var r dmControlReply
+	required, test := testActionFields[action]
+	if !test {
+		view, err := blockio.Parse(raw, action)
+		r.dmView = view
+		return r, err
+	}
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return r, fmt.Errorf("control %s reply: %w: %s", action, err, raw)
+	}
+	if r.Action != action {
+		return r, fmt.Errorf("control reply is for %q, want %q", r.Action, action)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return r, err
+	}
+	required = append([]string{"action", "name"}, required...)
+	switch {
+	case action == "loop" && r.Loop != "":
+		required = append(required, "major", "minor")
+	case action == "written" && r.Done:
+		required = append(required, "rc", "error")
+	}
+	for _, name := range required {
+		value, present := fields[name]
+		if !present || string(value) == "null" {
+			return r, fmt.Errorf("control %s reply lacks non-null %s", action, name)
+		}
+	}
+	return r, nil
+}
 
 const (
 	blockKeeperDir   = "/tc-blk"
@@ -60,13 +285,13 @@ const (
 	dmStepWait = 3 * time.Second
 )
 
-// dmKeeper runs blockControlScript in the privileged keeper.
+// dmKeeper runs Script and blockTestScript in the privileged keeper.
 type dmKeeper struct{ ctr testcontainers.Container }
 
 func (k dmKeeper) exec(ctx context.Context, action, name string, args ...string) (dmControlReply, error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
-	code, reader, err := k.ctr.Exec(ctx, append([]string{"python3", "-I", "-c", blockControlScript, action, name}, args...), tcexec.Multiplexed())
+	code, reader, err := k.ctr.Exec(ctx, append([]string{"python3", "-I", "-c", controlScript(action), action, name}, args...), tcexec.Multiplexed())
 	if err != nil {
 		return dmControlReply{}, err
 	}
@@ -107,9 +332,9 @@ type dmControl struct {
 	refused string
 }
 
-func (c *dmControl) observe(t *testing.T, ctx context.Context) dmControlReply {
+func (c *dmControl) observe(t *testing.T, ctx context.Context) dmView {
 	t.Helper()
-	return c.keeper.do(t, ctx, "observe", c.rec.Name)
+	return c.keeper.do(t, ctx, "observe", c.rec.Name).dmView
 }
 
 func (c *dmControl) note(entry map[string]any) { c.log = append(c.log, entry) }
@@ -137,7 +362,7 @@ func (c *dmControl) dispatch(ctx context.Context, op, table string, wait time.Du
 	if err != nil {
 		return r, err
 	}
-	c.rec.Settle(r)
+	c.rec.Settle(r.dmView)
 	return r, nil
 }
 
@@ -150,7 +375,7 @@ func (c *dmControl) poll(ctx context.Context) (dmControlReply, error) {
 	if err != nil {
 		return r, err
 	}
-	c.rec.Settle(r)
+	c.rec.Settle(r.dmView)
 	return r, nil
 }
 
@@ -273,7 +498,7 @@ func (c *dmControl) releaseOwned(ctx context.Context) (string, string) {
 			return keep(err.Error())
 		}
 	}
-	if verdict, why := judgeDMRelease(c.rec, v); verdict != dmReleasable {
+	if verdict, why := judgeDMRelease(c.rec, v.dmView); verdict != dmReleasable {
 		return keep(why)
 	}
 	if r, err := c.dispatch(ctx, "remove", "", 10*time.Second); err != nil || !r.Done || r.RC != 0 {
@@ -347,7 +572,7 @@ func (l *dmBacking) release(ctx context.Context, keeper dmKeeper, kept []string)
 	if err != nil {
 		return seen, err
 	}
-	if ok, why := judgeLoopRelease(l.loopIdentity, seen, nil); !ok {
+	if ok, why := judgeLoopRelease(l.loopIdentity, seen.dmView, nil); !ok {
 		return seen, fmt.Errorf("%s", why)
 	}
 	r, err := keeper.exec(ctx, "unloop", "-", l.Loop, l.File, inode)
