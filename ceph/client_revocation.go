@@ -26,17 +26,32 @@ type clientRevocationState struct {
 	restored, deleted bool
 }
 
-// Name returns the revoked entity, for example client.reader.
+// Name returns the revoked entity, for example client.reader. A nil or zero
+// handle, such as the one a refused Revoke returns, has no entity and returns
+// "".
 //
 //purpose:observation
-func (r *ClientRevocationHandle) Name() string { return r.state.client.name }
+func (r *ClientRevocationHandle) Name() string {
+	if r == nil {
+		return ""
+	}
+	return r.state.name()
+}
+
+// name is the revoked entity, "" without a state or client.
+func (s *clientRevocationState) name() string {
+	if s == nil || s.client == nil {
+		return ""
+	}
+	return s.client.name
+}
 
 // String deliberately excludes credentials.
 func (r ClientRevocationHandle) String() string {
-	if r.state == nil {
-		return "temporary revocation of a Cephx client"
+	if name := r.state.name(); name != "" {
+		return "temporary revocation of Cephx client " + name
 	}
-	return "temporary revocation of Cephx client " + r.state.client.name
+	return "temporary revocation of a Cephx client"
 }
 
 // GoString excludes credentials from formatted Go representations as well.

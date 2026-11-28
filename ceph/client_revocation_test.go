@@ -401,3 +401,23 @@ func TestDiagnosticsRedactRevokedClientKeys(t *testing.T) {
 	}
 	requireRedacted(t, c, original)
 }
+
+func TestClientRevocationNameOfAMissingHandleIsEmpty(t *testing.T) {
+	var refused *ClientRevocationHandle
+	for name, handle := range map[string]*ClientRevocationHandle{
+		"nil":       refused,
+		"zero":      {},
+		"no client": {state: &clientRevocationState{}},
+	} {
+		if got := handle.Name(); got != "" {
+			t.Errorf("%s handle: Name() = %q, want \"\"", name, got)
+		}
+		if handle != nil && handle.String() != "temporary revocation of a Cephx client" {
+			t.Errorf("%s handle: String() = %q", name, handle.String())
+		}
+	}
+	named := &ClientRevocationHandle{state: &clientRevocationState{client: &ClientConfig{name: "client.reader"}}}
+	if named.Name() != "client.reader" || named.String() != "temporary revocation of Cephx client client.reader" {
+		t.Fatalf("Name() = %q, String() = %q", named.Name(), named.String())
+	}
+}
