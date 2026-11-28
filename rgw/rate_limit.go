@@ -224,7 +224,7 @@ func (change *RateLimitOverrideHandle) Restore(ctx context.Context) error {
 		return servicehook.Invalid(errors.New("RGW rate-limit override is unavailable"))
 	}
 	cluster := user.Origin.Cluster()
-	if err := servicehook.LockTopology(ctx, cluster); err != nil {
+	if err := gwbase.LockCluster(ctx, cluster); err != nil {
 		return err
 	}
 	restored := change.state.restored

@@ -18,6 +18,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
 	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -212,7 +213,7 @@ func (g *Gateway) ReplaceTLS(ctx context.Context, config TLSConfig) error {
 	if err != nil {
 		return err
 	}
-	if err := servicehook.LockTopology(ctx, cluster); err != nil {
+	if err := gwbase.LockCluster(ctx, cluster); err != nil {
 		return err
 	}
 	defer servicehook.Unlock(cluster)

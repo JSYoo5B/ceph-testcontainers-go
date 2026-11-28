@@ -69,7 +69,7 @@ type Config struct {
 // can be removed because RGW is optional. Failed cleanup remains tracked.
 func removeGateway(ctx context.Context, c *ceph.Container, handle *Gateway) error {
 	name := handle.GatewayName
-	if err := servicehook.LockTopology(ctx, c); err != nil {
+	if err := gwbase.LockCluster(ctx, c); err != nil {
 		return err
 	}
 	defer servicehook.Unlock(c)

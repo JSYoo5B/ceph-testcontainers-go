@@ -151,12 +151,8 @@ func (g *Core) OwnedAccount(ctx context.Context, a *Account) (*NativeAccount, er
 	if a == nil || a.State == nil || !a.State.Confirmed || a.State.Removed {
 		return nil, servicehook.Invalid(errors.New("RGW account must be active and created by this cluster"))
 	}
-	scope, err := g.RuntimeScope(ctx)
-	if err != nil {
+	if _, err := g.RequireScope(ctx, a.Scope, "RGW account native runtime scope changed"); err != nil {
 		return nil, err
-	}
-	if scope != a.Scope {
-		return nil, errors.New("RGW account native runtime scope changed")
 	}
 	native, err := g.ReadNativeAccount(ctx, a)
 	if err != nil {

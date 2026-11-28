@@ -59,7 +59,7 @@ func Gateways(ctx context.Context, c *ceph.Container) ([]*Gateway, error) {
 	if c == nil {
 		return nil, errNilCluster
 	}
-	if err := servicehook.LockTopology(ctx, c); err != nil {
+	if err := gwbase.LockCluster(ctx, c); err != nil {
 		return nil, err
 	}
 	defer servicehook.Unlock(c)

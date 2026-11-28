@@ -275,6 +275,9 @@ func (g *Core) UserExists(ctx context.Context, u *User) (bool, error) {
 	return slices.Contains(users, u.ID), nil
 }
 
+// errUserScopeChanged refuses a user whose gateway left its native scope.
+const errUserScopeChanged = "RGW user's native runtime scope changed"
+
 // UserCommand runs a radosgw-admin command of u through g, supervised: in the
 // user's captured native scope, after checking that g still runs in it, or in
 // g's configured scope. A call whose ctx ends stops the command before it
@@ -282,12 +285,9 @@ func (g *Core) UserExists(ctx context.Context, u *User) (bool, error) {
 // *ceph.NativeCommandUnstoppedError.
 func (g *Core) UserCommand(ctx context.Context, u *User, args ...string) ([]byte, error) {
 	if u.State.NativeScope != nil {
-		scope, err := g.RuntimeScope(ctx)
+		scope, err := g.RequireScope(ctx, *u.State.NativeScope, errUserScopeChanged)
 		if err != nil {
 			return nil, err
-		}
-		if scope != *u.State.NativeScope {
-			return nil, errors.New("RGW user's native runtime scope changed")
 		}
 		return g.Command(ctx, scope, args...)
 	}
@@ -526,12 +526,9 @@ func (g *Core) MutateUser(ctx context.Context, u *User, args ...string) error {
 	}
 	argv := AdminArgv(g.scope, append([]string{"--format", "json"}, args...)...)
 	if u.State.NativeScope != nil {
-		scope, err := g.RuntimeScope(ctx)
+		scope, err := g.RequireScope(ctx, *u.State.NativeScope, errUserScopeChanged)
 		if err != nil {
 			return err
-		}
-		if scope != *u.State.NativeScope {
-			return errors.New("RGW user's native runtime scope changed")
 		}
 		argv = CommandArgs(scope, args...)
 	}

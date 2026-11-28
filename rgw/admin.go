@@ -279,18 +279,12 @@ func (g *Gateway) CreateUser(ctx context.Context, config UserConfig) (*User, err
 		return nil, err
 	}
 	core := g.base()
-	if core.Cluster() == nil {
-		return nil, servicehook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
-	}
-	if err := servicehook.LockTopology(ctx, core.Cluster()); err != nil {
+	admission, err := gwbase.AdmitCreation(ctx, core)
+	if err != nil {
 		return nil, err
 	}
-	defer servicehook.Unlock(core.Cluster())
-	if err := core.ValidateAdmin(); err != nil {
-		return nil, err
-	}
-	ctx, cancel := gwbase.AdminContext(ctx, core.Cluster())
-	defer cancel()
+	defer admission.Done()
+	ctx = admission.Ctx
 	if account != nil && !core.ServesScopeOf(account.Origin) {
 		return nil, servicehook.Invalid(errors.New("RGW account was created in another cluster or gateway scope"))
 	}
@@ -311,17 +305,12 @@ func (u *User) withGateway(ctx context.Context, fn func(context.Context, *gwbase
 	if !user.Owned() {
 		return servicehook.Invalid(errors.New("RGW user is not owned by a Ceph cluster"))
 	}
-	cluster := user.Origin.Cluster()
-	if err := servicehook.LockTopology(ctx, cluster); err != nil {
-		return err
-	}
-	defer servicehook.Unlock(cluster)
-	g, err := user.Origin.ScopeGateway(ctx)
+	admission, err := gwbase.Admit(ctx, user.Origin)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := gwbase.AdminContext(ctx, cluster)
-	defer cancel()
+	defer admission.Done()
+	ctx, g := admission.Ctx, admission.Gateway
 	native, err := g.OwnedUser(ctx, user)
 	if err != nil {
 		return fmt.Errorf("confirm the owned RGW user (user info): %w", err)
@@ -451,7 +440,7 @@ func (u *User) Remove(ctx context.Context) error {
 		return servicehook.Invalid(errors.New("RGW user is not owned by a Ceph cluster"))
 	}
 	cluster := user.Origin.Cluster()
-	if err := servicehook.LockTopology(ctx, cluster); err != nil {
+	if err := gwbase.LockCluster(ctx, cluster); err != nil {
 		return err
 	}
 	defer servicehook.Unlock(cluster)
@@ -473,12 +462,12 @@ func (u *User) Remove(ctx context.Context) error {
 		}
 		user.State.UnstoppedRemove = nil
 	}
-	g, err := user.Origin.ScopeGateway(ctx)
+	admission, err := user.Origin.AdmitLocked(ctx)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := gwbase.AdminContext(ctx, cluster)
-	defer cancel()
+	defer admission.Done()
+	ctx, g := admission.Ctx, admission.Gateway
 	exists, err := g.UserExists(ctx, user)
 	if err != nil {
 		return err

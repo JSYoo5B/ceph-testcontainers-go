@@ -171,18 +171,12 @@ func create(ctx context.Context, g *gwbase.Core, config Config) (*Placement, err
 	if err != nil {
 		return nil, err
 	}
-	if g.Cluster() == nil {
-		return nil, servicehook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
-	}
-	if err := servicehook.LockTopology(ctx, g.Cluster()); err != nil {
+	admission, err := gwbase.AdmitCreation(ctx, g)
+	if err != nil {
 		return nil, err
 	}
-	defer servicehook.Unlock(g.Cluster())
-	if err := g.ValidateAdmin(); err != nil {
-		return nil, err
-	}
-	ctx, cancel := gwbase.AdminContext(ctx, g.Cluster())
-	defer cancel()
+	defer admission.Done()
+	ctx = admission.Ctx
 	scope, group, err := admitCreation(ctx, g, config.Name)
 	if err != nil {
 		return nil, err
@@ -323,16 +317,12 @@ func (p *Placement) Status(ctx context.Context) (State, error) {
 	if origin.Cluster() == nil {
 		return State{}, servicehook.Invalid(errors.New("RGW placement is not owned by a Ceph cluster"))
 	}
-	if err := servicehook.LockTopology(ctx, origin.Cluster()); err != nil {
-		return State{}, err
-	}
-	defer servicehook.Unlock(origin.Cluster())
-	g, err := origin.ScopeGateway(ctx)
+	admission, err := gwbase.Admit(ctx, origin)
 	if err != nil {
 		return State{}, err
 	}
-	ctx, cancel := gwbase.AdminContext(ctx, origin.Cluster())
-	defer cancel()
+	defer admission.Done()
+	ctx, g := admission.Ctx, admission.Gateway
 	if err := checkResources(ctx, g, p); err != nil {
 		return State{}, err
 	}
@@ -369,21 +359,18 @@ func (p *Placement) Apply(ctx context.Context, g *rgw.Gateway) error {
 }
 
 func apply(ctx context.Context, g *gwbase.Core, p *Placement) error {
-	if g.Cluster() == nil {
-		return servicehook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
-	}
-	if err := servicehook.LockTopology(ctx, g.Cluster()); err != nil {
+	admission, err := gwbase.AdmitCreation(ctx, g)
+	if err != nil {
 		return err
 	}
-	defer servicehook.Unlock(g.Cluster())
+	defer admission.Done()
+	ctx = admission.Ctx
 	if err := validateHandle(g, p); err != nil {
 		return err
 	}
 	if !p.confirmed {
 		return servicehook.Invalid(errors.New("RGW placement creation has not been confirmed"))
 	}
-	ctx, cancel := gwbase.AdminContext(ctx, g.Cluster())
-	defer cancel()
 	wanted := restartPolicy{exact: true}
 	restored, err := p.resumeRestart(ctx, g, wanted)
 	if err != nil || (restored && p.scope.RealmID == "") {
@@ -556,21 +543,18 @@ func (p *Placement) Reload(ctx context.Context, g *rgw.Gateway) error {
 }
 
 func reload(ctx context.Context, g *gwbase.Core, p *Placement) error {
-	if g.Cluster() == nil {
-		return servicehook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
-	}
-	if err := servicehook.LockTopology(ctx, g.Cluster()); err != nil {
+	admission, err := gwbase.AdmitCreation(ctx, g)
+	if err != nil {
 		return err
 	}
-	defer servicehook.Unlock(g.Cluster())
+	defer admission.Done()
+	ctx = admission.Ctx
 	if err := validateHandle(g, p); err != nil {
 		return err
 	}
 	if !p.confirmed {
 		return servicehook.Invalid(errors.New("RGW placement creation has not been confirmed"))
 	}
-	ctx, cancel := gwbase.AdminContext(ctx, g.Cluster())
-	defer cancel()
 	wanted := restartPolicy{published: p.scope.RealmID != ""}
 	restored, err := p.resumeRestart(ctx, g, wanted)
 	if err != nil || restored {
@@ -651,14 +635,8 @@ func checkResources(ctx context.Context, g *gwbase.Core, p *Placement) error {
 }
 
 func (p *Placement) checkRuntime(ctx context.Context, g *gwbase.Core) error {
-	scope, err := g.RuntimeScope(ctx)
-	if err != nil {
-		return err
-	}
-	if scope != p.scope {
-		return errors.New("RGW gateway's native placement scope changed")
-	}
-	return nil
+	_, err := g.RequireScope(ctx, p.scope, "RGW gateway's native placement scope changed")
+	return err
 }
 
 func (p *Placement) checkPools(ctx context.Context, g *gwbase.Core) error {

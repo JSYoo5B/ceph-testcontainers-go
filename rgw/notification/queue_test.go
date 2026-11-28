@@ -9,8 +9,10 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwtest"
 	"github.com/moby/moby/api/types/container"
@@ -411,5 +413,44 @@ func TestQueuePreservesUnconfirmedCommandStop(t *testing.T) {
 	f.cancelFailure = false
 	if err := unstopped.Stop(t.Context()); err != nil {
 		t.Fatalf("stop retry: %v", err)
+	}
+}
+
+// deadlineRecorder records how much of its deadline the first command of an
+// operation still has.
+type deadlineRecorder struct {
+	*topicContainer
+	first time.Duration
+	seen  bool
+}
+
+func (r *deadlineRecorder) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if deadline, ok := ctx.Deadline(); ok && !r.seen {
+		r.first, r.seen = time.Until(deadline), true
+	}
+	return r.topicContainer.Exec(ctx, args, opts...)
+}
+
+// TestQueueStartsItsAdminBudgetAfterTheLock holds the topology mutex while
+// Queue waits for it: its first command still has the whole admin budget.
+func TestQueueStartsItsAdminBudgetAfterTheLock(t *testing.T) {
+	g, f := newFixture(persistentReplies("", entry("c")))
+	recorder := &deadlineRecorder{topicContainer: f}
+	g.Replace(recorder)
+	mutex := testhelper.TestState(g.Cluster).Mutex
+	mutex.Lock()
+	done := make(chan error, 1)
+	go func() {
+		_, err := queue(t.Context(), g.Core, Topic{Name: "tc-persistent"}, Sample{})
+		done <- err
+	}()
+	const held = 2 * time.Second
+	time.Sleep(held)
+	mutex.Unlock()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if budget := servicehook.StartupTimeout(g.Cluster); !recorder.seen || recorder.first < budget-held/2 {
+		t.Fatalf("the first command had %v of its %v admin budget after a %v lock wait", recorder.first, budget, held)
 	}
 }

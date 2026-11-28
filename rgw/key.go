@@ -76,18 +76,12 @@ func (u *User) CreateS3Key(ctx context.Context) (*S3Key, error) {
 	if !user.Owned() {
 		return nil, servicehook.Invalid(errors.New("RGW user is not owned by a Ceph cluster"))
 	}
-	cluster := user.Origin.Cluster()
-	if err := servicehook.LockTopology(ctx, cluster); err != nil {
-		return nil, err
-	}
-	defer servicehook.Unlock(cluster)
-	g, err := user.Origin.ScopeGateway(ctx)
+	admission, err := gwbase.Admit(ctx, user.Origin)
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := gwbase.AdminContext(ctx, cluster)
-	defer cancel()
-	key, err := g.CreateKey(ctx, user)
+	defer admission.Done()
+	key, err := admission.Gateway.CreateKey(admission.Ctx, user)
 	return newS3Key(user, key), err
 }
 
@@ -130,7 +124,7 @@ func (k *S3Key) Revoke(ctx context.Context) error {
 	}
 	user := k.user
 	cluster := user.Origin.Cluster()
-	if err := servicehook.LockTopology(ctx, cluster); err != nil {
+	if err := gwbase.LockCluster(ctx, cluster); err != nil {
 		return err
 	}
 	defer servicehook.Unlock(cluster)
@@ -141,13 +135,12 @@ func (k *S3Key) Revoke(ctx context.Context) error {
 		k.key.Status = gwbase.KeyRevoked
 		return nil
 	}
-	g, err := user.Origin.ScopeGateway(ctx)
+	admission, err := user.Origin.AdmitLocked(ctx)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := gwbase.AdminContext(ctx, cluster)
-	defer cancel()
-	return g.RevokeKey(ctx, user, k.key)
+	defer admission.Done()
+	return admission.Gateway.RevokeKey(admission.Ctx, user, k.key)
 }
 
 // String names the key's user without the keys.

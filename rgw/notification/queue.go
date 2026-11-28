@@ -168,19 +168,12 @@ func queue(ctx context.Context, g *gwbase.Core, topic Topic, sample Sample) (Que
 		return QueueSnapshot{}, err
 	}
 	cluster := g.Cluster()
-	if cluster == nil {
-		return QueueSnapshot{}, servicehook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
-	}
-	ctx, cancel := gwbase.AdminContext(ctx, cluster)
-	defer cancel()
-	if err := servicehook.LockTopology(ctx, cluster); err != nil {
-		return QueueSnapshot{}, err
-	}
-	defer servicehook.Unlock(cluster)
-	target, err := g.AdmitAdmin()
+	admission, err := gwbase.AdmitCreation(ctx, g)
 	if err != nil {
 		return QueueSnapshot{}, err
 	}
+	defer admission.Done()
+	ctx, target := admission.Ctx, g.Container()
 	if servicehook.CephBefore(cluster, 19) {
 		return QueueSnapshot{}, unsupported(cluster)
 	}

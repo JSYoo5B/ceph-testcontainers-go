@@ -276,7 +276,7 @@ func TestS3KeyReadbackAfterSuccessfulReplyAndCancellation(t *testing.T) {
 	ctx, cancel := context.WithDeadline(t.Context(), deadline)
 	defer cancel()
 	readback := &gwtest.CancelAtCreateReadback{Container: ctr, Cancel: cancel}
-	g.Container = readback
+	replaceGatewayContainer(g, readback)
 	key, err := user.CreateS3Key(ctx)
 	if !readback.ReadbackDeadline.Equal(deadline) {
 		t.Fatalf("readback deadline = %v, want %v", readback.ReadbackDeadline, deadline)
@@ -367,8 +367,8 @@ func createWithFailedSettle(t *testing.T, ctr *keyTestContainer, user *User, fau
 	settled := &settleFaultContainer{keyTestContainer: ctr, fault: fault}
 	g := gwbase.UserOf(user).Origin
 	gateway := gateways(g.Cluster()).byName["default"]
-	gateway.Container = settled
-	defer func() { gateway.Container = ctr }()
+	replaceGatewayContainer(gateway, settled)
+	defer func() { replaceGatewayContainer(gateway, ctr) }()
 	return user.CreateS3Key(t.Context())
 }
 

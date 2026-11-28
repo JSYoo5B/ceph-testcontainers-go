@@ -22,8 +22,9 @@
 //
 // Lock contract: the operations of this package that issue native commands or
 // read the gateway registry are called with the owning cluster's mutex held;
-// the public operations take it with servicehook.LockTopology under their
-// caller's context. The fields of User and Account and their states are read
+// the public operations take it under their caller's context with Admit or
+// AdmitCreation, which also start the operation's admin budget once the mutex
+// is held, or with LockCluster when they settle earlier work first. The fields of User and Account and their states are read
 // and written with that mutex held. The identity of a Core is fixed at
 // construction and needs no lock.
 package gwbase

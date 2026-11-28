@@ -97,15 +97,12 @@ func setUserDefault(ctx context.Context, p *Placement, user *gwbase.User, config
 	if !user.Owned() {
 		return servicehook.Invalid(errors.New("RGW user is not owned by a Ceph cluster"))
 	}
-	cluster := user.Origin.Cluster()
-	if err := servicehook.LockTopology(ctx, cluster); err != nil {
-		return err
-	}
-	defer servicehook.Unlock(cluster)
-	g, err := user.Origin.ScopeGateway(ctx)
+	admission, err := gwbase.Admit(ctx, user.Origin)
 	if err != nil {
 		return err
 	}
+	defer admission.Done()
+	g := admission.Gateway
 	if err := validateHandle(g, p); err != nil {
 		return err
 	}
@@ -118,8 +115,7 @@ func setUserDefault(ctx context.Context, p *Placement, user *gwbase.User, config
 	if user.State.NativeScope != nil && *user.State.NativeScope != p.scope {
 		return errors.New("RGW user and placement have different native runtime scopes")
 	}
-	ctx, cancel := gwbase.AdminContext(ctx, g.Cluster())
-	defer cancel()
+	ctx = admission.Ctx
 	if err := ctx.Err(); err != nil {
 		return err
 	}
