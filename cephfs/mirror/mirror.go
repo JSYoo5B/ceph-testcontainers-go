@@ -306,14 +306,14 @@ func (mirror *Container) enableMirroring(ctx context.Context, config Config) err
 	if err := mirror.AttachManagers(ctx); err != nil {
 		return err
 	}
-	keyring, err := config.Source.Ceph(ctx, "auth", "get-or-create", mirror.SourceClientEntity,
+	keyring, err := config.Source.Ceph(ctx, "auth", "get-or-create", mirror.pair.sourceClient,
 		"mon", "profile cephfs-mirror", "mds", "allow r fsname="+config.SourceFilesystem,
 		"osd", "allow rw tag cephfs metadata="+config.SourceFilesystem+", allow r tag cephfs data="+config.SourceFilesystem, "mgr", "allow r")
 	if err != nil {
 		return fmt.Errorf("create source CephFS mirror credentials: %w", err)
 	}
 	mirror.roster.keyring = slices.Clone(keyring)
-	if _, err := config.Destination.Ceph(ctx, "fs", "authorize", config.DestinationFilesystem, mirror.DestinationClientEntity, "/", "rwps"); err != nil {
+	if _, err := config.Destination.Ceph(ctx, "fs", "authorize", config.DestinationFilesystem, mirror.pair.destinationClient, "/", "rwps"); err != nil {
 		return fmt.Errorf("authorize destination CephFS mirror peer: %w", err)
 	}
 	if _, err := config.Source.Ceph(ctx, "fs", "snapshot", "mirror", "enable", config.SourceFilesystem); err != nil {
@@ -341,7 +341,7 @@ func (mirror *Container) waitForDaemonRegistrations(ctx context.Context, count i
 		}
 		if err == nil {
 			var registered int
-			registered, err = countCephFSMirrorRegistrations(data, mirror.SourceFilesystem, mirror.peer.id, ownedIDs)
+			registered, err = countCephFSMirrorRegistrations(data, mirror.pair.sourceFilesystem, mirror.peer.id, ownedIDs)
 			if err == nil && registered == count {
 				// Service reporting and directory policy discovery are independent
 				// async paths. Verify every owned GID reached the policy before
@@ -350,7 +350,7 @@ func (mirror *Container) waitForDaemonRegistrations(ctx context.Context, count i
 				watcherIDs, err = mirror.ownedFilesystemWatcherIDs(waitCtx)
 				var distribution []byte
 				if err == nil {
-					distribution, err = mirror.pair.source.Ceph(waitCtx, "fs", "snapshot", "mirror", "show", "distribution", mirror.SourceFilesystem)
+					distribution, err = mirror.pair.source.Ceph(waitCtx, "fs", "snapshot", "mirror", "show", "distribution", mirror.pair.sourceFilesystem)
 				}
 				if err == nil {
 					err = cephFSMirrorPolicyKnowsInstances(distribution, watcherIDs)
@@ -402,7 +402,7 @@ func cephFSMirrorOwnedInstanceIDs(data []byte, sourceID string) (map[string]bool
 
 func (mirror *Container) loadFilesystemIdentity(ctx context.Context) error {
 	mirror.pair.identityConfirmed = false
-	data, err := mirror.pair.source.Ceph(ctx, "fs", "get", mirror.SourceFilesystem, "--format", "json")
+	data, err := mirror.pair.source.Ceph(ctx, "fs", "get", mirror.pair.sourceFilesystem, "--format", "json")
 	if err != nil {
 		return fmt.Errorf("inspect mirrored filesystem identity: %w", err)
 	}
@@ -431,7 +431,7 @@ func (mirror *Container) loadFilesystemIdentity(ctx context.Context) error {
 			mirror.pair.sourceFilesystemID, mirror.pair.metadataPool = filesystem.ID, pool.Name
 			mirror.pair.sourceMetadataPoolID = *filesystem.MDSMap.MetadataPool
 			if mirror.pair.destination != nil {
-				data, err := mirror.pair.destination.Ceph(ctx, "fs", "get", mirror.DestinationFilesystem, "--format", "json")
+				data, err := mirror.pair.destination.Ceph(ctx, "fs", "get", mirror.pair.destinationFilesystem, "--format", "json")
 				if err != nil {
 					return fmt.Errorf("inspect destination mirrored filesystem identity: %w", err)
 				}
@@ -474,7 +474,7 @@ func (mirror *Container) ownedFilesystemWatcherIDs(ctx context.Context) (map[str
 	}
 	ids := make(map[string]bool)
 	for _, daemon := range mirror.roster.daemons {
-		data, err := multicluster.Exec(ctx, daemon, "ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "status", fmt.Sprintf("%s@%d", mirror.SourceFilesystem, mirror.pair.sourceFilesystemID))
+		data, err := multicluster.Exec(ctx, daemon, "ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "status", fmt.Sprintf("%s@%d", mirror.pair.sourceFilesystem, mirror.pair.sourceFilesystemID))
 		if err != nil {
 			return nil, fmt.Errorf("inspect filesystem session for mirror daemon %s: %w", daemon.DaemonName, err)
 		}
@@ -1337,6 +1337,7 @@ func waitCephFSMirrorDirectoryReleased(ctx context.Context, list func(context.Co
 
 // PeerIDs lists configured source filesystem peers in UUID order. These are
 // monitor policies, not a guarantee that daemon synchronization has stopped.
+// The original filesystem names and native identities must still match.
 //
 //purpose:observation
 func (mirror *Container) PeerIDs(ctx context.Context) ([]string, error) {
@@ -1344,6 +1345,9 @@ func (mirror *Container) PeerIDs(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	defer mirror.mu.Unlock()
+	if err := mirror.confirmDirectoryFilesystems(ctx); err != nil {
+		return nil, err
+	}
 	peers, err := mirror.peerRecords(ctx)
 	if err != nil {
 		return nil, err
@@ -1360,7 +1364,7 @@ func (mirror *Container) peerRecords(ctx context.Context) (map[string]json.RawMe
 	if mirror.pair.source == nil {
 		return nil, errors.New("CephFS mirror is not initialized")
 	}
-	data, err := mirror.pair.source.Ceph(ctx, "fs", "snapshot", "mirror", "peer_list", mirror.SourceFilesystem)
+	data, err := mirror.pair.source.Ceph(ctx, "fs", "snapshot", "mirror", "peer_list", mirror.pair.sourceFilesystem)
 	if err != nil {
 		return nil, fmt.Errorf("list CephFS mirror peers: %w", err)
 	}
@@ -1383,6 +1387,7 @@ func (mirror *Container) peerRecords(ctx context.Context) (map[string]json.RawMe
 // destination data, snapshots and credentials. Daemon changes are asynchronous;
 // policy acknowledgement does not prove native replayer teardown. For a retained
 // strict same-session drain receipt, use BeginPeerRemoval and WaitDrained.
+// The original filesystem names and native identities must still match.
 //
 //purpose:condition,lifetime
 func (mirror *Container) RemovePeer(ctx context.Context, id string) error {
@@ -1411,8 +1416,11 @@ func (mirror *Container) RemovePeer(ctx context.Context, id string) error {
 	if id == "" || id != mirror.peer.id {
 		return errors.New("CephFS mirror does not own this peer")
 	}
+	if err := mirror.confirmDirectoryFilesystems(ctx); err != nil {
+		return err
+	}
 	mirror.ops.supersedePeerDirectoryAddition(id)
-	if _, err := mirror.pair.source.Ceph(ctx, "fs", "snapshot", "mirror", "peer_remove", mirror.SourceFilesystem, id); err != nil {
+	if _, err := mirror.pair.source.Ceph(ctx, "fs", "snapshot", "mirror", "peer_remove", mirror.pair.sourceFilesystem, id); err != nil {
 		return fmt.Errorf("remove CephFS mirror peer: %w", err)
 	}
 	mirror.peer.id = ""
@@ -1466,9 +1474,8 @@ func (mirror *Container) RebootstrapPeer(ctx context.Context) (string, error) {
 	}
 	expected := mirror.peer.pendingImport
 	if expected == nil {
-		expected = &cephFSPeerIdentity{
-			ClientName: mirror.DestinationClientEntity, SiteName: mirror.pair.destinationSite, FilesystemName: mirror.DestinationFilesystem,
-		}
+		identity := mirror.pair.peerIdentity()
+		expected = &identity
 	}
 	token, err := mirror.createPeerBootstrapToken(ctx, expected)
 	if err != nil {
@@ -1477,7 +1484,7 @@ func (mirror *Container) RebootstrapPeer(ctx context.Context) (string, error) {
 	// An error from Exec cannot prove the manager did not apply the command.
 	// Keep the attempted identity before import, including on import failure.
 	mirror.peer.pendingImport = expected
-	if _, err := mirror.pair.source.Ceph(ctx, "fs", "snapshot", "mirror", "peer_bootstrap", "import", mirror.SourceFilesystem, token); err != nil {
+	if _, err := mirror.pair.source.Ceph(ctx, "fs", "snapshot", "mirror", "peer_bootstrap", "import", mirror.pair.sourceFilesystem, token); err != nil {
 		return "", cephFSObserveQuery("import destination CephFS peer", err)
 	}
 	if err := mirror.checkCephFSRefreshFilesystems(ctx); err != nil {
@@ -1521,9 +1528,7 @@ func (mirror *Container) createPeerBootstrapToken(ctx context.Context, expected 
 	if err != nil {
 		return "", err
 	}
-	normalized, err := normalizeCephFSBootstrapToken(token.Token, cephFSPeerIdentity{
-		ClientName: mirror.DestinationClientEntity, SiteName: mirror.pair.destinationSite, FilesystemName: mirror.DestinationFilesystem,
-	}, monitors)
+	normalized, err := normalizeCephFSBootstrapToken(token.Token, mirror.pair.peerIdentity(), monitors)
 	if err != nil {
 		return "", err
 	}

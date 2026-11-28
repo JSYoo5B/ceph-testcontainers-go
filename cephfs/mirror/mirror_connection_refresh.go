@@ -120,7 +120,7 @@ func (mirror *Container) refreshPeerMonitorConfig(ctx context.Context, addresses
 	if err != nil {
 		return err
 	}
-	key := "cephfs/mirror/peer/" + mirror.SourceFilesystem + "/" + mirror.peer.id
+	key := "cephfs/mirror/peer/" + mirror.pair.sourceFilesystem + "/" + mirror.peer.id
 	data, err := mirror.pair.source.Ceph(ctx, "config-key", "get", key)
 	if err != nil {
 		return cephFSObserveQuery("read owned CephFS peer bootstrap configuration", err)

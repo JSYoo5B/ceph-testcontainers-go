@@ -1,7 +1,9 @@
 package mirror
 
 import (
+	"errors"
 	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -78,4 +80,33 @@ func TestOriginalScopeRefusesEveryEditedIdentity(t *testing.T) {
 			t.Fatal("cleared peer: only a peer removal may accept it")
 		}
 	})
+}
+
+// TestPeerSelectorsRefuseAnEditedSourceFilesystem edits the exported
+// SourceFilesystem and requires RemovePeer and PeerIDs to refuse before any
+// peer command reaches the source.
+func TestPeerSelectorsRefuseAnEditedSourceFilesystem(t *testing.T) {
+	for _, operation := range []string{"RemovePeer", "PeerIDs"} {
+		t.Run(operation, func(t *testing.T) {
+			m, s, _, _, _ := newPeerRemovalFixture()
+			m.SourceFilesystem = "other"
+			var err error
+			if operation == "RemovePeer" {
+				err = m.RemovePeer(t.Context(), m.peer.id)
+			} else {
+				_, err = m.PeerIDs(t.Context())
+			}
+			if !errors.Is(err, errCephFSObservationGuard) {
+				t.Fatalf("%s with an edited descriptor: %v", operation, err)
+			}
+			for _, call := range s.calls {
+				if slices.Contains(call, "peer_remove") || slices.Contains(call, "peer_list") {
+					t.Fatalf("%s sent %q", operation, call)
+				}
+			}
+			if m.peer.id != cephFSObserverDraftPeer {
+				t.Fatalf("%s forgot the owned peer", operation)
+			}
+		})
+	}
 }

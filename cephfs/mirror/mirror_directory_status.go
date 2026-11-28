@@ -91,7 +91,7 @@ func (mirror *Container) directoryStatus(ctx context.Context, directory string, 
 		return result, cephFSObserveGuard("CephFS mirror does not own this current directory policy")
 	}
 	result = DirectoryStatus{
-		SourceFilesystem: mirror.SourceFilesystem, DestinationFilesystem: mirror.DestinationFilesystem,
+		SourceFilesystem: mirror.pair.sourceFilesystem, DestinationFilesystem: mirror.pair.destinationFilesystem,
 		SourceFilesystemID: mirror.pair.sourceFilesystemID, DestinationFilesystemID: mirror.pair.destinationFilesystemID,
 		Directory: directory, PeerID: mirror.peer.id,
 	}
@@ -195,7 +195,7 @@ func (mirror *Container) selectDirectoryDaemon(ctx context.Context, instanceID s
 		if watchers[address] != instanceID {
 			continue
 		}
-		if peer != (cephFSPeerIdentity{ClientName: mirror.DestinationClientEntity, SiteName: mirror.pair.destinationSite, FilesystemName: mirror.DestinationFilesystem}) {
+		if peer != mirror.pair.peerIdentity() {
 			return nil, nil, cephFSObserveGuard("CephFS selected daemon peer destination differs")
 		}
 		if selected != nil {
@@ -221,7 +221,7 @@ func (mirror *Container) observeDaemonSession(ctx context.Context, daemon *Daemo
 	if state == nil || !state.Running || state.Paused || state.Restarting || state.Dead {
 		return "", cephFSPeerIdentity{}, cephFSObserveQuery("owned CephFS mirror process is not running normally", nil), nil
 	}
-	data, execErr := multicluster.Exec(ctx, daemon, "ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "status", fmt.Sprintf("%s@%d", mirror.SourceFilesystem, mirror.pair.sourceFilesystemID))
+	data, execErr := multicluster.Exec(ctx, daemon, "ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "status", fmt.Sprintf("%s@%d", mirror.pair.sourceFilesystem, mirror.pair.sourceFilesystemID))
 	if execErr != nil {
 		return "", cephFSPeerIdentity{}, cephFSObserveQuery("read CephFS mirror filesystem session", execErr), nil
 	}
@@ -238,7 +238,7 @@ func (mirror *Container) observeDaemonSession(ctx context.Context, daemon *Daemo
 // readDirectoryReplay reads the selected daemon's replay state of directory
 // into result.
 func (mirror *Container) readDirectoryReplay(ctx context.Context, selected *Daemon, directory string, result *DirectoryStatus) error {
-	data, err := multicluster.Exec(ctx, selected, "ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "peer", "status", fmt.Sprintf("%s@%d", mirror.SourceFilesystem, mirror.pair.sourceFilesystemID), mirror.peer.id)
+	data, err := multicluster.Exec(ctx, selected, "ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "peer", "status", fmt.Sprintf("%s@%d", mirror.pair.sourceFilesystem, mirror.pair.sourceFilesystemID), mirror.peer.id)
 	if err != nil {
 		return cephFSObserveQuery("read CephFS mirror directory replay", err)
 	}
@@ -279,7 +279,7 @@ func (mirror *Container) confirmDirectoryUnchanged(ctx context.Context, director
 	if unavailable != nil {
 		return unavailable
 	}
-	if address != selected.address || peer != (cephFSPeerIdentity{ClientName: mirror.DestinationClientEntity, SiteName: mirror.pair.destinationSite, FilesystemName: mirror.DestinationFilesystem}) {
+	if address != selected.address || peer != mirror.pair.peerIdentity() {
 		return cephFSObserveQuery("CephFS selected filesystem session changed during observation", nil)
 	}
 	watchers, err := mirror.readFilesystemWatchers(ctx)
@@ -431,7 +431,7 @@ func (mirror *Container) checkCephFSObservedIdentities(ctx context.Context) erro
 	if err := mirror.checkCephFSOriginalFilesystemIdentities(ctx, "read CephFS filesystem identity", "CephFS original filesystem or metadata pool identity differs"); err != nil {
 		return err
 	}
-	data, err := mirror.pair.source.Ceph(ctx, "fs", "snapshot", "mirror", "peer_list", mirror.SourceFilesystem)
+	data, err := mirror.pair.source.Ceph(ctx, "fs", "snapshot", "mirror", "peer_list", mirror.pair.sourceFilesystem)
 	if err != nil {
 		return cephFSObserveQuery("read CephFS mirror peer policy", err)
 	}
@@ -460,7 +460,7 @@ func (mirror *Container) checkCephFSObservedIdentities(ctx context.Context) erro
 	if json.Unmarshal(entry, &peer) != nil || peer == nil || peer.ClientName == nil || peer.SiteName == nil || peer.FilesystemName == nil || *peer.ClientName == "" || *peer.SiteName == "" || *peer.FilesystemName == "" {
 		return cephFSObserveGuard("decode CephFS mirror peer policy destination identity")
 	}
-	if (cephFSPeerIdentity{ClientName: *peer.ClientName, SiteName: *peer.SiteName, FilesystemName: *peer.FilesystemName}) != (cephFSPeerIdentity{ClientName: mirror.DestinationClientEntity, SiteName: mirror.pair.destinationSite, FilesystemName: mirror.DestinationFilesystem}) {
+	if (cephFSPeerIdentity{ClientName: *peer.ClientName, SiteName: *peer.SiteName, FilesystemName: *peer.FilesystemName}) != mirror.pair.peerIdentity() {
 		return cephFSObserveGuard("CephFS owned peer policy destination differs")
 	}
 	return nil
@@ -470,7 +470,7 @@ type cephFSObservedMapping struct{ State, InstanceID string }
 
 func (mirror *Container) readCephFSObservedMapping(ctx context.Context, directory string) (cephFSObservedMapping, error) {
 	var result cephFSObservedMapping
-	data, err := mirror.pair.source.Ceph(ctx, "fs", "snapshot", "mirror", "dirmap", mirror.SourceFilesystem, directory)
+	data, err := mirror.pair.source.Ceph(ctx, "fs", "snapshot", "mirror", "dirmap", mirror.pair.sourceFilesystem, directory)
 	if err != nil {
 		return result, cephFSObserveQuery("read CephFS directory mapping", err)
 	}
