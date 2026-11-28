@@ -16,7 +16,7 @@ import (
 // ManagerRefusals is what a MGR's latest process and the owned MONs logged
 // about the refused authentication of its MonClients.
 //
-// Manager and Start are the MGR's process log window, as CollectProcessLog
+// LogSource and Start are the MGR's process log window, as CollectProcessLog
 // reads it. Refusals are the MonClient lines of that process that report
 // "(13) Permission denied"; a MGR runs several MonClients, its beacon and
 // those of its modules, and the line does not say which one was refused.
@@ -24,7 +24,7 @@ import (
 // process started, sorted by name, each with the refusals that name the
 // MGR's entity.
 type ManagerRefusals struct {
-	Manager  LogSource         `json:"manager"`
+	LogSource
 	Start    LogLine           `json:"start"`
 	Refusals []LogLine         `json:"refusals"`
 	Monitors []MonitorRefusals `json:"monitors"`
@@ -94,7 +94,7 @@ func readManagerRefusals(ctx context.Context, docker diagnosticsDocker, snapshot
 	if err != nil {
 		return nil, err
 	}
-	result := &ManagerRefusals{Manager: process.LogSource, Start: process.Start, Refusals: []LogLine{}, Monitors: []MonitorRefusals{}}
+	result := &ManagerRefusals{LogSource: process.LogSource, Start: process.Start, Refusals: []LogLine{}, Monitors: []MonitorRefusals{}}
 	if len(process.Lines) > 0 {
 		result.Refusals = process.Lines
 		if process.Start.Text != "" {

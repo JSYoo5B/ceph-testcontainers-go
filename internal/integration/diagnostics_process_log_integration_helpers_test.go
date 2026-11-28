@@ -61,7 +61,7 @@ func testDaemonProcessLog(t *testing.T) {
 		t.Fatalf("healthy MGR process log = %+v", healthy.LogSource)
 	}
 	clean := refusals("healthy refusals")
-	if clean.Manager.Status != diagnostics.LogComplete || len(clean.Refusals) != 0 || len(clean.Monitors) != 1 || clean.Monitors[0].Name != "a" ||
+	if clean.Status != diagnostics.LogComplete || len(clean.Refusals) != 0 || len(clean.Monitors) != 1 || clean.Monitors[0].Name != "a" ||
 		clean.Monitors[0].Status != diagnostics.LogComplete || len(clean.Monitors[0].Refusals) != 0 || !clean.Monitors[0].Since.Equal(healthy.Start.Time) {
 		t.Fatalf("healthy MGR refusals = %+v", clean)
 	}
@@ -129,16 +129,16 @@ func testDaemonProcessLog(t *testing.T) {
 			slices.ContainsFunc(result.Monitors[0].Refusals, func(r diagnostics.MonitorRefusal) bool { return !r.Line.Time.Before(replaced) })
 	}
 	refused := awaitRefusals(t, "refused key", refusals, read, func(result *diagnostics.ManagerRefusals) bool {
-		return result.Manager.Status == diagnostics.LogComplete && refusedAfter(result)
+		return result.Status == diagnostics.LogComplete && refusedAfter(result)
 	})
-	if !refused.Manager.ContainerStartedAt.Equal(restarted.ContainerStartedAt) || refused.Start.Time.Before(restarted.Start.Time) {
-		t.Fatalf("the refused process is not in the restarted container run: %+v start %+v, before %+v", refused.Manager, refused.Start, restarted.LogSource)
+	if !refused.ContainerStartedAt.Equal(restarted.ContainerStartedAt) || refused.Start.Time.Before(restarted.Start.Time) {
+		t.Fatalf("the refused process is not in the restarted container run: %+v start %+v, before %+v", refused.LogSource, refused.Start, restarted.LogSource)
 	}
 	respawned := refused.Start != restarted.Start
 	if respawned {
 		// The respawned process logs its refusal as it is refused.
 		refused = awaitRefusals(t, "refused respawn", refusals, read, func(result *diagnostics.ManagerRefusals) bool {
-			return result.Manager.Status == diagnostics.LogComplete && result.Start == refused.Start && len(result.Refusals) > 0 && refusedAfter(result)
+			return result.Status == diagnostics.LogComplete && result.Start == refused.Start && len(result.Refusals) > 0 && refusedAfter(result)
 		})
 	}
 	for _, refusal := range refused.Monitors[0].Refusals {
@@ -339,7 +339,7 @@ func testManagerReclaimRefusal(t *testing.T) {
 	}
 	reclaim := func(r diagnostics.MonitorRefusal) bool { return r.GlobalID != 0 && !r.Line.Time.Before(frozen) }
 	refused := awaitRefusals(t, "reclaim", read, processLog, func(result *diagnostics.ManagerRefusals) bool {
-		if result.Manager.Status != diagnostics.LogComplete || len(result.Monitors) != 2 {
+		if result.Status != diagnostics.LogComplete || len(result.Monitors) != 2 {
 			return false
 		}
 		found := false
@@ -351,7 +351,7 @@ func testManagerReclaimRefusal(t *testing.T) {
 		}
 		return found
 	})
-	if refused.Start != frozenProcess.Start || !refused.Manager.ContainerStartedAt.Equal(frozenProcess.ContainerStartedAt) {
+	if refused.Start != frozenProcess.Start || !refused.ContainerStartedAt.Equal(frozenProcess.ContainerStartedAt) {
 		t.Fatalf("the refusals belong to process %+v, not to the frozen one from %+v", refused.Start, frozenProcess.Start)
 	}
 	// Every MonClient of the process reclaims its own global ID: the beacon's
