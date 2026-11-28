@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "cephfs/mirror",
-  "count": 57,
+  "count": 58,
   "entries": [
     {
       "current": "cephfs/mirror.Config",
@@ -118,6 +118,14 @@
       "signature": "func(ctx context.Context) error",
       "receiver": "*Container",
       "proposed": "cephfs/mirror.Container.RefreshPeerMonitorConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.Container.RegisteredDirectories",
+      "kind": "method",
+      "signature": "func() []string",
+      "receiver": "*Container",
+      "proposed": "cephfs/mirror.Container.RegisteredDirectories",
       "decision": "baseline"
     },
     {
