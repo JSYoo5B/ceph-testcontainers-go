@@ -206,24 +206,14 @@ func orderRGWZones(zones []ZoneConfig, master string) ([]ZoneConfig, error) {
 	if len(zones) < 2 {
 		return nil, servicehook.Invalid(errors.New("RGW multisite topology requires at least two zones"))
 	}
+	if err := validateRGWZoneNames(zones); err != nil {
+		return nil, err
+	}
 	zones = slices.Clone(zones)
 	if master == "" {
 		master = zones[0].Name
 	}
-	masterIndex := -1
-	for i, zone := range zones {
-		if !validRGWZoneName(zone.Name) {
-			return nil, servicehook.Invalid(errors.New("invalid RGW zone name"))
-		}
-		if zone.Name == master {
-			masterIndex = i
-		}
-		for j := range i {
-			if zones[j].Name == zone.Name {
-				return nil, servicehook.Invalid(fmt.Errorf("duplicate RGW zone %s", zone.Name))
-			}
-		}
-	}
+	masterIndex := slices.IndexFunc(zones, func(zone ZoneConfig) bool { return zone.Name == master })
 	if masterIndex < 0 {
 		return nil, servicehook.Invalid(errors.New("RGW metadata master must name a configured zone"))
 	}
@@ -232,6 +222,21 @@ func orderRGWZones(zones []ZoneConfig, master string) ([]ZoneConfig, error) {
 	copy(zones[1:], zones[:len(zones)-1])
 	zones[0] = selected
 	return zones, nil
+}
+
+// validateRGWZoneNames refuses an invalid or repeated zone name.
+func validateRGWZoneNames(zones []ZoneConfig) error {
+	for i, zone := range zones {
+		if !validRGWZoneName(zone.Name) {
+			return servicehook.Invalid(errors.New("invalid RGW zone name"))
+		}
+		for j := range i {
+			if zones[j].Name == zone.Name {
+				return servicehook.Invalid(fmt.Errorf("duplicate RGW zone %s", zone.Name))
+			}
+		}
+	}
+	return nil
 }
 
 func validRGWZoneName(name string) bool {

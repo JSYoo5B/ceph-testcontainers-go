@@ -64,38 +64,29 @@ func (f *Fixture) AddZonegroup(ctx context.Context, image string, config Zonegro
 	if _, exists := f.topology.groupIDs[config.Name]; exists {
 		return nil, servicehook.Invalid(fmt.Errorf("RGW zonegroup %s is already owned", config.Name))
 	}
-	zones := slices.Clone(config.Zones)
-	master := config.MasterZone
-	if master == "" {
-		master = zones[0].Name
+	zones, master, err := rgwZonegroupZones(config)
+	if err != nil {
+		return nil, err
 	}
-	index := slices.IndexFunc(zones, func(zone ZoneConfig) bool { return zone.Name == master })
-	if index < 0 {
-		return nil, servicehook.Invalid(errors.New("RGW zonegroup master must name one of its zones"))
+	if err := validateRGWZoneNames(zones); err != nil {
+		return nil, err
 	}
-	selected := zones[index]
-	zones = append([]ZoneConfig{selected}, slices.Delete(zones, index, index+1)...)
-	for i := range zones {
-		if zones[i].Zonegroup != "" && zones[i].Zonegroup != config.Name {
-			return nil, servicehook.Invalid(errors.New("conflicting RGW zonegroup name"))
-		}
-		zones[i].Zonegroup = config.Name
-		if !validRGWZoneName(zones[i].Name) {
-			return nil, servicehook.Invalid(errors.New("invalid RGW zone name"))
-		}
-		for _, existing := range f.zoneStates() {
-			if existing.Name == zones[i].Name {
-				return nil, servicehook.Invalid(fmt.Errorf("RGW zone %s is already owned", zones[i].Name))
+	existing := f.zoneStates()
+	for _, zone := range zones {
+		for _, owned := range existing {
+			if owned.Name == zone.Name {
+				return nil, servicehook.Invalid(fmt.Errorf("RGW zone %s is already owned", zone.Name))
 			}
-			if err := multicluster.ValidatePair(ctx, image, existing.cluster, zones[i].Cluster); err != nil {
+		}
+	}
+	for i, zone := range zones {
+		for _, owned := range existing {
+			if err := multicluster.ValidatePair(ctx, image, owned.cluster, zone.Cluster); err != nil {
 				return nil, err
 			}
 		}
 		for j := range i {
-			if zones[j].Name == zones[i].Name {
-				return nil, servicehook.Invalid(errors.New("RGW zones must have unique names"))
-			}
-			if err := multicluster.ValidatePair(ctx, image, zones[j].Cluster, zones[i].Cluster); err != nil {
+			if err := multicluster.ValidatePair(ctx, image, zones[j].Cluster, zone.Cluster); err != nil {
 				return nil, err
 			}
 		}
