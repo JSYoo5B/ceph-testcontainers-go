@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "rgw",
-  "count": 61,
+  "count": 63,
   "entries": [
     {
       "current": "rgw.AdminCapability",
@@ -315,6 +315,18 @@
       "signature": "func() string",
       "receiver": "TLSConfig",
       "proposed": "rgw.TLSConfig.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.UsageScopeAccount",
+      "kind": "const",
+      "proposed": "rgw.UsageScopeAccount",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.UsageScopeUser",
+      "kind": "const",
+      "proposed": "rgw.UsageScopeUser",
       "decision": "baseline"
     },
     {

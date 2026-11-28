@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "rgw/multisite",
-  "count": 73,
+  "count": 77,
   "entries": [
     {
       "current": "rgw/multisite.BucketPolicyWatch",
@@ -123,6 +123,22 @@
       "decision": "baseline"
     },
     {
+      "current": "rgw/multisite.Fixture.Format",
+      "kind": "method",
+      "signature": "func(state fmt.State, _ rune)",
+      "receiver": "*Fixture",
+      "proposed": "rgw/multisite.Fixture.Format",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Fixture.GoString",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*Fixture",
+      "proposed": "rgw/multisite.Fixture.GoString",
+      "decision": "baseline"
+    },
+    {
       "current": "rgw/multisite.Fixture.InterruptZoneLink",
       "kind": "method",
       "signature": "func(ctx context.Context, zoneName string) (*fault.NetworkInterruption, error)",
@@ -139,6 +155,14 @@
       "decision": "baseline"
     },
     {
+      "current": "rgw/multisite.Fixture.PullPeriod",
+      "kind": "method",
+      "signature": "func(ctx context.Context, zone, fromZone string) error",
+      "receiver": "*Fixture",
+      "proposed": "rgw/multisite.Fixture.PullPeriod",
+      "decision": "baseline"
+    },
+    {
       "current": "rgw/multisite.Fixture.PullSourcePeriod",
       "kind": "method",
       "signature": "func(ctx context.Context) error",
@@ -152,6 +176,14 @@
       "signature": "func(ctx context.Context, name string) error",
       "receiver": "*Fixture",
       "proposed": "rgw/multisite.Fixture.RemoveZone",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Fixture.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*Fixture",
+      "proposed": "rgw/multisite.Fixture.String",
       "decision": "baseline"
     },
     {
