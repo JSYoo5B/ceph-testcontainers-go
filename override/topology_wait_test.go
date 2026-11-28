@@ -8,6 +8,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 )
 
 // restorer is the Restore of one override handle.
@@ -30,6 +31,12 @@ func topologyWaitCases(t *testing.T) map[string]func() (*ceph.Container, func(co
 		"MGR module": func() (*ceph.Container, func(context.Context) (restorer, error)) {
 			c := mgrModuleCluster(newMGRModuleFixture())
 			return c, func(ctx context.Context) (restorer, error) { return SetMGRModule(ctx, c, "mirroring", true) }
+		},
+		"full ratios": func() (*ceph.Container, func(context.Context) (restorer, error)) {
+			c, _ := newFullRatiosFixture(t)
+			return c, func(ctx context.Context) (restorer, error) {
+				return SetFullRatios(ctx, c, ceph.FullRatios{NearFull: 0.8, BackfillFull: 0.85, Full: 0.9})
+			}
 		},
 		"config": func() (*ceph.Container, func(context.Context) (restorer, error)) {
 			c := newConfigFixture(&configFixture{})
@@ -72,6 +79,35 @@ func TestOverridesWaitForTopologyOnlyUntilTheContextEnds(t *testing.T) {
 			}
 			if err := handle.Restore(t.Context()); err != nil {
 				t.Fatalf("retry after the deadline: %v", err)
+			}
+		})
+	}
+}
+
+// An apply and a Restore queued behind the cluster mutex for longer than the
+// startup timeout still succeed once the mutex is released: the startup
+// timeout caps the operation, not the wait for the topology lock.
+func TestOverridesStartTheirCapAfterTheTopologyLock(t *testing.T) {
+	const timeout = 200 * time.Millisecond
+	holdLonger := func(c *ceph.Container, run func() error) error {
+		servicehook.Lock(c)
+		release := time.AfterFunc(3*timeout, func() { servicehook.Unlock(c) })
+		defer release.Stop()
+		return run()
+	}
+	for name, setup := range topologyWaitCases(t) {
+		t.Run(name, func(t *testing.T) {
+			c, apply := setup()
+			testhelper.TestSetStartupTimeout(c, timeout)
+			var handle restorer
+			if err := holdLonger(c, func() (err error) {
+				handle, err = apply(t.Context())
+				return err
+			}); err != nil {
+				t.Fatalf("apply queued behind the topology lock: %v", err)
+			}
+			if err := holdLonger(c, func() error { return handle.Restore(t.Context()) }); err != nil {
+				t.Fatalf("Restore queued behind the topology lock: %v", err)
 			}
 		})
 	}

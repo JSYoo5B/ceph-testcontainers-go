@@ -138,7 +138,7 @@ func addBlocklistLocked(ctx context.Context, c *ceph.Container, address string, 
 	if err != nil {
 		return notApplied(address, err)
 	}
-	ctx, cancel := context.WithTimeout(ctx, overridehook.StartupTimeout(c))
+	ctx, cancel := operationDeadline(ctx, c)
 	defer cancel()
 	entries, err := overridehook.BlocklistEntries(ctx, c)
 	if err != nil {
@@ -212,7 +212,7 @@ func (h *BlocklistHandle) restoreLocked(ctx context.Context, c *ceph.Container) 
 	if !overridehook.Tracks(c, h.state.token) {
 		return errors.New("client blocklist override is not tracked by this cluster")
 	}
-	ctx, cancel := context.WithTimeout(ctx, overridehook.StartupTimeout(c))
+	ctx, cancel := operationDeadline(ctx, c)
 	defer cancel()
 	if err := h.state.command.Wait(ctx); err != nil {
 		return err
