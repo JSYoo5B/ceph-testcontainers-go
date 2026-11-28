@@ -159,7 +159,7 @@ var mdsRosterSetupHeld = map[string]bool{
 var mdsRosterOwnerHeld = map[string]bool{
 	"timingSnapshot":                true,
 	"completedMDSReplacementCohort": true, "checkMDSReplacementOwner": true,
-	"checkMDSReplacementPartial": true, "checkStoppedMDSOwner": true,
+	"checkMDSReplacementPartial": true, "checkOwnedMDS": true, "embeddedOwned": true, "registryHolds": true,
 	"decodeStoppedMDSScope": true, "verifyStoppedMDSSurvivors": true, "readStoppedMDSScope": true, "ConfigTargets": true,
 	"admitMDSReplacement": true, "admitStoppedMDSRemoval": true, "reattestStoppedMDS": true, "confirmStoppedMDSRemoved": true,
 	"checkScaleOwner": true, "removeAll": true, "addConfigTargets": true, "ownedNames": true, "unpublishMDS": true,

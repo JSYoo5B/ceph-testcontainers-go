@@ -250,7 +250,7 @@ func (f mdsFleet) checkMDSReadOnlyOwner(ctx context.Context, daemon *MDS) error 
 		return err
 	}
 	defer servicehook.Unlock(c)
-	if err := f.checkStoppedMDSOwner(daemon, daemon.identity); err != nil || daemon.identity.removed {
+	if err := f.checkOwnedMDS(daemon, daemon.identity); err != nil || daemon.identity.removed {
 		return mdsReadOnlyInvalid("CephFS MDS read-only fault: mds.%s is not an owned MDS of cephfs %q: %v", daemon.ID, f.core.Name(), err)
 	}
 	return nil

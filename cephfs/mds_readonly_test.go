@@ -457,3 +457,27 @@ func TestParseMDSReadOnlyHealthAndCommands(t *testing.T) {
 		}
 	}
 }
+
+// The owner check of ForceReadOnly is the general owned-MDS check: an edited
+// handle of a running MDS is refused before any change, and the refusal
+// does not describe the running daemon as a stopped one.
+func TestCephFSMDSReadOnlyRefusesAnEditedRunningHandle(t *testing.T) {
+	for name, edit := range map[string]func(*MDS){
+		"ID":             func(daemon *MDS) { daemon.ID = "fixture-9" },
+		"FilesystemName": func(daemon *MDS) { daemon.FilesystemName = "other" },
+		"Container":      func(daemon *MDS) { daemon.Container = &stoppedMDSDaemon{cid: strings.Repeat("f", 64)} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, ctr, active, _ := readOnlyFixture(t)
+			edited := *active
+			edit(&edited)
+			fault, err := edited.ForceReadOnly(t.Context())
+			if fault != nil || !errors.Is(err, ceph.ErrInvalidRequest) || len(ctr.forced()) != 0 {
+				t.Fatalf("an edited handle: %v, %v, forced %q", fault, err, ctr.forced())
+			}
+			if strings.Contains(err.Error(), "stopped") {
+				t.Fatalf("the refusal of a running MDS names a stopped one: %v", err)
+			}
+		})
+	}
+}

@@ -80,7 +80,7 @@ func TestStartMDSAdmissionKeepsEachModesRefusalsAndOwnership(t *testing.T) {
 		n.fsid = "b011602b-37aa-496b-a8b5-b3e7a5d13ff3"
 		before := n.mutationCount()
 		_, err := fs.fleet().startMDSWithAdmission(t.Context(), startMDSNever(t), nil, nil)
-		if err == nil || err.Error() != "original cold cluster identity is invalid or changed" || fs.mds.coldMDS.attempted || fs.mds.roster.nextIndex != 0 || n.mutationCount() != before {
+		if err == nil || err.Error() != "original cluster identity is invalid or changed" || fs.mds.coldMDS.attempted || fs.mds.roster.nextIndex != 0 || n.mutationCount() != before {
 			t.Fatalf("selected control refusal changed: %v", err)
 		}
 		startMDSTopologyFree(t, fs)

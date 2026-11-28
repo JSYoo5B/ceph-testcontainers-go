@@ -12,6 +12,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/mdsmap"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -109,7 +110,7 @@ func (f mdsFleet) removeStoppedMDS(parent context.Context, daemon *MDS) error {
 // the scope admitted by an earlier attempt.
 func (f mdsFleet) admitStoppedMDSRemoval(ctx context.Context, daemon *MDS) (*mdsmap.Scope, error) {
 	i := daemon.identity
-	if err := f.checkStoppedMDSOwner(daemon, i); err != nil {
+	if err := f.checkOwnedMDS(daemon, i); err != nil {
 		return nil, err
 	}
 	if err := completedMDSReplacementAuthority(i); err != nil {
@@ -148,7 +149,7 @@ func (f mdsFleet) reattestStoppedMDS(ctx context.Context, daemon *MDS, scope *md
 	if err != nil || !reflect.DeepEqual(scope, after) {
 		return false, clusterutil.OperationError(ctx, "stopped MDS scope changed before removal", err)
 	}
-	if err := f.checkStoppedMDSOwner(daemon, i); err != nil {
+	if err := f.checkOwnedMDS(daemon, i); err != nil {
 		return false, err
 	}
 	missing, err := inspectStoppedMDS(ctx, i, false)
@@ -175,38 +176,100 @@ func (f mdsFleet) confirmStoppedMDSRemoved(ctx context.Context, daemon *MDS, sco
 	if err != nil || !reflect.DeepEqual(scope, after) {
 		return clusterutil.OperationError(ctx, "stopped MDS scope changed after removal", err)
 	}
-	if err := f.checkStoppedMDSOwner(daemon, i); err != nil {
+	if err := f.checkOwnedMDS(daemon, i); err != nil {
 		return err
 	}
 	return ctx.Err()
 }
 
-// Owner held; exported fields cannot redirect either target or survivor reads.
-func (f mdsFleet) checkStoppedMDSOwner(handle *MDS, i *cephFSMDSIdentity) error {
-	c := f.core.Cluster()
-	if !f.core.Registered() || *f.descriptor.name != f.core.Name() || *f.descriptor.metadataPool != f.config.MetadataPool.Name || *f.descriptor.dataPool != f.config.DataPool.Name || i.fleet.core != f.core || !i.confirmed || i.native == nil || i.native != f.core.Native() || i.container == nil || i.container.GetContainerID() != i.cid || i.descriptor == nil || i.descriptor.identity != i || handle.ID != i.name || handle.FilesystemName != f.core.Name() || handle.Container != i.container {
-		return errors.New("original stopped MDS ownership changed or startup is unconfirmed")
+// checkOwnedMDS refuses an MDS handle that is no longer one of this
+// filesystem's owned daemons, whatever its process state: the filesystem
+// descriptor is still the registered one, the creation record is consistent,
+// the public handle is unedited, and the registry still holds the daemon and
+// an owned MDS as the embedded container. Every MDS handle operation, and the
+// survivor checks of a stopped-MDS removal, use it. Owner held: the caller
+// holds the cluster mutex. Exported fields cannot redirect either target or
+// survivor reads.
+func (f mdsFleet) checkOwnedMDS(handle *MDS, i *cephFSMDSIdentity) error {
+	if !f.descriptorIntact() || !i.consistent(f) || !i.handleUnedited(handle, f) {
+		return errors.New("owned MDS ownership changed or its startup is unconfirmed")
 	}
-	if i.descriptor.ID != i.name || i.descriptor.FilesystemName != f.core.Name() || i.descriptor.Container != i.container {
-		return servicehook.Invalid(errors.New("original stopped MDS descriptor was edited"))
+	if !i.handleUnedited(i.descriptor, f) {
+		return servicehook.Invalid(errors.New("owned MDS descriptor was edited"))
 	}
-	count, embedded := 0, false
+	if !f.embeddedOwned() {
+		return servicehook.Invalid(errors.New("filesystem compatibility container is not an original owned MDS"))
+	}
+	if !f.registryHolds(i) {
+		return errors.New("owned MDS registry ownership changed")
+	}
+	return nil
+}
+
+// descriptorIntact reports whether the filesystem is still registered and its
+// exported descriptor names its configured filesystem and pools. Owner held.
+func (f mdsFleet) descriptorIntact() bool {
+	return f.core.Registered() && *f.descriptor.name == f.core.Name() && *f.descriptor.metadataPool == f.config.MetadataPool.Name && *f.descriptor.dataPool == f.config.DataPool.Name
+}
+
+// consistent reports whether i is a confirmed creation record of f: it was
+// created by f's filesystem with its native identity, its container still
+// has the recorded full CID, and its descriptor still points back at it.
+func (i *cephFSMDSIdentity) consistent(f mdsFleet) bool {
+	return i.fleet.core == f.core && i.confirmed && i.native != nil && i.native == f.core.Native() && i.containerIntact() && i.descriptor != nil && i.descriptor.identity == i
+}
+
+// containerIntact reports whether i still has a container with the recorded
+// CID.
+func (i *cephFSMDSIdentity) containerIntact() bool {
+	return i.container != nil && i.container.GetContainerID() == i.cid
+}
+
+// handleUnedited reports whether the exported fields of handle still name
+// i's daemon, f's filesystem and i's container.
+func (i *cephFSMDSIdentity) handleUnedited(handle *MDS, f mdsFleet) bool {
+	return handle.ID == i.name && handle.FilesystemName == f.core.Name() && handle.Container == i.container
+}
+
+// embeddedOwned reports whether the filesystem's embedded container is the
+// container of an unremoved owned MDS. Owner held.
+func (f mdsFleet) embeddedOwned() bool {
+	for _, owned := range f.mds.roster.members() {
+		if owned != nil && owned.identity != nil && !owned.identity.removed && owned.identity.container == *f.first {
+			return true
+		}
+	}
+	return false
+}
+
+// registryHolds reports whether the roster and the service registry still
+// hold i's daemon exactly once while it is not removed, and not at all once
+// it is. Owner held.
+func (f mdsFleet) registryHolds(i *cephFSMDSIdentity) bool {
+	count := 0
 	for _, owned := range f.mds.roster.members() {
 		if owned == i.descriptor {
 			count++
 		}
-		if owned != nil && owned.identity != nil && !owned.identity.removed && owned.identity.container == *f.first {
-			embedded = true
-		}
 	}
-	if !embedded {
-		return servicehook.Invalid(errors.New("filesystem compatibility container is not an original owned MDS"))
+	service := servicehook.Service(f.core.Cluster(), "mds."+i.name)
+	if i.removed {
+		return count == 0 && service == nil
 	}
-	service := servicehook.Service(c, "mds."+i.name)
-	if (!i.removed && (count != 1 || service != i.container)) || (i.removed && (count != 0 || service != nil)) {
-		return errors.New("original stopped MDS registry ownership changed")
-	}
-	return nil
+	return count == 1 && service == i.container
+}
+
+// containerExited reports whether info is the positively exited container
+// cid: not running, restarting, paused or dead, and without a process.
+func containerExited(info *container.InspectResponse, cid string) bool {
+	return info != nil && info.ID == cid && info.State != nil && !info.State.Running && !info.State.Restarting && !info.State.Paused && !info.State.Dead && info.State.Pid == 0 && info.State.Status == "exited"
+}
+
+// containerRunning reports whether info is the normally running container
+// cid: running with a process, not paused, restarting or dead, and without a
+// Docker error.
+func containerRunning(info *container.InspectResponse, cid string) bool {
+	return info != nil && info.ID == cid && info.State != nil && info.State.Running && !info.State.Paused && !info.State.Restarting && !info.State.Dead && info.State.Pid > 0 && info.State.Error == "" && info.State.Status == "running"
 }
 
 // Owner held. Reuse the confirmed bootstrap parser, fresh native quorum and
@@ -248,7 +311,7 @@ func inspectStoppedMDS(ctx context.Context, i *cephFSMDSIdentity, requireMissing
 		}
 		return false, clusterutil.OperationError(ctx, "inspect original stopped MDS", err)
 	}
-	if info == nil || info.ID != i.cid || info.State == nil || info.State.Running || info.State.Restarting || info.State.Paused || info.State.Dead || info.State.Pid != 0 || info.State.Status != "exited" || requireMissing {
+	if !containerExited(info, i.cid) || requireMissing {
 		return false, errors.New("original MDS must be positively stopped or confirmed removed")
 	}
 	return false, ctx.Err()
@@ -300,14 +363,14 @@ func (f mdsFleet) verifyStoppedMDSSurvivors(ctx context.Context, target *cephFSM
 			return nil, errors.New("original MDS survivor creation identity is unavailable")
 		}
 		i := daemon.identity
-		if f.checkStoppedMDSOwner(daemon, i) != nil || completedMDSReplacementAuthority(i) != nil || i.removed || i.fsid != target.fsid || !registered[i.name] || seenNames[i.name] || seenCIDs[i.cid] {
+		if f.checkOwnedMDS(daemon, i) != nil || completedMDSReplacementAuthority(i) != nil || i.removed || i.fsid != target.fsid || !registered[i.name] || seenNames[i.name] || seenCIDs[i.cid] {
 			return nil, errors.New("stopped MDS has an unconfirmed or foreign survivor")
 		}
 		info, err := i.container.Inspect(ctx)
 		if err != nil {
 			return nil, clusterutil.OperationError(ctx, "inspect original MDS survivor", err)
 		}
-		if i.container.GetContainerID() != i.cid || info == nil || info.ID != i.cid || info.State == nil || !info.State.Running || info.State.Paused || info.State.Restarting || info.State.Dead || info.State.Pid <= 0 || info.State.Error != "" || info.State.Status != "running" {
+		if i.container.GetContainerID() != i.cid || !containerRunning(info, i.cid) {
 			return nil, errors.New("original MDS survivor is not running normally")
 		}
 		seenNames[i.name], seenCIDs[i.cid] = true, true

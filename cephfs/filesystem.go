@@ -712,7 +712,7 @@ func (f mdsFleet) createMDSCredentials(ctx context.Context, a *mdsStartAdmission
 		"mon", "allow profile mds", "mgr", "allow profile mds",
 		"osd", "allow rw tag cephfs *=*", "mds", "allow"}
 	if a.cold || replacement {
-		keyring, err := servicehook.Command(ctx, a.control, append([]string{"ceph", "--connect-timeout", "5"}, args...)...)
+		keyring, err := servicehook.Command(ctx, a.control, controlCeph(args...)...)
 		if err != nil {
 			if replacement {
 				return nil, clusterutil.OperationError(ctx, "create replacement MDS credentials", err)
