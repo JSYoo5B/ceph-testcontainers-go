@@ -142,7 +142,9 @@ type NetworkProfile struct {
 	Jitter time.Duration
 	// Peer, when set, limits the profile to the packets that the target sends
 	// to this address through the endpoint; every other packet leaves
-	// unshaped. It is an IPv4 address, or an IPv6 address for an
+	// unshaped. Peer and PeerPort are the one-peer form of Peers: they select
+	// what Peers with the one entry {Peer, PeerPort} selects, and are checked
+	// by the same rules. It is an IPv4 address, or an IPv6 address for an
 	// endpoint that has one, such as a daemon's address from
 	// DaemonAddresses on the same plane. Only packets that leave the target
 	// are selected, unless Direction also shapes the peer's side.
