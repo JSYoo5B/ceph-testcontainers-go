@@ -893,8 +893,8 @@ func TestNetworkDelayRefusesUnsupportedHelpers(t *testing.T) {
 				t.Fatal("the refusal left a change or a helper")
 			}
 			// The endpoint is free again.
-			if len(cluster.faultsOf(faulthook.NetworkDelay)) != 0 {
-				t.Fatalf("reservations left: %v", cluster.faultsOf(faulthook.NetworkDelay))
+			if len(cluster.faultsOf(faulthook.NetworkProfile)) != 0 {
+				t.Fatalf("reservations left: %v", cluster.faultsOf(faulthook.NetworkProfile))
 			}
 		})
 	}
@@ -1152,7 +1152,7 @@ func TestNetworkDelayTerminate(t *testing.T) {
 	if err := cluster.Terminate(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if netem.root("osd-0") != nil || netem.liveHelpers() != 0 || len(cluster.faultsOf(faulthook.NetworkDelay)) != 0 {
+	if netem.root("osd-0") != nil || netem.liveHelpers() != 0 || len(cluster.faultsOf(faulthook.NetworkProfile)) != 0 {
 		t.Fatal("Terminate left a delay")
 	}
 
@@ -1382,8 +1382,8 @@ func TestNetworkDelayRefusesMalformedPreflightReports(t *testing.T) {
 					t.Fatalf("ran %q on the target", command)
 				}
 			}
-			if netem.liveHelpers() != 0 || netem.root("osd-0") != nil || len(cluster.faultsOf(faulthook.NetworkDelay)) != 0 {
-				t.Fatalf("%d helpers, root %+v, reservations %v", netem.liveHelpers(), netem.root("osd-0"), cluster.faultsOf(faulthook.NetworkDelay))
+			if netem.liveHelpers() != 0 || netem.root("osd-0") != nil || len(cluster.faultsOf(faulthook.NetworkProfile)) != 0 {
+				t.Fatalf("%d helpers, root %+v, reservations %v", netem.liveHelpers(), netem.root("osd-0"), cluster.faultsOf(faulthook.NetworkProfile))
 			}
 		})
 	}
@@ -1410,7 +1410,7 @@ func TestNetworkProfileRestoreUsesOriginalEndpointIdentity(t *testing.T) {
 			if err := cluster.Terminate(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			if netem.root("osd-0") != nil || netem.liveHelpers() != 0 || len(cluster.faultsOf(faulthook.NetworkDelay)) != 0 {
+			if netem.root("osd-0") != nil || netem.liveHelpers() != 0 || len(cluster.faultsOf(faulthook.NetworkProfile)) != 0 {
 				t.Fatal("cluster teardown left the original profile or helper")
 			}
 		})

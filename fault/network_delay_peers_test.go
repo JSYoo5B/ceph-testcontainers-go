@@ -193,8 +193,8 @@ func TestNetworkDelayPeersPreflightTheClassifier(t *testing.T) {
 			if !errors.Is(err, ErrNetemKernelUnsupported) || !errors.Is(err, ceph.ErrEnvironmentUnavailable) || errors.Is(err, ceph.ErrImageCapability) || lease != nil {
 				t.Fatalf("got %v, %v", lease, err)
 			}
-			if tc := tcCommands(netem, "tc "); len(tc) != 0 || netem.liveHelpers() != 0 || len(cluster.faultsOf(faulthook.NetworkDelay)) != 0 {
-				t.Fatalf("the refusal ran %q, left %d helpers and %v", tc, netem.liveHelpers(), cluster.faultsOf(faulthook.NetworkDelay))
+			if tc := tcCommands(netem, "tc "); len(tc) != 0 || netem.liveHelpers() != 0 || len(cluster.faultsOf(faulthook.NetworkProfile)) != 0 {
+				t.Fatalf("the refusal ran %q, left %d helpers and %v", tc, netem.liveHelpers(), cluster.faultsOf(faulthook.NetworkProfile))
 			}
 			whole, err := cluster.ApplyNetworkProfile(t.Context(), osd, testDelay)
 			if err != nil {
@@ -266,7 +266,7 @@ func TestNetworkDelayPeersValidation(t *testing.T) {
 		})
 	}
 	// The same address on two ports is two peers.
-	if err := validateNetworkDelay(NetworkProfile{HelperImage: "h", Plane: ceph.PublicNetworkPlane, Loss: 100,
+	if err := validateNetworkProfile(NetworkProfile{HelperImage: "h", Plane: ceph.PublicNetworkPlane, Loss: 100,
 		Peers: []NetworkPeer{{Addr: v4, Port: 6800}, {Addr: v4, Port: 6801}}}); err != nil {
 		t.Fatal(err)
 	}

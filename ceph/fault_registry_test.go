@@ -78,19 +78,19 @@ func hold(t *testing.T, c *Container, kind faultKind, key, network string, log *
 func TestFaultRegistryReserveSettleRelease(t *testing.T) {
 	c := &Container{}
 	ctx := t.Context()
-	token, previous, err := c.faults.reserve(ctx, faultNetworkDelay, "net/osd-0")
+	token, previous, err := c.faults.reserve(ctx, faultNetworkProfile, "net/osd-0")
 	if err != nil || token == nil || previous != nil {
 		t.Fatalf("first reservation: %v %v %v", token, previous, err)
 	}
-	if got := c.faultsOf(faultNetworkDelay); len(got) != 1 || got["net/osd-0"] != nil {
+	if got := c.faultsOf(faultNetworkProfile); len(got) != 1 || got["net/osd-0"] != nil {
 		t.Fatalf("a reservation must be a key without a handle: %v", got)
 	}
-	_, previous, err = c.faults.reserve(ctx, faultNetworkDelay, "net/osd-0")
+	_, previous, err = c.faults.reserve(ctx, faultNetworkProfile, "net/osd-0")
 	if !errors.Is(err, ErrInvalidRequest) || previous != nil || !strings.Contains(err.Error(), "being applied") {
 		t.Fatalf("a reserved key was not refused as being applied: %v %v", previous, err)
 	}
 	// Another key and another kind with the same key are independent.
-	other, _, err := c.faults.reserve(ctx, faultNetworkDelay, "net/osd-1")
+	other, _, err := c.faults.reserve(ctx, faultNetworkProfile, "net/osd-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,20 +103,20 @@ func TestFaultRegistryReserveSettleRelease(t *testing.T) {
 	if c.closed {
 		t.Fatal("the cluster reports a terminate that did not happen")
 	}
-	_, previous, err = c.faults.reserve(ctx, faultNetworkDelay, "net/osd-0")
+	_, previous, err = c.faults.reserve(ctx, faultNetworkProfile, "net/osd-0")
 	if !errors.Is(err, ErrInvalidRequest) || previous != nil || !strings.Contains(err.Error(), "restore the existing") {
 		t.Fatalf("a held delay was not refused with a nil handle: %v %v", previous, err)
 	}
 	// Settling without a handle frees only that reservation.
 	c.faults.settle(other, "", nil, nil, nil)
 	c.faults.settle(pause, "", nil, nil, nil)
-	if got := c.faultsOf(faultNetworkDelay); len(got) != 1 || got["net/osd-0"] != lease || len(c.faultsOf(faultContainerPause)) != 0 {
+	if got := c.faultsOf(faultNetworkProfile); len(got) != 1 || got["net/osd-0"] != lease || len(c.faultsOf(faultContainerPause)) != 0 {
 		t.Fatalf("handle-less settles changed other keys: %v", c.faults.entries)
 	}
 	if !c.faults.tracks(token) || !c.faults.release(token) || c.faults.tracks(token) || c.faults.release(token) {
 		t.Fatal("release of the current token did not forget it exactly once")
 	}
-	if _, _, err := c.faults.reserve(ctx, faultNetworkDelay, "net/osd-0"); err != nil {
+	if _, _, err := c.faults.reserve(ctx, faultNetworkProfile, "net/osd-0"); err != nil {
 		t.Fatalf("a released key stayed refused: %v", err)
 	}
 }
@@ -210,15 +210,15 @@ func TestTerminateUndoesFaultPhasesInOrderAndLockMode(t *testing.T) {
 	hold(t, c, faultContainerPause, "pause-a", "", &log)
 	hold(t, c, faultBlocklist, "blocklist", "", &log)
 	hold(t, c, faultNetworkInterruption, "link-a", "net", &log)
-	hold(t, c, faultNetworkDelay, "delay-a", "", &log)
+	hold(t, c, faultNetworkProfile, "delay-a", "", &log)
 	hold(t, c, faultContainerPause, "pause-b", "", &log)
 	hold(t, c, faultFullRatios, "", "", &log)
 	hold(t, c, faultNetworkInterruption, "link-b", "net", &log)
-	hold(t, c, faultNetworkDelay, "delay-b", "", &log)
+	hold(t, c, faultNetworkProfile, "delay-b", "", &log)
 	hold(t, c, faultCPULimit, "cpu-a", "", &log)
 	// A reservation is not undone: its caller settles after Terminate.
 	c.mu.Lock()
-	reserved, _, _ := c.faults.reserve(t.Context(), faultNetworkDelay, "delay-reserved")
+	reserved, _, _ := c.faults.reserve(t.Context(), faultNetworkProfile, "delay-reserved")
 	c.mu.Unlock()
 	if err := c.Terminate(t.Context()); err != nil {
 		t.Fatal(err)
@@ -245,7 +245,7 @@ func TestTerminateUndoesFaultPhasesInOrderAndLockMode(t *testing.T) {
 	if len(c.faultsOf(faultBlocklist)) != 1 || len(c.faultsOf(faultFullRatios)) != 1 {
 		t.Fatal("tracked overrides were dropped; they end with the cluster")
 	}
-	if c.faults.entries[faultID{faultNetworkDelay, "delay-reserved"}] != reserved {
+	if c.faults.entries[faultID{faultNetworkProfile, "delay-reserved"}] != reserved {
 		t.Fatal("Terminate touched an unsettled reservation")
 	}
 }
@@ -253,17 +253,17 @@ func TestTerminateUndoesFaultPhasesInOrderAndLockMode(t *testing.T) {
 func TestTerminateFailedUndoStaysTrackedAndRetryable(t *testing.T) {
 	c := &Container{}
 	var log []string
-	delay := hold(t, c, faultNetworkDelay, "delay", "", &log)
+	delay := hold(t, c, faultNetworkProfile, "delay", "", &log)
 	link := hold(t, c, faultNetworkInterruption, "link", "net", &log)
 	pause := hold(t, c, faultContainerPause, "pause", "", &log)
 	delay.failures, link.failures, pause.failures = 1, 1, 1
 	err := c.Terminate(t.Context())
-	for _, want := range []string{"restore network delay: delay undo failed", "restore interrupted network: link undo failed", "resume paused container: pause undo failed"} {
+	for _, want := range []string{"restore network profile: delay undo failed", "restore interrupted network: link undo failed", "resume paused container: pause undo failed"} {
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Fatalf("Terminate error %v lacks %q", err, want)
 		}
 	}
-	if c.heldFault(faultNetworkDelay, "delay") != delay || c.heldFault(faultNetworkInterruption, "link") != link || c.heldFault(faultContainerPause, "pause") != pause {
+	if c.heldFault(faultNetworkProfile, "delay") != delay || c.heldFault(faultNetworkInterruption, "link") != link || c.heldFault(faultContainerPause, "pause") != pause {
 		t.Fatal("a failed undo left the registry")
 	}
 	if !c.closed {
@@ -276,7 +276,7 @@ func TestTerminateFailedUndoStaysTrackedAndRetryable(t *testing.T) {
 	if !delay.done || !link.done || !pause.done || len(log) != 3 {
 		t.Fatalf("retry did not undo every failed fault: %v", log)
 	}
-	if len(c.faultsOf(faultNetworkDelay)) != 0 {
+	if len(c.faultsOf(faultNetworkProfile)) != 0 {
 		t.Fatal("a restored delay was not released")
 	}
 	// Complete interruptions and pauses stay registered; undoing them again
@@ -291,7 +291,7 @@ func TestTerminateBlocksOnlyNetworksOfFailedInterruptions(t *testing.T) {
 	var log []string
 	hold(t, c, faultNetworkInterruption, "public/a", "public", &log).failures = 1
 	hold(t, c, faultNetworkInterruption, "cluster/a", "cluster", &log)
-	hold(t, c, faultNetworkDelay, "public/b", "public", &log).failures = 1
+	hold(t, c, faultNetworkProfile, "public/b", "public", &log).failures = 1
 	hold(t, c, faultContainerPause, "c", "", &log).failures = 1
 	c.mu.Lock()
 	errs, blocked := c.faults.undo(t.Context(), &c.mu)
@@ -311,7 +311,7 @@ func TestSettleAfterTerminateReportsClosed(t *testing.T) {
 	c := &Container{}
 	var log []string
 	c.mu.Lock()
-	token, _, err := c.faults.reserve(t.Context(), faultNetworkDelay, "net/osd-0")
+	token, _, err := c.faults.reserve(t.Context(), faultNetworkProfile, "net/osd-0")
 	c.mu.Unlock()
 	if err != nil {
 		t.Fatal(err)
@@ -328,7 +328,7 @@ func TestSettleAfterTerminateReportsClosed(t *testing.T) {
 		t.Fatalf("settle after Terminate reported closed=%v, undo log %v", closed, log)
 	}
 	// The caller self-restores, which releases the entry.
-	if err := f.undo(t.Context()); err != nil || len(c.faultsOf(faultNetworkDelay)) != 0 {
+	if err := f.undo(t.Context()); err != nil || len(c.faultsOf(faultNetworkProfile)) != 0 {
 		t.Fatal("self-restore after a late settle left the entry")
 	}
 }
@@ -342,7 +342,7 @@ func TestTerminateConcurrentWithDelayRestore(t *testing.T) {
 		var leaseMu sync.Mutex
 		restores := 0
 		c.mu.Lock()
-		token, _, _ := c.faults.reserve(t.Context(), faultNetworkDelay, "net/osd-0")
+		token, _, _ := c.faults.reserve(t.Context(), faultNetworkProfile, "net/osd-0")
 		restore := func(context.Context) error {
 			leaseMu.Lock()
 			defer leaseMu.Unlock()
@@ -367,7 +367,7 @@ func TestTerminateConcurrentWithDelayRestore(t *testing.T) {
 				t.Fatal("Terminate and a concurrent Restore deadlocked")
 			}
 		}
-		if len(c.faultsOf(faultNetworkDelay)) != 0 || restores == 0 {
+		if len(c.faultsOf(faultNetworkProfile)) != 0 || restores == 0 {
 			t.Fatal("the lease was not released")
 		}
 	}

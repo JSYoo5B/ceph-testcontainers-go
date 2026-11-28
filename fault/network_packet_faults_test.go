@@ -64,13 +64,13 @@ func TestNetworkPacketFaultValidation(t *testing.T) {
 			if lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, request); !errors.Is(err, ceph.ErrInvalidRequest) || lease != nil {
 				t.Fatalf("accepted %+v: %v", request, err)
 			}
-			if len(netem.helpers) != 0 || len(cluster.faultsOf(faulthook.NetworkDelay)) != 0 {
-				t.Fatalf("%d helpers started, reservations %v for an invalid fault", len(netem.helpers), cluster.faultsOf(faulthook.NetworkDelay))
+			if len(netem.helpers) != 0 || len(cluster.faultsOf(faulthook.NetworkProfile)) != 0 {
+				t.Fatalf("%d helpers started, reservations %v for an invalid fault", len(netem.helpers), cluster.faultsOf(faulthook.NetworkProfile))
 			}
 		})
 	}
 	for name, request := range faultRequests {
-		if err := validateNetworkDelay(request); err != nil {
+		if err := validateNetworkProfile(request); err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
 	}
@@ -78,7 +78,7 @@ func TestNetworkPacketFaultValidation(t *testing.T) {
 		{HelperImage: "x", Plane: ceph.PublicNetworkPlane, Corrupt: NetworkPacketFault{Percent: 100, Correlation: 100}},
 		{HelperImage: "x", Plane: ceph.PublicNetworkPlane, Delay: time.Millisecond, Jitter: time.Millisecond, Duplicate: NetworkPacketFault{Percent: 1}, Rate: MinNetworkRate},
 	} {
-		if err := validateNetworkDelay(request); err != nil {
+		if err := validateNetworkProfile(request); err != nil {
 			t.Fatalf("%+v: %v", request, err)
 		}
 	}
@@ -217,8 +217,8 @@ func checkNothingApplied(t *testing.T, netem *fakeNetem, cluster *delayTestClust
 			t.Fatalf("ran %q on the target", command)
 		}
 	}
-	if netem.root("osd-0") != nil || netem.liveHelpers() != 0 || len(cluster.faultsOf(faulthook.NetworkDelay)) != 0 {
-		t.Fatalf("root %+v, %d helpers, reservations %v", netem.root("osd-0"), netem.liveHelpers(), cluster.faultsOf(faulthook.NetworkDelay))
+	if netem.root("osd-0") != nil || netem.liveHelpers() != 0 || len(cluster.faultsOf(faulthook.NetworkProfile)) != 0 {
+		t.Fatalf("root %+v, %d helpers, reservations %v", netem.root("osd-0"), netem.liveHelpers(), cluster.faultsOf(faulthook.NetworkProfile))
 	}
 }
 

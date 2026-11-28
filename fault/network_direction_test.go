@@ -74,7 +74,7 @@ func TestNetworkDirectionAndPhaseValidation(t *testing.T) {
 		"unknown phase no peers": {Phase: -1},
 	} {
 		delay.HelperImage, delay.Plane, delay.Delay = "h", ceph.PublicNetworkPlane, 10*time.Millisecond
-		if err := validateNetworkDelay(delay); !errors.Is(err, ceph.ErrInvalidRequest) {
+		if err := validateNetworkProfile(delay); !errors.Is(err, ceph.ErrInvalidRequest) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
@@ -85,7 +85,7 @@ func TestNetworkDirectionAndPhaseValidation(t *testing.T) {
 		"inbound setup":          {Peer: peer, Direction: Inbound, Phase: ConnectionSetup},
 	} {
 		delay.HelperImage, delay.Plane, delay.Delay = "h", ceph.PublicNetworkPlane, 10*time.Millisecond
-		if err := validateNetworkDelay(delay); err != nil {
+		if err := validateNetworkProfile(delay); err != nil {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
@@ -125,7 +125,7 @@ func TestInboundNetworkDelayShapesThePeersEndpoint(t *testing.T) {
 	if err != nil || !status.Applied || status.RootKind != "prio" {
 		t.Fatalf("peer status %+v, %v", status, err)
 	}
-	if held := cluster.faultsOf(faulthook.NetworkDelay); len(held) != 1 {
+	if held := cluster.faultsOf(faulthook.NetworkProfile); len(held) != 1 {
 		t.Fatalf("held delays %v, want the peer's endpoint only", held)
 	}
 	if err := lease.Restore(t.Context()); err != nil {
@@ -134,7 +134,7 @@ func TestInboundNetworkDelayShapesThePeersEndpoint(t *testing.T) {
 	if link := netem.eth0("osd-1"); link.root != nil || len(link.filters) != 0 || netem.liveHelpers() != 0 {
 		t.Fatalf("after Restore: root %+v filters %v, %d helpers", link.root, link.filters, netem.liveHelpers())
 	}
-	if held := cluster.faultsOf(faulthook.NetworkDelay); len(held) != 0 {
+	if held := cluster.faultsOf(faulthook.NetworkProfile); len(held) != 0 {
 		t.Fatalf("held delays after Restore: %v", held)
 	}
 	if err := lease.Restore(t.Context()); err != nil {
@@ -171,7 +171,7 @@ func TestBothDirectionsConnectionSetupDelay(t *testing.T) {
 	if !strings.Contains(strings.Join(tcCommands(netem, "python3"), "\n"), "peers setup") {
 		t.Fatalf("the preflight did not check the SYN key: %q", tcCommands(netem, "python3"))
 	}
-	if held := cluster.faultsOf(faulthook.NetworkDelay); len(held) != 2 {
+	if held := cluster.faultsOf(faulthook.NetworkProfile); len(held) != 2 {
 		t.Fatalf("held delays %v", held)
 	}
 	if err := cluster.Terminate(t.Context()); err != nil && !errors.Is(err, nativeTerminated()) {
@@ -278,7 +278,7 @@ func TestBothDirectionsPeerPublicationRacesWithRestore(t *testing.T) {
 		go func() { restored <- outer.Restore(context.Background()) }()
 		return lease, err
 	}
-	top, err := applyDirectedDelay(t.Context(), netem, "osd-0", "tc-public", delay, hold)
+	top, err := applyDirectedProfile(t.Context(), netem, "osd-0", "tc-public", delay, hold)
 	if err != nil {
 		t.Fatal(err)
 	}

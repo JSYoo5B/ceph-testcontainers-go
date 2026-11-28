@@ -138,7 +138,7 @@ func TestPeerNetworkDelayValidation(t *testing.T) {
 	} {
 		delay := peerDelay
 		edit(&delay)
-		if err := validateNetworkDelay(delay); !errors.Is(err, ceph.ErrInvalidRequest) {
+		if err := validateNetworkProfile(delay); !errors.Is(err, ceph.ErrInvalidRequest) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
@@ -157,7 +157,7 @@ func TestPeerAndPeersShareOneValidation(t *testing.T) {
 			one, many := peerDelay, peerDelay
 			one.Peer, one.PeerPort = peer.Addr, peer.Port
 			many.Peer, many.PeerPort, many.Peers = netip.Addr{}, 0, []NetworkPeer{peer}
-			oneErr, manyErr := validateNetworkDelay(one), validateNetworkDelay(many)
+			oneErr, manyErr := validateNetworkProfile(one), validateNetworkProfile(many)
 			if !errors.Is(oneErr, ceph.ErrInvalidRequest) || !errors.Is(manyErr, ceph.ErrInvalidRequest) {
 				t.Fatalf("Peer: %v, Peers: %v", oneErr, manyErr)
 			}
@@ -287,7 +287,7 @@ func TestNetworkDelayLossValidation(t *testing.T) {
 		"jitter without delay": {NetworkProfile{HelperImage: "h", Plane: ceph.PublicNetworkPlane, Jitter: time.Millisecond, Loss: 50}, false},
 		"a delay below 1ms":    {NetworkProfile{HelperImage: "h", Plane: ceph.PublicNetworkPlane, Delay: time.Microsecond, Loss: 50}, false},
 	} {
-		if err := validateNetworkDelay(test.delay); (err == nil) != test.ok {
+		if err := validateNetworkProfile(test.delay); (err == nil) != test.ok {
 			t.Errorf("%s: %v", name, err)
 		}
 	}

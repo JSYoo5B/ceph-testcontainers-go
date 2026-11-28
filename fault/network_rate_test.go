@@ -77,15 +77,15 @@ func TestNetworkRateValidation(t *testing.T) {
 			if lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, request); err == nil || lease != nil {
 				t.Fatalf("accepted %+v", request)
 			}
-			if len(netem.helpers) != 0 || len(cluster.faultsOf(faulthook.NetworkDelay)) != 0 {
-				t.Fatalf("%d helpers started, reservations %v for an invalid rate", len(netem.helpers), cluster.faultsOf(faulthook.NetworkDelay))
+			if len(netem.helpers) != 0 || len(cluster.faultsOf(faulthook.NetworkProfile)) != 0 {
+				t.Fatalf("%d helpers started, reservations %v for an invalid rate", len(netem.helpers), cluster.faultsOf(faulthook.NetworkProfile))
 			}
 		})
 	}
 	for _, rate := range []NetworkRate{MinNetworkRate, MaxNetworkRate} {
 		request := testRate
 		request.Rate = rate
-		if err := validateNetworkDelay(request); err != nil {
+		if err := validateNetworkProfile(request); err != nil {
 			t.Fatalf("rate %v: %v", rate, err)
 		}
 	}
@@ -198,8 +198,8 @@ func TestNetworkRatePreflight(t *testing.T) {
 						t.Fatalf("ran %q on the target", command)
 					}
 				}
-				if netem.root("osd-0") != nil || netem.liveHelpers() != 0 || len(cluster.faultsOf(faulthook.NetworkDelay)) != 0 {
-					t.Fatalf("root %+v, %d helpers, reservations %v", netem.root("osd-0"), netem.liveHelpers(), cluster.faultsOf(faulthook.NetworkDelay))
+				if netem.root("osd-0") != nil || netem.liveHelpers() != 0 || len(cluster.faultsOf(faulthook.NetworkProfile)) != 0 {
+					t.Fatalf("root %+v, %d helpers, reservations %v", netem.root("osd-0"), netem.liveHelpers(), cluster.faultsOf(faulthook.NetworkProfile))
 				}
 			})
 		}
