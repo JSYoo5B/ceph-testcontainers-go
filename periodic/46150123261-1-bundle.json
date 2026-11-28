@@ -1,0 +1,301 @@
+{
+  "classification": "passed",
+  "complete": true,
+  "elapsed_seconds": 905.325,
+  "execution": "46150123261-1",
+  "plan": {
+    "budget_seconds": 6600,
+    "maximum_runner_minutes": 150,
+    "mode": "rotate",
+    "plan_sha256": "2bf0a134183242e8905c49191072fbbe00e29696ae25220b8c2dfa545fc1d32e",
+    "runs": [
+      {
+        "budget_seconds": 6600,
+        "catalogue_sha256": "73b613d2f0e66827b3023258369b3d3b7a64b81afa157e3f2a8be46a2fa4cd03",
+        "cell": "20.2.4/a82dfede884e",
+        "entries": [
+          {
+            "core": false,
+            "id": "short-default-0b24074f-9153d48c8d",
+            "native_seconds": 1200,
+            "network": "host",
+            "profile": {
+              "architecture": "",
+              "batch": "default",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "short",
+              "checker": "none",
+              "id": "short-default-0b24074f",
+              "image_roles": "essential,client,cephfs,rgw",
+              "job_timeout": 35,
+              "network_tests": [
+                "TestRBDNamespaces"
+              ],
+              "networks": [
+                "host",
+                "bridge"
+              ],
+              "package": "./internal/integration/rbd",
+              "profile": "short/default/internal-integration-rbd",
+              "representative": "",
+              "requires_ceph": true,
+              "retry_job_timeout": 70,
+              "sources": [
+                "internal/integration/rbd/rbd_integration_test.go",
+                "internal/integration/rbd/rbd_namespace_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_default",
+              "timeout": "20m"
+            },
+            "tests": [
+              "TestRBDLifecycle",
+              "TestRBDNamespaces",
+              "TestRBDRunPoolSelection"
+            ]
+          },
+          {
+            "core": false,
+            "id": "topology-osd_min_size_boundary-ba4867cb-6a3488ac89",
+            "native_seconds": 1200,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "osd_min_size_boundary",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "topology",
+              "checker": "none",
+              "id": "topology-osd_min_size_boundary-ba4867cb",
+              "image_roles": "essential,client",
+              "job_timeout": 35,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration",
+              "profile": "topology/osd_min_size_boundary/internal-integration",
+              "representative": "",
+              "requires_ceph": true,
+              "retry_job_timeout": 70,
+              "sources": [
+                "internal/integration/osd_min_size_boundary_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_topology,ci_batch,ci_batch_osd_min_size_boundary",
+              "timeout": "25m"
+            },
+            "tests": [
+              "TestOSDMinSizeBoundaryDuringRecovery"
+            ]
+          },
+          {
+            "core": false,
+            "id": "multicluster-multicluster_topology_rgw_endpoints_host-8266f619-25a3474507",
+            "native_seconds": 1200,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "multicluster_topology_rgw_endpoints_host",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "multicluster",
+              "checker": "none",
+              "id": "multicluster-multicluster_topology_rgw_endpoints_host-8266f619",
+              "image_roles": "essential,client,rgw",
+              "job_timeout": 70,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration/rgw",
+              "profile": "multicluster/multicluster_topology_rgw_endpoints_host/internal-integration-rgw",
+              "representative": "",
+              "requires_ceph": true,
+              "retry_job_timeout": 140,
+              "sources": [
+                "internal/integration/rgw/host_network_integration_ci_multicluster_multicluster_topology_rgw_endpoints_host_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_multicluster,ci_batch,ci_batch_multicluster_topology_rgw_endpoints_host",
+              "timeout": "60m"
+            },
+            "tests": [
+              "TestHostNetworkRGWEndpoints"
+            ]
+          }
+        ],
+        "images": {
+          "cpu_baseline": {},
+          "eligibility": "available",
+          "layout": "roles",
+          "references": {
+            "cephfs": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-cephfs",
+            "client": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-client",
+            "essential": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-essential",
+            "rgw": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-rgw"
+          }
+        },
+        "maximum_runner_minutes": 150,
+        "mode": "rotate",
+        "plan_sha256": "2ed527527e163aa92fabf7d07b0f69bb012788aa4d768bef54dbb01657c5f6fe",
+        "platform": "linux/amd64",
+        "reason": "random_sample",
+        "release": "20.2.4",
+        "schema": "ceph-periodic-sample/v1",
+        "scope": "flaky_discovery_sample_not_support",
+        "selected_at": "2026-11-28T13:32:57.193913+00:00",
+        "source_sha": "313ec4af193c879e7c1a716c1fe9ce45801e072c"
+      },
+      {
+        "budget_seconds": 6600,
+        "catalogue_sha256": "73b613d2f0e66827b3023258369b3d3b7a64b81afa157e3f2a8be46a2fa4cd03",
+        "cell": "21.2.0/a82dfede884e",
+        "entries": [
+          {
+            "core": false,
+            "id": "short-default-0b24074f-9153d48c8d",
+            "native_seconds": 1200,
+            "network": "host",
+            "profile": {
+              "architecture": "",
+              "batch": "default",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "short",
+              "checker": "none",
+              "id": "short-default-0b24074f",
+              "image_roles": "essential,client,cephfs,rgw",
+              "job_timeout": 35,
+              "network_tests": [
+                "TestRBDNamespaces"
+              ],
+              "networks": [
+                "host",
+                "bridge"
+              ],
+              "package": "./internal/integration/rbd",
+              "profile": "short/default/internal-integration-rbd",
+              "representative": "",
+              "requires_ceph": true,
+              "retry_job_timeout": 70,
+              "sources": [
+                "internal/integration/rbd/rbd_integration_test.go",
+                "internal/integration/rbd/rbd_namespace_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_default",
+              "timeout": "20m"
+            },
+            "tests": [
+              "TestRBDLifecycle",
+              "TestRBDNamespaces",
+              "TestRBDRunPoolSelection"
+            ]
+          },
+          {
+            "core": false,
+            "id": "topology-osd_min_size_boundary-ba4867cb-6a3488ac89",
+            "native_seconds": 1200,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "osd_min_size_boundary",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "topology",
+              "checker": "none",
+              "id": "topology-osd_min_size_boundary-ba4867cb",
+              "image_roles": "essential,client",
+              "job_timeout": 35,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration",
+              "profile": "topology/osd_min_size_boundary/internal-integration",
+              "representative": "",
+              "requires_ceph": true,
+              "retry_job_timeout": 70,
+              "sources": [
+                "internal/integration/osd_min_size_boundary_integration_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_topology,ci_batch,ci_batch_osd_min_size_boundary",
+              "timeout": "25m"
+            },
+            "tests": [
+              "TestOSDMinSizeBoundaryDuringRecovery"
+            ]
+          },
+          {
+            "core": false,
+            "id": "multicluster-multicluster_topology_rgw_endpoints_host-8266f619-25a3474507",
+            "native_seconds": 1200,
+            "network": "",
+            "profile": {
+              "architecture": "",
+              "batch": "multicluster_topology_rgw_endpoints_host",
+              "bug_compatibility": [],
+              "case": "",
+              "category": "multicluster",
+              "checker": "none",
+              "id": "multicluster-multicluster_topology_rgw_endpoints_host-8266f619",
+              "image_roles": "essential,client,rgw",
+              "job_timeout": 70,
+              "network_tests": [],
+              "networks": [],
+              "package": "./internal/integration/rgw",
+              "profile": "multicluster/multicluster_topology_rgw_endpoints_host/internal-integration-rgw",
+              "representative": "",
+              "requires_ceph": true,
+              "retry_job_timeout": 140,
+              "sources": [
+                "internal/integration/rgw/host_network_integration_ci_multicluster_multicluster_topology_rgw_endpoints_host_test.go"
+              ],
+              "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_multicluster,ci_batch,ci_batch_multicluster_topology_rgw_endpoints_host",
+              "timeout": "60m"
+            },
+            "tests": [
+              "TestHostNetworkRGWEndpoints"
+            ]
+          }
+        ],
+        "images": {
+          "cpu_baseline": {
+            "amd64": "x86-64-v3"
+          },
+          "eligibility": "available",
+          "layout": "roles",
+          "references": {
+            "cephfs": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-21.2.0-cephfs",
+            "client": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-21.2.0-client",
+            "essential": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-21.2.0-essential",
+            "rgw": "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-21.2.0-rgw"
+          }
+        },
+        "maximum_runner_minutes": 150,
+        "mode": "rotate",
+        "plan_sha256": "628998020c7b8352f0ad54c391c17169a71f8f980a60a4a3032ebd565a6e1b16",
+        "platform": "linux/amd64",
+        "reason": "random_sample",
+        "release": "21.2.0",
+        "schema": "ceph-periodic-sample/v1",
+        "scope": "flaky_discovery_sample_not_support",
+        "selected_at": "2026-11-28T13:32:57.193913+00:00",
+        "source_sha": "313ec4af193c879e7c1a716c1fe9ce45801e072c"
+      }
+    ],
+    "schema": "ceph-periodic-sample/v1/bundle",
+    "scope": "flaky_discovery_sample_not_support",
+    "seed": "313ec4af193c879e7c1a716c1fe9ce45801e072c:46150123261:1",
+    "selected_at": "2026-11-28T13:32:57.193913+00:00",
+    "source_sha": "313ec4af193c879e7c1a716c1fe9ce45801e072c"
+  },
+  "receipt_sha256": "a6c19c8057ff89c4a0d65e962a6f1f381a4e9663356a19a560d934fbe4297f26",
+  "schema": "ceph-periodic-sample/v1/bundle",
+  "source_sha": "313ec4af193c879e7c1a716c1fe9ce45801e072c",
+  "unstarted_versions": [],
+  "versions": [
+    {
+      "classification": "passed",
+      "complete": true,
+      "release": "20.2.4"
+    },
+    {
+      "classification": "passed",
+      "complete": true,
+      "release": "21.2.0"
+    }
+  ]
+}
