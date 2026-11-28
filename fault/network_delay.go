@@ -617,19 +617,25 @@ func temporaryNetworkProfile(ctx context.Context, c *ceph.Container, target test
 	// so a profile on a peer's endpoint is restored even when the lease that
 	// lists it is lost.
 	hold := func(id string, apply func() (*NetworkProfileLease, error)) (*NetworkProfileLease, error) {
-		token, err := reserveNetworkProfile(ctx, c, name, id)
-		if err != nil {
-			return nil, err
-		}
-		lease, err := apply()
-		if closed := settleNetworkProfile(c, token, lease); closed && lease != nil {
-			// Terminate ran meanwhile and did not see this profile.
-			native, _ := faulthook.Terminated()
-			return lease, errors.Join(err, native, lease.Restore(ctx))
-		}
-		return lease, err
+		return holdEndpoint(ctx, c, name, id, apply)
 	}
 	return applyDirectedProfile(ctx, backend, target.GetContainerID(), name, profile, hold)
+}
+
+// holdEndpoint reserves the endpoint of container id on the cluster's bridge
+// name, applies its lease and keeps the lease for Terminate. When Terminate
+// overtook the apply, it did not see the lease, which is restored here.
+func holdEndpoint(ctx context.Context, c *ceph.Container, name, id string, apply func() (*NetworkProfileLease, error)) (*NetworkProfileLease, error) {
+	token, err := reserveNetworkProfile(ctx, c, name, id)
+	if err != nil {
+		return nil, err
+	}
+	lease, err := apply()
+	if closed := settleNetworkProfile(c, token, lease); closed && lease != nil {
+		native, _ := faulthook.Terminated()
+		return lease, errors.Join(err, native, lease.Restore(ctx))
+	}
+	return lease, err
 }
 
 // endpointHold applies one endpoint's lease: for a cluster's planes it
@@ -1432,15 +1438,8 @@ func ApplyZoneProfile(ctx context.Context, c *ceph.Container, zone string, profi
 	if err != nil {
 		return nil, err
 	}
-	token, err := reserveNetworkProfile(ctx, c, name, router.GetContainerID())
-	if err != nil {
-		return nil, err
-	}
 	backend := dockerNetemBackend{label: faulthook.OwnedLabel(c)}
-	lease, err := applyEndpointProfile(ctx, backend, router.GetContainerID(), name, profile, false)
-	if closed := settleNetworkProfile(c, token, lease); closed && lease != nil {
-		native, _ := faulthook.Terminated()
-		return lease, errors.Join(err, native, lease.Restore(ctx))
-	}
-	return lease, err
+	return holdEndpoint(ctx, c, name, router.GetContainerID(), func() (*NetworkProfileLease, error) {
+		return applyEndpointProfile(ctx, backend, router.GetContainerID(), name, profile, false)
+	})
 }
