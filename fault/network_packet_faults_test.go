@@ -2,7 +2,6 @@ package fault
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"math"
 	"net/netip"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/faulthook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/netem"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/moby/moby/api/types/container"
 )
@@ -32,9 +32,9 @@ var faultRequests = map[string]NetworkProfile{
 
 // requestedFault is the request's fault for a netem keyword.
 func requestedFault(request NetworkProfile, name string) NetworkPacketFault {
-	for _, fault := range request.packetFaults() {
-		if fault.name == name {
-			return fault.fault
+	for _, fault := range request.params().Faults() {
+		if fault.Name == name {
+			return NetworkPacketFault(fault.Fault)
 		}
 	}
 	return NetworkPacketFault{}
@@ -64,13 +64,13 @@ func TestNetworkPacketFaultValidation(t *testing.T) {
 			if lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, request); !errors.Is(err, ceph.ErrInvalidRequest) || lease != nil {
 				t.Fatalf("accepted %+v: %v", request, err)
 			}
-			if len(netem.helpers) != 0 || len(cluster.faultsOf(faulthook.NetworkDelay)) != 0 {
-				t.Fatalf("%d helpers started, reservations %v for an invalid fault", len(netem.helpers), cluster.faultsOf(faulthook.NetworkDelay))
+			if len(netem.helpers) != 0 || len(cluster.faultsOf(faulthook.NetworkProfile)) != 0 {
+				t.Fatalf("%d helpers started, reservations %v for an invalid fault", len(netem.helpers), cluster.faultsOf(faulthook.NetworkProfile))
 			}
 		})
 	}
 	for name, request := range faultRequests {
-		if err := validateNetworkDelay(request); err != nil {
+		if err := validateNetworkProfile(request); err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
 	}
@@ -78,7 +78,7 @@ func TestNetworkPacketFaultValidation(t *testing.T) {
 		{HelperImage: "x", Plane: ceph.PublicNetworkPlane, Corrupt: NetworkPacketFault{Percent: 100, Correlation: 100}},
 		{HelperImage: "x", Plane: ceph.PublicNetworkPlane, Delay: time.Millisecond, Jitter: time.Millisecond, Duplicate: NetworkPacketFault{Percent: 1}, Rate: MinNetworkRate},
 	} {
-		if err := validateNetworkDelay(request); err != nil {
+		if err := validateNetworkProfile(request); err != nil {
 			t.Fatalf("%+v: %v", request, err)
 		}
 	}
@@ -119,8 +119,8 @@ func TestNetworkPacketFaultsApplyAndRestore(t *testing.T) {
 			if !request.Reorder.IsZero() {
 				wantGap = 1
 			}
-			if err != nil || !status.Applied || !request.Reorder.matches(status.Reorder) || !request.Duplicate.matches(status.Duplicate) ||
-				!request.Corrupt.matches(status.Corrupt) || status.Gap != wantGap || status.Delay != request.Delay || status.Rate != request.Rate {
+			if err != nil || !status.Applied || !faultMatches(request.Reorder, status.Reorder) || !faultMatches(request.Duplicate, status.Duplicate) ||
+				!faultMatches(request.Corrupt, status.Corrupt) || status.Gap != wantGap || status.Delay != request.Delay || status.Rate != request.Rate {
 				t.Fatalf("status %+v, %v", status, err)
 			}
 			if err := lease.Restore(t.Context()); err != nil {
@@ -183,7 +183,7 @@ func TestNetworkPacketFaultPreflight(t *testing.T) {
 	}
 	for name, tc := range refusals {
 		for shape, request := range faultRequests {
-			for _, fault := range request.requestedFaults() {
+			for _, fault := range request.params().Requested() {
 				t.Run(name+"/"+shape+"/"+fault, func(t *testing.T) {
 					netem := newFakeNetem()
 					tc.setup(netem, fault)
@@ -217,8 +217,8 @@ func checkNothingApplied(t *testing.T, netem *fakeNetem, cluster *delayTestClust
 			t.Fatalf("ran %q on the target", command)
 		}
 	}
-	if netem.root("osd-0") != nil || netem.liveHelpers() != 0 || len(cluster.faultsOf(faulthook.NetworkDelay)) != 0 {
-		t.Fatalf("root %+v, %d helpers, reservations %v", netem.root("osd-0"), netem.liveHelpers(), cluster.faultsOf(faulthook.NetworkDelay))
+	if netem.root("osd-0") != nil || netem.liveHelpers() != 0 || len(cluster.faultsOf(faulthook.NetworkProfile)) != 0 {
+		t.Fatalf("root %+v, %d helpers, reservations %v", netem.root("osd-0"), netem.liveHelpers(), cluster.faultsOf(faulthook.NetworkProfile))
 	}
 }
 
@@ -227,7 +227,7 @@ func checkNothingApplied(t *testing.T, netem *fakeNetem, cluster *delayTestClust
 // removes it.
 func TestNetworkPacketFaultKernelMismatchKeepsTheLease(t *testing.T) {
 	for name, request := range faultRequests {
-		for _, ignored := range append(request.requestedFaults(), "gap") {
+		for _, ignored := range append(request.params().Requested(), "gap") {
 			if ignored == "gap" && request.Reorder.IsZero() {
 				continue
 			}
@@ -310,21 +310,9 @@ func TestNetworkPacketFaultStatusReportsTheKernelsFaults(t *testing.T) {
 
 // Members named like netem's faults on a qdisc that is not netem, outside
 // the lease's root, are not netem's: they neither break the dump nor count.
-func TestNetworkPacketFaultForeignMembers(t *testing.T) {
-	var qdisc netemQdisc
-	if err := json.Unmarshal([]byte(`{"kind":"foreign","options":{"duplicate":3,"corrupt":true,"reorder":"x","gap":"none"}}`), &qdisc); err != nil {
-		t.Fatal(err)
-	}
-	if qdisc.Options.Duplicate.fault("duplicate") != (NetworkPacketFault{}) || qdisc.Options.Gap != 0 {
-		t.Fatalf("decoded %+v", qdisc.Options)
-	}
-	if err := json.Unmarshal([]byte(`{"kind":"netem","options":{"gap":1.5,"reorder":{"reorder":0.25,"correlation":0.5}}}`), &qdisc); err != nil {
-		t.Fatal(err)
-	}
-	if qdisc.Options.Gap != 0 || qdisc.Options.Reorder.fault("reorder") != (NetworkPacketFault{Percent: 25, Correlation: 50}) {
-		t.Fatalf("decoded %+v", qdisc.Options)
-	}
-
+// A qdisc outside the lease's root whose members look like netem's faults
+// leaves the status applied, with the lease's own faults.
+func TestNetworkPacketFaultForeignQdiscOutsideTheRoot(t *testing.T) {
 	netem := newFakeNetem()
 	cluster, osd := delayCluster(netem)
 	lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, faultRequests["duplicate"])
@@ -359,7 +347,7 @@ func TestNetworkPacketFaultRestoreKeepsForeignState(t *testing.T) {
 			}
 			link := netem.eth0("osd-0")
 			netem.mu.Lock()
-			link.extra = append(link.extra, fakeExtraQdisc{kind: "tbf", handle: "9999:", parent: lease.handle + "1"})
+			link.extra = append(link.extra, fakeExtraQdisc{kind: "tbf", handle: "9999:", parent: lease.shape.Handle + "1"})
 			netem.mu.Unlock()
 			if status, err := lease.Status(t.Context()); err != nil || status.Applied {
 				t.Fatalf("status with a foreign qdisc %+v, %v", status, err)
@@ -397,7 +385,7 @@ func TestNetworkPacketFaultUncertainApply(t *testing.T) {
 	if !errors.Is(err, context.Canceled) || lease == nil {
 		t.Fatalf("got %v, %v", lease, err)
 	}
-	if status, err := lease.Status(t.Context()); err != nil || !status.Applied || !request.Reorder.matches(status.Reorder) || status.Gap != 1 {
+	if status, err := lease.Status(t.Context()); err != nil || !status.Applied || !faultMatches(request.Reorder, status.Reorder) || status.Gap != 1 {
 		t.Fatalf("status %+v, %v", status, err)
 	}
 	if err := cluster.Terminate(t.Context()); err != nil {
@@ -422,7 +410,7 @@ func TestNetworkPacketFaultUncertainApply(t *testing.T) {
 		t.Fatalf("Restore ran %v before the earlier tc was confirmed stopped: %v", netem.commands[commands:], err)
 	}
 	// The late command lands; once confirmed, Restore removes it.
-	netem.setRoot("osd-0", fakeNetemQdisc(lease.handle, []string{"delay", "10000us", "reorder", "25%", "50%"}))
+	netem.setRoot("osd-0", fakeNetemQdisc(lease.shape.Handle, []string{"delay", "10000us", "reorder", "25%", "50%"}))
 	netem.cancelErr = nil
 	if err := lease.Restore(t.Context()); err != nil {
 		t.Fatal(err)
@@ -430,4 +418,10 @@ func TestNetworkPacketFaultUncertainApply(t *testing.T) {
 	if netem.root("osd-0") != nil || netem.liveHelpers() != 0 {
 		t.Fatal("Restore left the faults")
 	}
+}
+
+// faultMatches reports whether the kernel's fault is the requested one, as
+// the lease judges it.
+func faultMatches(want, kernel NetworkPacketFault) bool {
+	return netem.Fault(want).Matches(netem.Fault(kernel))
 }

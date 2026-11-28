@@ -402,7 +402,9 @@ What to expect:
 With `Peer`, only packets to that address are shaped, and with `PeerPort`
 only TCP packets to that destination port. `Peers` lists up to
 `fault.MaxNetworkPeers` `fault.NetworkPeer` entries of either family in one
-lease. The installed priority map sends every other packet to an unshaped
+lease. `Peer` and `PeerPort` are the one-peer form of `Peers`: they select
+what `Peers` with the one entry `{Addr: Peer, Port: PeerPort}` selects and are
+refused by the same rules; set one form or the other, not both. The installed priority map sends every other packet to an unshaped
 band. `Status` reports `Applied: false` if that priority map changes or cannot
 be confirmed. An in-place priority-map edit leaves the lease's root ownership
 intact, so `Restore` can still remove the hierarchy if it contains only the

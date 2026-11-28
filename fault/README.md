@@ -78,7 +78,8 @@ if err != nil {
   bridge.
 - Whole endpoint versus selected paths: `InterruptNetwork` cuts a whole
   endpoint; to cut selected paths use `ApplyNetworkProfile` with
-  `Peer`/`Peers` and a `Loss` of 100. `Direction` picks what the target sends
+  `Peer`/`Peers` and a `Loss` of 100 (`Peer` and `PeerPort` are the one-peer
+  form of `Peers`). `Direction` picks what the target sends
   (`Outbound`, the default), what the peers send to it (`Inbound`, applied at
   each peer container's endpoint) or both, and `Phase: ConnectionSetup` only
   TCP connection setup, so existing sessions keep working while new

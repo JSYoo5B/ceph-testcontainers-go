@@ -121,7 +121,7 @@ func setOSDFlagLocked(ctx context.Context, c *ceph.Container, flag ceph.OSDFlag,
 	if err != nil {
 		return notAppliedOSDFlag(flag, err)
 	}
-	ctx, cancel := context.WithTimeout(ctx, overridehook.StartupTimeout(c))
+	ctx, cancel := operationDeadline(ctx, c)
 	defer cancel()
 	flags, err := overridehook.OSDMapFlags(ctx, c)
 	if err != nil {
@@ -186,7 +186,7 @@ func (change *OSDFlagHandle) restoreLocked(ctx context.Context, c *ceph.Containe
 	if !overridehook.Tracks(c, change.state.token) {
 		return errors.New("OSD flag override is not tracked by this cluster")
 	}
-	ctx, cancel := context.WithTimeout(ctx, overridehook.StartupTimeout(c))
+	ctx, cancel := operationDeadline(ctx, c)
 	defer cancel()
 	if err := change.state.command.Wait(ctx); err != nil {
 		return err

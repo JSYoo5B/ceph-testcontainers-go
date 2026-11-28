@@ -164,7 +164,7 @@ func setConfigLocked(ctx context.Context, c *ceph.Container, setting ceph.Config
 	if err != nil {
 		return notAppliedConfig(setting, err)
 	}
-	ctx, cancel := configDeadline(ctx, c)
+	ctx, cancel := operationDeadline(ctx, c)
 	defer cancel()
 	entries, err := overridehook.ConfigEntries(ctx, c)
 	if err != nil {
@@ -253,7 +253,7 @@ func (change *ConfigHandle) restoreLocked(ctx context.Context, c *ceph.Container
 	if !overridehook.Tracks(c, change.state.token) {
 		return errors.New("configuration override is not tracked by this cluster")
 	}
-	ctx, cancel := configDeadline(ctx, c)
+	ctx, cancel := operationDeadline(ctx, c)
 	defer cancel()
 	if err := change.state.command.Wait(ctx); err != nil {
 		return err
@@ -320,15 +320,6 @@ func (change *ConfigHandle) restoreLocked(ctx context.Context, c *ceph.Container
 func (change *ConfigHandle) finish(c *ceph.Container) {
 	change.state.restored = true
 	overridehook.Release(c, change.state.token)
-}
-
-// configDeadline bounds one fixture operation by the cluster's startup
-// timeout.
-func configDeadline(ctx context.Context, c *ceph.Container) (context.Context, context.CancelFunc) {
-	if timeout := overridehook.StartupTimeout(c); timeout > 0 {
-		return context.WithTimeout(ctx, timeout)
-	}
-	return context.WithCancel(ctx)
 }
 
 // mgrModuleOption reports whether name is an MGR module option, which the MGR

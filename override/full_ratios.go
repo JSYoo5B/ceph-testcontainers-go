@@ -103,8 +103,6 @@ func SetFullRatios(ctx context.Context, c *ceph.Container, requested ceph.FullRa
 	if err != nil {
 		return notAppliedFullRatios(err)
 	}
-	ctx, cancel := fullRatiosDeadline(ctx, c)
-	defer cancel()
 	var (
 		handle   *FullRatiosHandle
 		applyErr error
@@ -125,6 +123,8 @@ func setFullRatiosLocked(ctx context.Context, c *ceph.Container, requested ceph.
 	if err != nil {
 		return notAppliedFullRatios(err)
 	}
+	ctx, cancel := operationDeadline(ctx, c)
+	defer cancel()
 	session, err := overridehook.OpenFullRatios(ctx, c)
 	if err != nil {
 		_, _ = overridehook.Settle(c, token, nil)
@@ -176,8 +176,6 @@ func (change *FullRatiosHandle) Restore(ctx context.Context) error {
 		return errors.New("full ratios override is unavailable")
 	}
 	c := change.owner
-	ctx, cancel := fullRatiosDeadline(ctx, c)
-	defer cancel()
 	return overridehook.WithTopology(ctx, c, func() error { return change.restoreLocked(ctx, c) })
 }
 
@@ -185,6 +183,8 @@ func (change *FullRatiosHandle) restoreLocked(ctx context.Context, c *ceph.Conta
 	if change.state.restored {
 		return nil
 	}
+	ctx, cancel := operationDeadline(ctx, c)
+	defer cancel()
 	if err := change.state.command.Wait(ctx); err != nil {
 		return err
 	}
@@ -204,13 +204,6 @@ func (change *FullRatiosHandle) restoreLocked(ctx context.Context, c *ceph.Conta
 	change.state.restored = true
 	overridehook.Release(c, change.state.token)
 	return nil
-}
-
-func fullRatiosDeadline(ctx context.Context, c *ceph.Container) (context.Context, context.CancelFunc) {
-	if timeout := overridehook.StartupTimeout(c); timeout > 0 {
-		return context.WithTimeout(ctx, timeout)
-	}
-	return context.WithCancel(ctx)
 }
 
 func normalizeFullRatios(ratios ceph.FullRatios) (ceph.FullRatios, error) {

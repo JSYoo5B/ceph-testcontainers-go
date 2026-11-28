@@ -429,7 +429,7 @@ func TestManagerDebugTargetIncarnation(t *testing.T) {
 	}
 	gen, err := target.generation(t.Context())
 	want := "mgr-container@start-1/gid=4100/asok=1234@2026-11-05_10:42:01.123456789_+0000"
-	if err != nil || gen.identity != want || !gen.owned || !gen.running {
+	if err != nil || gen.identity != want || gen.gid != 4100 || !gen.owned || !gen.running {
 		t.Fatalf("generation %+v %v calls %v", gen, err, control.Calls)
 	}
 	control.Output["mgr dump --format json"] = `{"active_name":"b","active_gid":4300}`
@@ -438,7 +438,7 @@ func TestManagerDebugTargetIncarnation(t *testing.T) {
 	}
 	calls := len(control.Calls)
 	mgr.state.Paused = true
-	if gen, err := target.generation(t.Context()); err != nil || gen.identity != "mgr-container@start-1" || !gen.paused || len(control.Calls) != calls {
+	if gen, err := target.generation(t.Context()); err != nil || gen.identity != "mgr-container@start-1" || gen.gid != 0 || !gen.paused || len(control.Calls) != calls {
 		t.Fatalf("paused generation %+v %v", gen, err)
 	}
 }
@@ -466,7 +466,7 @@ func TestMDSDebugTargetRunsInItsContainer(t *testing.T) {
 		t.Fatal(err)
 	}
 	gen, err := target.generation(t.Context())
-	if err != nil || gen.identity != "mds-container@start-1/gid=4321" {
+	if err != nil || gen.identity != "mds-container@start-1/gid=4321" || gen.gid != 4321 {
 		t.Fatalf("generation %+v %v", gen, err)
 	}
 	controlExecs, mdsExecs := control.execCount(), mds.execCount()

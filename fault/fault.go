@@ -10,6 +10,14 @@
 // The error categories are those of package ceph; the sentinels of this
 // package match them with errors.Is.
 //
+// A nil cluster is refused by every cluster-bound operation before it takes
+// any lock, with an error matching ceph.ErrInvalidRequest. A refusal returns a
+// nil handle, so every handle type follows one nil-receiver rule: its
+// restoring method (Restore, PauseLease.Resume) returns nil, since there is
+// nothing to restore, and its observation methods (Status) return an error
+// matching ceph.ErrInvalidRequest. A deferred restore of a refused operation
+// is therefore safe.
+//
 // Policy and admission controls that only change how Ceph admits work, such
 // as full ratios, OSD flags and the session blocklist, live in package
 // override even when a test uses them to provoke failures. Object read-error
@@ -22,7 +30,24 @@ import (
 	"context"
 	"sync"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/nshelper"
 )
 
 func lockMutex(ctx context.Context, mu *sync.Mutex) error { return clusterutil.LockMutex(ctx, mu) }
+
+// requireCluster refuses a nil cluster for the operation op, before any
+// lock: the cluster's mutex cannot be taken on a nil cluster.
+func requireCluster(c *ceph.Container, op string) error {
+	if c == nil {
+		return nshelper.InvalidRequest("%s requires a cluster", op)
+	}
+	return nil
+}
+
+// unavailable is the refusal of an observation method called on a nil
+// handle of kind.
+func unavailable(kind string) error {
+	return nshelper.InvalidRequest("the %s is unavailable: the handle is nil", kind)
+}

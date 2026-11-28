@@ -48,7 +48,7 @@ func TestTerminateLeavesTrackedOverrideKinds(t *testing.T) {
 	for _, tc := range overrideKinds {
 		hold(t, c, tc.kind, "key", "", &log)
 	}
-	hold(t, c, faultNetworkDelay, "delay", "", &log)
+	hold(t, c, faultNetworkProfile, "delay", "", &log)
 	if err := c.Terminate(t.Context()); err != nil {
 		t.Fatal(err)
 	}

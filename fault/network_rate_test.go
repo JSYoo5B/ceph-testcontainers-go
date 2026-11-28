@@ -77,15 +77,15 @@ func TestNetworkRateValidation(t *testing.T) {
 			if lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, request); err == nil || lease != nil {
 				t.Fatalf("accepted %+v", request)
 			}
-			if len(netem.helpers) != 0 || len(cluster.faultsOf(faulthook.NetworkDelay)) != 0 {
-				t.Fatalf("%d helpers started, reservations %v for an invalid rate", len(netem.helpers), cluster.faultsOf(faulthook.NetworkDelay))
+			if len(netem.helpers) != 0 || len(cluster.faultsOf(faulthook.NetworkProfile)) != 0 {
+				t.Fatalf("%d helpers started, reservations %v for an invalid rate", len(netem.helpers), cluster.faultsOf(faulthook.NetworkProfile))
 			}
 		})
 	}
 	for _, rate := range []NetworkRate{MinNetworkRate, MaxNetworkRate} {
 		request := testRate
 		request.Rate = rate
-		if err := validateNetworkDelay(request); err != nil {
+		if err := validateNetworkProfile(request); err != nil {
 			t.Fatalf("rate %v: %v", rate, err)
 		}
 	}
@@ -198,8 +198,8 @@ func TestNetworkRatePreflight(t *testing.T) {
 						t.Fatalf("ran %q on the target", command)
 					}
 				}
-				if netem.root("osd-0") != nil || netem.liveHelpers() != 0 || len(cluster.faultsOf(faulthook.NetworkDelay)) != 0 {
-					t.Fatalf("root %+v, %d helpers, reservations %v", netem.root("osd-0"), netem.liveHelpers(), cluster.faultsOf(faulthook.NetworkDelay))
+				if netem.root("osd-0") != nil || netem.liveHelpers() != 0 || len(cluster.faultsOf(faulthook.NetworkProfile)) != 0 {
+					t.Fatalf("root %+v, %d helpers, reservations %v", netem.root("osd-0"), netem.liveHelpers(), cluster.faultsOf(faulthook.NetworkProfile))
 				}
 			})
 		}
@@ -268,7 +268,7 @@ func TestNetworkRateRestoreKeepsForeignState(t *testing.T) {
 				t.Fatal(err)
 			}
 			link := netem.eth0("osd-0")
-			foreign := fakeExtraQdisc{kind: "tbf", handle: "9999:", parent: lease.handle + "1"}
+			foreign := fakeExtraQdisc{kind: "tbf", handle: "9999:", parent: lease.shape.Handle + "1"}
 			netem.mu.Lock()
 			link.extra = append(link.extra, foreign)
 			netem.mu.Unlock()
@@ -332,7 +332,7 @@ func TestNetworkRateUncertainApply(t *testing.T) {
 		t.Fatalf("Restore ran %v before the earlier tc was confirmed stopped: %v", netem.commands[commands:], err)
 	}
 	// The late command lands; once confirmed, Restore removes it.
-	netem.setRoot("osd-0", &fakeQdisc{kind: "netem", handle: lease.handle, rate: uint64(testRate.Rate) / 8, limit: DefaultNetworkQueueLimit})
+	netem.setRoot("osd-0", &fakeQdisc{kind: "netem", handle: lease.shape.Handle, rate: uint64(testRate.Rate) / 8, limit: DefaultNetworkQueueLimit})
 	netem.cancelErr = nil
 	if err := lease.Restore(t.Context()); err != nil {
 		t.Fatal(err)

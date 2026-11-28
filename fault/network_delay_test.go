@@ -17,6 +17,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/faulthook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/netem"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/nshelper"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/containerd/errdefs"
@@ -655,7 +656,7 @@ func (ns *fakeNamespace) link(name string) *fakeLink {
 	return nil
 }
 
-// script answers netemScript from the model; the caller holds n.mu.
+// script answers netem.Script from the model; the caller holds n.mu.
 func (n *fakeNetem) script(helper *fakeNetemHelper, args []string) (supervised.Report, error) {
 	out := map[string]any{"namespace": fmt.Sprintf("net:[%d]", helper.namespace.id), "net_admin": helper.netAdmin}
 	if args[0] == "preflight" && n.slowPreflight {
@@ -700,7 +701,7 @@ func (n *fakeNetem) script(helper *fakeNetemHelper, args []string) (supervised.R
 						argv = append(argv, "delay", "0us", "0us", "0%")
 					}
 					for _, name := range faults {
-						fault := preflightFault[name]
+						fault := netem.PreflightFault[name]
 						argv = append(argv, name, fmt.Sprintf("%v%%", fault.Percent), fmt.Sprintf("%v%%", fault.Correlation))
 					}
 					if n.unparsedFault(argv) {
@@ -725,7 +726,7 @@ func (n *fakeNetem) script(helper *fakeNetemHelper, args []string) (supervised.R
 					if n.noU32 {
 						out["u32"] = []any{2, "Error: TC classifier not found.\nWe have an error talking to the kernel"}
 					} else {
-						// The script's keys, as netemScript's preflight passes them.
+						// The script's keys, as netem.Script's preflight passes them.
 						keys := []string{"match", "ip", "dst", "127.0.0.2/32"}
 						sport, setup := slices.Contains(args[1:], "sport"), slices.Contains(args[1:], "setup")
 						if sport || setup {
@@ -821,7 +822,7 @@ func TestNetworkDelayAppliesAndRestores(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := netem.root("osd-0")
-	if root == nil || root.kind != "netem" || root.delay != testDelay.Delay || root.jitter != testDelay.Jitter || root.handle != lease.handle {
+	if root == nil || root.kind != "netem" || root.delay != testDelay.Delay || root.jitter != testDelay.Jitter || root.handle != lease.shape.Handle {
 		t.Fatalf("root qdisc %+v", root)
 	}
 	if lease.Interface != "eth0" || lease.InterfaceIndex == 0 || lease.Namespace == "" || lease.HelperImageID != "sha256:helper" || lease.SandboxID != "1" {
@@ -892,8 +893,8 @@ func TestNetworkDelayRefusesUnsupportedHelpers(t *testing.T) {
 				t.Fatal("the refusal left a change or a helper")
 			}
 			// The endpoint is free again.
-			if len(cluster.faultsOf(faulthook.NetworkDelay)) != 0 {
-				t.Fatalf("reservations left: %v", cluster.faultsOf(faulthook.NetworkDelay))
+			if len(cluster.faultsOf(faulthook.NetworkProfile)) != 0 {
+				t.Fatalf("reservations left: %v", cluster.faultsOf(faulthook.NetworkProfile))
 			}
 		})
 	}
@@ -1027,7 +1028,7 @@ func TestNetworkDelayUnconfirmedApplyIsFenced(t *testing.T) {
 		t.Fatalf("Restore ran %v before the earlier tc was confirmed stopped: %v", netem.commands[commands:], err)
 	}
 	// The late command lands; once confirmed, Restore removes it.
-	netem.setRoot("osd-0", &fakeQdisc{kind: "netem", handle: lease.handle, delay: testDelay.Delay})
+	netem.setRoot("osd-0", &fakeQdisc{kind: "netem", handle: lease.shape.Handle, delay: testDelay.Delay})
 	netem.cancelErr = nil
 	if err := lease.Restore(t.Context()); err != nil {
 		t.Fatal(err)
@@ -1151,7 +1152,7 @@ func TestNetworkDelayTerminate(t *testing.T) {
 	if err := cluster.Terminate(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if netem.root("osd-0") != nil || netem.liveHelpers() != 0 || len(cluster.faultsOf(faulthook.NetworkDelay)) != 0 {
+	if netem.root("osd-0") != nil || netem.liveHelpers() != 0 || len(cluster.faultsOf(faulthook.NetworkProfile)) != 0 {
 		t.Fatal("Terminate left a delay")
 	}
 
@@ -1381,8 +1382,8 @@ func TestNetworkDelayRefusesMalformedPreflightReports(t *testing.T) {
 					t.Fatalf("ran %q on the target", command)
 				}
 			}
-			if netem.liveHelpers() != 0 || netem.root("osd-0") != nil || len(cluster.faultsOf(faulthook.NetworkDelay)) != 0 {
-				t.Fatalf("%d helpers, root %+v, reservations %v", netem.liveHelpers(), netem.root("osd-0"), cluster.faultsOf(faulthook.NetworkDelay))
+			if netem.liveHelpers() != 0 || netem.root("osd-0") != nil || len(cluster.faultsOf(faulthook.NetworkProfile)) != 0 {
+				t.Fatalf("%d helpers, root %+v, reservations %v", netem.liveHelpers(), netem.root("osd-0"), cluster.faultsOf(faulthook.NetworkProfile))
 			}
 		})
 	}
@@ -1409,7 +1410,7 @@ func TestNetworkProfileRestoreUsesOriginalEndpointIdentity(t *testing.T) {
 			if err := cluster.Terminate(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			if netem.root("osd-0") != nil || netem.liveHelpers() != 0 || len(cluster.faultsOf(faulthook.NetworkDelay)) != 0 {
+			if netem.root("osd-0") != nil || netem.liveHelpers() != 0 || len(cluster.faultsOf(faulthook.NetworkProfile)) != 0 {
 				t.Fatal("cluster teardown left the original profile or helper")
 			}
 		})
