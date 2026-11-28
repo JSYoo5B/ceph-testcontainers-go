@@ -300,10 +300,20 @@ func (g *Core) UserCommand(ctx context.Context, u *User, args ...string) ([]byte
 // identity it created: the same ID, the fixture-created keys as CheckKeys
 // requires them, and the original type and account association.
 func (g *Core) OwnedUser(ctx context.Context, u *User) (*NativeUser, error) {
+	return g.ownedUser(ctx, u, func() ([]byte, error) { return g.UserCommand(ctx, u, "user", "info", "--uid", u.ID) })
+}
+
+// OwnedUserIn is OwnedUser with u read in native scope instead of the user's
+// own, for an operation on a resource of that scope, such as a placement.
+func (g *Core) OwnedUserIn(ctx context.Context, u *User, scope NativeScope) (*NativeUser, error) {
+	return g.ownedUser(ctx, u, func() ([]byte, error) { return g.Command(ctx, scope, "user", "info", "--uid", u.ID) })
+}
+
+func (g *Core) ownedUser(ctx context.Context, u *User, read func() ([]byte, error)) (*NativeUser, error) {
 	if !u.Active() {
 		return nil, servicehook.Invalid(errors.New("RGW user must be an active identity created in this cluster"))
 	}
-	native, err := g.readUser(ctx, u)
+	native, err := u.decodeOwn(read())
 	if err != nil {
 		return nil, err
 	}
@@ -319,7 +329,12 @@ func (g *Core) OwnedUser(ctx context.Context, u *User) (*NativeUser, error) {
 // readUser reads the native information of u through g and refuses another
 // user's. It checks no key.
 func (g *Core) readUser(ctx context.Context, u *User) (*NativeUser, error) {
-	data, err := g.UserCommand(ctx, u, "user", "info", "--uid", u.ID)
+	return u.decodeOwn(g.UserCommand(ctx, u, "user", "info", "--uid", u.ID))
+}
+
+// decodeOwn decodes the user info data that a read returned with err and
+// refuses another user's.
+func (u *User) decodeOwn(data []byte, err error) (*NativeUser, error) {
 	if err != nil {
 		return nil, err
 	}
@@ -328,7 +343,7 @@ func (g *Core) readUser(ctx context.Context, u *User) (*NativeUser, error) {
 		return nil, err
 	}
 	if native.Info.ID != u.ID {
-		return nil, servicehook.Invalid(errors.New("RGW user has different credentials; refusing owned-user operation"))
+		return nil, errOtherCredentials
 	}
 	return native, nil
 }

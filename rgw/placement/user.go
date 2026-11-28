@@ -132,7 +132,7 @@ func setUserDefault(ctx context.Context, p *Placement, user *gwbase.User, config
 	if !slices.ContainsFunc(p.config.StorageClasses, func(class StorageClass) bool { return class.Name == config.StorageClass }) {
 		return errors.New("RGW user storage class is absent from the owned placement")
 	}
-	before, err := ownedUser(ctx, g, user, p.scope)
+	before, err := g.OwnedUserIn(ctx, user, p.scope)
 	if err != nil {
 		return err
 	}
@@ -145,7 +145,7 @@ func setUserDefault(ctx context.Context, p *Placement, user *gwbase.User, config
 	if _, err := g.Command(ctx, p.scope, args...); err != nil {
 		return err
 	}
-	after, err := ownedUser(ctx, g, user, p.scope)
+	after, err := g.OwnedUserIn(ctx, user, p.scope)
 	if err != nil {
 		return err
 	}
@@ -163,26 +163,6 @@ func setUserDefault(ctx context.Context, p *Placement, user *gwbase.User, config
 		return errors.New("RGW unrelated user policy changed during placement update")
 	}
 	return nil
-}
-
-// ownedUser reads user in the placement's exact native scope and confirms its
-// fixture-created keys and creation identity.
-func ownedUser(ctx context.Context, g *gwbase.Core, user *gwbase.User, scope gwbase.NativeScope) (*gwbase.NativeUser, error) {
-	data, err := g.Command(ctx, scope, "user", "info", "--uid", user.ID)
-	if err != nil {
-		return nil, err
-	}
-	native, err := gwbase.DecodeUser(data)
-	if err != nil {
-		return nil, err
-	}
-	if native.Info.ID != user.ID || user.CheckKeys(native.Keys) != nil {
-		return nil, servicehook.Invalid(errors.New("RGW user has different credentials in the actual native scope; refusing placement update"))
-	}
-	if err := g.ValidateCreationIdentity(ctx, user, native); err != nil {
-		return nil, err
-	}
-	return native, nil
 }
 
 func unrelatedUserPolicy(document map[string]any) map[string]any {
