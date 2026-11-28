@@ -14,12 +14,12 @@ import (
 // NET_RAW, so only this test hook can show how the package classifies an
 // engine that withholds it from tcpdump.
 func StartWithoutNetRaw(ctx context.Context, target testcontainers.Container, req Request) (*Session, error) {
-	return start(ctx, withoutNetRaw{}, target, req)
+	return start(ctx, withoutNetRaw{&dockerBackend{}}, target, req)
 }
 
 // withoutNetRaw is the Docker backend whose capture helper has no
 // capability at all; its probe still runs through dockerBackend.run.
-type withoutNetRaw struct{ dockerBackend }
+type withoutNetRaw struct{ *dockerBackend }
 
 func (withoutNetRaw) run(ctx context.Context, image, networkMode string, argv []string) (string, error) {
 	options := append(helperOptions(networkMode, argv), testcontainers.WithHostConfigModifier(func(host *container.HostConfig) {
