@@ -10,6 +10,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
 // InterruptZoneLink disconnects a gateway from the private multisite HTTP
@@ -34,7 +35,7 @@ func (f *Fixture) InterruptZoneLink(ctx context.Context, zoneName string) (*faul
 			return multicluster.InterruptOwnedPeerLink(ctx, &f.owned, zone.Gateway, f.httpNetwork.Name)
 		}
 	}
-	return nil, multisiteInvalid(fmt.Errorf("RGW zone %s is not owned", zoneName))
+	return nil, servicehook.Invalid(fmt.Errorf("RGW zone %s is not owned", zoneName))
 }
 
 // ApplyZoneLinkProfile applies netem shaping, below RGW, to packets that the
@@ -57,13 +58,13 @@ func (f *Fixture) ApplyZoneLinkProfile(ctx context.Context, zoneName, peerZone s
 		return nil, errors.New("RGW multisite is unavailable")
 	}
 	if delay.Direction != fault.Outbound {
-		return nil, multisiteInvalid(errors.New("RGW zone link profiles shape only the named zone's outbound traffic; Direction must be Outbound"))
+		return nil, servicehook.Invalid(errors.New("RGW zone link profiles shape only the named zone's outbound traffic; Direction must be Outbound"))
 	}
 	if delay.Plane != "" || delay.Peer.IsValid() || delay.PeerPort != 0 || delay.Peers != nil {
-		return nil, multisiteInvalid(errors.New("a zone link delay selects its own network and peer; leave Plane, Peer, PeerPort and Peers empty"))
+		return nil, servicehook.Invalid(errors.New("a zone link delay selects its own network and peer; leave Plane, Peer, PeerPort and Peers empty"))
 	}
 	if zoneName == peerZone {
-		return nil, multisiteInvalid(fmt.Errorf("RGW zone %s has no link to itself", zoneName))
+		return nil, servicehook.Invalid(fmt.Errorf("RGW zone %s has no link to itself", zoneName))
 	}
 	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
 		return nil, err
@@ -83,7 +84,7 @@ func (f *Fixture) ApplyZoneLinkProfile(ctx context.Context, zoneName, peerZone s
 		}
 	}
 	if zone == nil || peer == nil {
-		return nil, multisiteInvalid(fmt.Errorf("RGW zones %s and %s are not both owned with a gateway", zoneName, peerZone))
+		return nil, servicehook.Invalid(fmt.Errorf("RGW zones %s and %s are not both owned with a gateway", zoneName, peerZone))
 	}
 	endpoint, err := url.Parse(peer.PeerEndpoint)
 	if err != nil || endpoint.Port() == "" {

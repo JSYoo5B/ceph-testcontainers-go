@@ -9,6 +9,8 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
 // The functions in this file are the sync policy document component: they
@@ -214,7 +216,7 @@ func syncGroupWithPipePrefix(group map[string]any, id, prefix string) (map[strin
 	want := syncJSONClone(group)
 	pipe := syncNativePipe(want, id)
 	if pipe == nil {
-		return nil, multisiteInvalid(errors.New("RGW sync pipe is absent from owned group"))
+		return nil, servicehook.Invalid(errors.New("RGW sync pipe is absent from owned group"))
 	}
 	filter := nativeDoc(pipe).object("params").object("source").object("filter")
 	if filter == nil {

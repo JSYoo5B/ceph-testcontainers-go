@@ -5,13 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -160,7 +162,7 @@ type syncWaitZonePin struct {
 
 func (f *Fixture) checkSyncWaitPins(pins map[string]syncWaitZonePin) error {
 	if f.closed {
-		return multisiteInvalid(errors.New("RGW multisite is terminated"))
+		return servicehook.Invalid(errors.New("RGW multisite is terminated"))
 	}
 	for name, pin := range pins {
 		attached := false
@@ -179,7 +181,7 @@ func (f *Fixture) checkSyncWaitPins(pins map[string]syncWaitZonePin) error {
 
 func (f *Fixture) syncStatusZones(name string, sources []string) (*rgwZoneState, error) {
 	if f.closed {
-		return nil, multisiteInvalid(errors.New("RGW multisite is terminated"))
+		return nil, servicehook.Invalid(errors.New("RGW multisite is terminated"))
 	}
 	var target *rgwZoneState
 	states := f.zoneStates()
@@ -280,7 +282,7 @@ func (f *Fixture) syncStatus(ctx context.Context, zoneName string, metadataOnly 
 // one zone's period alone cannot establish the current readiness baseline.
 func (f *Fixture) syncObservationMaster(ctx context.Context) (*rgwZoneState, map[string]any, error) {
 	if f.closed {
-		return nil, nil, multisiteInvalid(errors.New("RGW multisite is terminated"))
+		return nil, nil, servicehook.Invalid(errors.New("RGW multisite is terminated"))
 	}
 	states := f.zoneStates()
 	if len(states) == 0 || states[0].client == nil {

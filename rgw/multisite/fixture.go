@@ -782,7 +782,7 @@ func (f *Fixture) pullPeriod(ctx context.Context, client testcontainers.Containe
 		return err
 	}
 	if f.closed {
-		return multisiteInvalid(errors.New("RGW multisite fixture is terminated"))
+		return servicehook.Invalid(errors.New("RGW multisite fixture is terminated"))
 	}
 	if f.realm.systemAccess == "" || f.realm.systemSecret == "" || url == "" {
 		return fmt.Errorf("RGW multisite system credentials are unavailable")

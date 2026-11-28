@@ -182,10 +182,10 @@ func (f *Fixture) CreateSyncGroup(ctx context.Context, scope SyncPolicyScope, co
 		config.ID = "tc-sync-" + uuid.NewString()
 	}
 	if !validRGWSyncID(config.ID) || !validRGWSyncStatus(config.Status) || (scope.Tenant != "" && scope.Bucket == "") || (scope.Bucket != "" && !validRGWSyncID(scope.Bucket)) || (scope.Tenant != "" && !validRGWSyncID(scope.Tenant)) {
-		return nil, multisiteInvalid(errors.New("invalid RGW sync group, status or bucket scope"))
+		return nil, servicehook.Invalid(errors.New("invalid RGW sync group, status or bucket scope"))
 	}
 	if f == nil {
-		return nil, multisiteInvalid(errors.New("RGW multisite fixture is required"))
+		return nil, servicehook.Invalid(errors.New("RGW multisite fixture is required"))
 	}
 	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
 		return nil, err
@@ -202,7 +202,7 @@ func (f *Fixture) CreateSyncGroup(ctx context.Context, scope SyncPolicyScope, co
 	}
 	gid := f.topology.groupIDs[scope.Zonegroup]
 	if gid == "" {
-		return nil, multisiteInvalid(errors.New("RGW sync policy requires an attached owned zonegroup"))
+		return nil, servicehook.Invalid(errors.New("RGW sync policy requires an attached owned zonegroup"))
 	}
 	g := &SyncGroup{owner: f, scope: scope, realmID: f.RealmID, groupID: gid, state: &rgwSyncGroupState{id: config.ID, period: period}}
 	if scope.Bucket != "" {
@@ -216,7 +216,7 @@ func (f *Fixture) CreateSyncGroup(ctx context.Context, scope SyncPolicyScope, co
 		return nil, err
 	}
 	if syncNativeGroup(before, config.ID) != nil {
-		return nil, multisiteInvalid(errors.New("RGW sync group ID already exists; refusing adoption"))
+		return nil, servicehook.Invalid(errors.New("RGW sync group ID already exists; refusing adoption"))
 	}
 	if _, err := g.command(ctx, master, "sync", "group", "create", "--group-id", config.ID, "--status", string(config.Status)); err != nil {
 		return g, err
@@ -248,7 +248,7 @@ func (g *SyncGroup) CreateFlow(ctx context.Context, config SyncFlowConfig) error
 			return nil, nil, err
 		}
 		if syncFlowPresent(before, key, flow) {
-			return nil, nil, multisiteInvalid(errors.New("RGW sync flow already exists"))
+			return nil, nil, servicehook.Invalid(errors.New("RGW sync flow already exists"))
 		}
 		return append([]string{"sync", "group", "flow", "create", "--group-id", g.ID()}, args...), func(after map[string]any) error {
 			if !syncFlowAdded(before, after, key, flow) {
@@ -275,7 +275,7 @@ func (g *SyncGroup) RemoveFlow(ctx context.Context, config SyncFlowConfig) error
 			return nil, nil, err
 		}
 		if !syncFlowPresent(before, key, flow) {
-			return nil, nil, multisiteInvalid(errors.New("RGW sync flow is absent from the owned group"))
+			return nil, nil, servicehook.Invalid(errors.New("RGW sync flow is absent from the owned group"))
 		}
 		if key == "symmetrical" {
 			args = []string{"--flow-type", "symmetrical", "--flow-id", config.ID}
@@ -302,7 +302,7 @@ func (g *SyncGroup) CreatePipe(ctx context.Context, config SyncPipeConfig) error
 	}
 	return g.change(ctx, func(opCtx context.Context, master *rgwZoneState, before map[string]any) ([]string, func(map[string]any) error, error) {
 		if !validRGWSyncID(config.ID) || strings.IndexFunc(config.Prefix, unicode.IsControl) != -1 {
-			return nil, nil, multisiteInvalid(errors.New("invalid RGW sync pipe ID or prefix"))
+			return nil, nil, servicehook.Invalid(errors.New("invalid RGW sync pipe ID or prefix"))
 		}
 		source, err := g.zoneIDs(config.SourceZones, true)
 		if err != nil {
@@ -313,7 +313,7 @@ func (g *SyncGroup) CreatePipe(ctx context.Context, config SyncPipeConfig) error
 			return nil, nil, err
 		}
 		if syncNativePipe(before, config.ID) != nil {
-			return nil, nil, multisiteInvalid(errors.New("RGW sync pipe ID already exists"))
+			return nil, nil, servicehook.Invalid(errors.New("RGW sync pipe ID already exists"))
 		}
 		args, expected, err := g.pipeConfig(opCtx, master, config, source, dest)
 		if err != nil {
@@ -342,7 +342,7 @@ func (g *SyncGroup) SetPipePrefix(ctx context.Context, id, prefix string) error 
 		return err
 	}
 	if !validRGWSyncID(id) || strings.IndexFunc(prefix, unicode.IsControl) != -1 {
-		return multisiteInvalid(errors.New("invalid RGW sync pipe ID or prefix"))
+		return servicehook.Invalid(errors.New("invalid RGW sync pipe ID or prefix"))
 	}
 	return g.change(ctx, func(opCtx context.Context, master *rgwZoneState, before map[string]any) ([]string, func(map[string]any) error, error) {
 		want, err := syncGroupWithPipePrefix(before, id, prefix)
@@ -381,7 +381,7 @@ func (g *SyncGroup) RemovePipe(ctx context.Context, id string) error {
 	}
 	return g.change(ctx, func(opCtx context.Context, master *rgwZoneState, before map[string]any) ([]string, func(map[string]any) error, error) {
 		if syncNativePipe(before, id) == nil {
-			return nil, nil, multisiteInvalid(errors.New("RGW sync pipe is absent from owned group"))
+			return nil, nil, servicehook.Invalid(errors.New("RGW sync pipe is absent from owned group"))
 		}
 		want := syncGroupWithoutPipe(before, id)
 		return []string{"sync", "group", "pipe", "remove", "--group-id", g.ID(), "--pipe-id", id}, func(after map[string]any) error {
@@ -458,7 +458,7 @@ func (g *SyncGroup) Remove(ctx context.Context) error {
 		return nil
 	}
 	if !reflect.DeepEqual(actual, g.state.group) {
-		return multisiteInvalid(errors.New("RGW owned sync group was externally changed; refusing removal"))
+		return servicehook.Invalid(errors.New("RGW owned sync group was externally changed; refusing removal"))
 	}
 	if _, err := g.command(ctx, master, "sync", "group", "remove", "--group-id", g.ID()); err != nil {
 		return err
@@ -477,10 +477,10 @@ func (g *SyncGroup) Remove(ctx context.Context) error {
 
 func (f *Fixture) validateSyncGroup(g *SyncGroup, allowRemoved bool) error {
 	if f.closed {
-		return multisiteInvalid(errors.New("RGW multisite is terminated"))
+		return servicehook.Invalid(errors.New("RGW multisite is terminated"))
 	}
 	if g == nil || g.owner != f || g.state == nil || !g.state.confirmed || (!allowRemoved && g.state.removed) {
-		return multisiteInvalid(errors.New("RGW sync group must be active and confirmed as created by this fixture"))
+		return servicehook.Invalid(errors.New("RGW sync group must be active and confirmed as created by this fixture"))
 	}
 	if g.realmID != f.RealmID || g.groupID != f.topology.groupIDs[g.scope.Zonegroup] {
 		return errors.New("RGW sync group realm/zonegroup identity changed")
@@ -493,7 +493,7 @@ type rgwSyncMutation func(context.Context, *rgwZoneState, map[string]any) ([]str
 func (g *SyncGroup) change(ctx context.Context, change rgwSyncMutation) error {
 	f := g.owner
 	if f == nil {
-		return multisiteInvalid(errors.New("RGW multisite fixture is required"))
+		return servicehook.Invalid(errors.New("RGW multisite fixture is required"))
 	}
 	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
 		return err
@@ -608,7 +608,7 @@ func (f *Fixture) syncPolicyMaster(ctx context.Context) (*rgwZoneState, map[stri
 		return nil, nil, err
 	}
 	if f.closed {
-		return nil, nil, multisiteInvalid(errors.New("RGW multisite is terminated"))
+		return nil, nil, servicehook.Invalid(errors.New("RGW multisite is terminated"))
 	}
 	states := f.zoneStates()
 	if len(states) == 0 || states[0].client == nil {
@@ -682,7 +682,7 @@ func syncNativeExecMode(ctx context.Context, ctr testcontainers.Container, statu
 		return nil, err
 	}
 	if ctr == nil {
-		return nil, multisiteInvalid(errors.New("RGW native CLI container is unavailable"))
+		return nil, servicehook.Invalid(errors.New("RGW native CLI container is unavailable"))
 	}
 	report, limit, err := gwbase.RunAdmin(ctx, nil, ctr, 0, argv)
 	if err != nil {
@@ -850,7 +850,7 @@ func decodeBucketInstance(data []byte, key string, g *SyncGroup) (*rgwBucketInst
 func (g *SyncGroup) zoneIDs(names []string, wildcard bool) ([]string, error) {
 	f := g.owner
 	if len(names) == 0 {
-		return nil, multisiteInvalid(errors.New("RGW sync zone list must not be empty"))
+		return nil, servicehook.Invalid(errors.New("RGW sync zone list must not be empty"))
 	}
 	if wildcard && len(names) == 1 && names[0] == "*" {
 		return []string{"*"}, nil
@@ -864,7 +864,7 @@ func (g *SyncGroup) zoneIDs(names []string, wildcard bool) ([]string, error) {
 			}
 		}
 		if found == nil || found.ID == "" || slices.Contains(ids, found.ID) {
-			return nil, multisiteInvalid(errors.New("RGW sync zones must be unique attached owned zones in this zonegroup"))
+			return nil, servicehook.Invalid(errors.New("RGW sync zones must be unique attached owned zones in this zonegroup"))
 		}
 		ids = append(ids, found.ID)
 	}
@@ -876,7 +876,7 @@ func (g *SyncGroup) flowConfig(c SyncFlowConfig) ([]string, map[string]any, stri
 	f := g.owner
 	if len(c.Zones) > 0 {
 		if !validRGWSyncID(c.ID) || c.SourceZone != "" || c.DestinationZone != "" || len(c.Zones) < 2 {
-			return nil, nil, "", multisiteInvalid(errors.New("symmetrical RGW flow requires its ID and at least two zones"))
+			return nil, nil, "", servicehook.Invalid(errors.New("symmetrical RGW flow requires its ID and at least two zones"))
 		}
 		ids, err := g.zoneIDs(c.Zones, false)
 		if err != nil {
@@ -885,7 +885,7 @@ func (g *SyncGroup) flowConfig(c SyncFlowConfig) ([]string, map[string]any, stri
 		return []string{"--flow-type", "symmetrical", "--flow-id", c.ID, "--zone-ids", strings.Join(ids, ",")}, map[string]any{"id": c.ID, "zones": syncStrings(ids)}, "symmetrical", nil
 	}
 	if c.ID != "" || c.SourceZone == "" || c.SourceZone == c.DestinationZone {
-		return nil, nil, "", multisiteInvalid(errors.New("directional RGW flow requires distinct owned source/destination zones and no ID"))
+		return nil, nil, "", servicehook.Invalid(errors.New("directional RGW flow requires distinct owned source/destination zones and no ID"))
 	}
 	if _, err := g.zoneIDs([]string{c.SourceZone, c.DestinationZone}, false); err != nil {
 		return nil, nil, "", err
@@ -905,7 +905,7 @@ func (g *SyncGroup) flowConfig(c SyncFlowConfig) ([]string, map[string]any, stri
 // fixture returns the fixture that created g, refusing a nil or unowned handle.
 func (g *SyncGroup) fixture() (*Fixture, error) {
 	if g == nil || g.owner == nil {
-		return nil, multisiteInvalid(errors.New("RGW sync group must be active and confirmed as created by this fixture"))
+		return nil, servicehook.Invalid(errors.New("RGW sync group must be active and confirmed as created by this fixture"))
 	}
 	return g.owner, nil
 }

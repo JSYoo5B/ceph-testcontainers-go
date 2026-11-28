@@ -2,12 +2,13 @@ package multisite
 
 import (
 	"errors"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
-	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
-	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/placement"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/placement"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 )

@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"reflect"
 	"slices"
 	"sort"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 )
 
 // BucketSyncPolicyStatus describes the captured master's configuration and

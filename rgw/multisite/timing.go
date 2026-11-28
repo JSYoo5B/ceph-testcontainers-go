@@ -67,7 +67,7 @@ func (p TimingProfile) validate() error {
 		return nil
 	}
 	if p.SyncLeasePeriod < defaultSyncLease || p.SyncLeasePeriod > maxSyncLease || p.SyncLeasePeriod%time.Second != 0 {
-		return multisiteInvalid(fmt.Errorf("RGW sync lease period must be a whole number of seconds from %d to %d (got %s)",
+		return servicehook.Invalid(fmt.Errorf("RGW sync lease period must be a whole number of seconds from %d to %d (got %s)",
 			defaultSyncLease/time.Second, maxSyncLease/time.Second, p.SyncLeasePeriod))
 	}
 	return nil

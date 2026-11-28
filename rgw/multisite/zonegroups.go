@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -136,7 +137,7 @@ func (f *Fixture) RemoveZone(ctx context.Context, name string) error {
 		return err
 	}
 	if f.closed {
-		return multisiteInvalid(errors.New("RGW multisite is terminated"))
+		return servicehook.Invalid(errors.New("RGW multisite is terminated"))
 	}
 	for pendingName, pending := range f.topology.removed {
 		if pendingName != name && (!pending.converged || !pending.gatewayRemoved || !pending.clientRemoved) {
