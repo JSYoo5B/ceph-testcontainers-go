@@ -11,11 +11,16 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
 	"strings"
+	"sync"
+	"testing"
+	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -385,4 +390,163 @@ func (f *StateFake) FailNext(command string, times int) {
 
 func (f *StateFake) String() string {
 	return fmt.Sprintf("pools=%v rules=%v profiles=%v filesystems=%v allow=%v", f.Pools, f.Rules, f.Profiles, f.Filesystems, f.AllowDelete)
+}
+
+// Supervised reports a supervisor or canceler invocation of package
+// supervised, which Supervise answers.
+//
+//testdouble:shared-double
+func Supervised(args []string) bool {
+	return len(args) > 2 && args[0] == "python3" && args[1] == "-c" && (args[2] == supervised.Script || args[2] == supervised.CancelScript)
+}
+
+// Supervise answers a supervised invocation for a fake whose plain Exec
+// answers the native command itself: it runs the supervised command, the
+// words after the supervisor and its three limits, through plain and frames
+// the reply as the supervisor's envelope, and it confirms a canceler, since
+// the fake's command never outlives its reply. Other args go to plain.
+//
+//testdouble:shared-double
+func Supervise(ctx context.Context, args []string, opts []tcexec.ProcessOption, plain func(context.Context, []string, ...tcexec.ProcessOption) (int, io.Reader, error)) (int, io.Reader, error) {
+	switch {
+	case !Supervised(args):
+		return plain(ctx, args, opts...)
+	case args[2] == supervised.CancelScript:
+		return 0, bytes.NewReader(nil), nil
+	case len(args) < 7:
+		return 0, nil, fmt.Errorf("supervisor invocation without a command: %q", args)
+	}
+	code, reader, err := plain(ctx, args[6:], opts...)
+	if err != nil {
+		return code, reader, err
+	}
+	var stdout, stderr bytes.Buffer
+	if reader != nil {
+		if _, err := stdcopy.StdCopy(&stdout, &stderr, reader); err != nil {
+			return 0, nil, err
+		}
+	}
+	return 0, bytes.NewReader(QuorumEnvelope(stdout.Bytes(), stderr.Bytes(), code, false, false)), nil
+}
+
+// HangingCommand is a container whose command that Match selects, run
+// supervised or not, hangs as a native command that hangs does: the exec
+// returns when the call's context ends, and the command runs until a
+// canceler stops it.
+// Its canceler stops that command unless FailCancels says to fail it, as a
+// canceler that cannot reach a paused container does. Every other command
+// goes to the embedded container.
+//
+//testdouble:shared-double
+type HangingCommand struct {
+	testcontainers.Container
+	Match func(argv []string) bool
+
+	mu          sync.Mutex
+	started     chan struct{}
+	failCancels int
+	running     bool
+}
+
+// NewHangingCommand returns a HangingCommand over next.
+//
+//testdouble:shared-double
+func NewHangingCommand(next testcontainers.Container, match func(argv []string) bool) *HangingCommand {
+	return &HangingCommand{Container: next, Match: match, started: make(chan struct{})}
+}
+
+// Exec runs the matched command until ctx ends and answers its canceler.
+func (h *HangingCommand) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if Supervised(args) && args[2] == supervised.CancelScript {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		if h.failCancels > 0 {
+			h.failCancels--
+			return 1, bytes.NewReader(nil), nil
+		}
+		h.running = false
+		return 0, bytes.NewReader(nil), nil
+	}
+	command := args
+	if Supervised(args) && len(args) > 6 {
+		command = args[6:]
+	}
+	// An unsupervised exec of the command hangs as well: when its caller's
+	// context ends, nothing stops it and it still runs.
+	if (!Supervised(args) || len(args) > 6) && h.Match(command) {
+		h.mu.Lock()
+		h.running = true
+		select {
+		case <-h.started:
+		default:
+			close(h.started)
+		}
+		h.mu.Unlock()
+		<-ctx.Done()
+		return 0, nil, ctx.Err()
+	}
+	return h.Container.Exec(ctx, args, opts...)
+}
+
+// AssertSupervisedStop checks the stop contract of a supervised command:
+// call, whose command h hangs, returns ctx's error once its context is
+// canceled and only after the canceler stopped the command; and when the
+// canceler fails, it returns an E, whose Stop stops the command.
+//
+//testdouble:shared-assertion
+func AssertSupervisedStop[E interface {
+	error
+	Stop(context.Context) error
+}](t testing.TB, h *HangingCommand, call func(context.Context) error) {
+	t.Helper()
+	for _, failCancel := range []bool{false, true} {
+		h.mu.Lock()
+		h.started, h.running = make(chan struct{}), false
+		if failCancel {
+			h.failCancels = 1
+		}
+		started := h.started
+		h.mu.Unlock()
+		ctx, cancel := context.WithCancel(t.Context())
+		result := make(chan error, 1)
+		go func() { result <- call(ctx) }()
+		var err error
+		select {
+		case <-started:
+			cancel()
+			select {
+			case err = <-result:
+			case <-time.After(30 * time.Second):
+				t.Fatal("the call did not return after its context ended")
+			}
+		case err = <-result:
+			cancel()
+			t.Fatalf("the call returned before its command ran: %v", err)
+		case <-time.After(30 * time.Second):
+			cancel()
+			t.Fatal("the command did not start")
+		}
+		h.mu.Lock()
+		running := h.running
+		h.mu.Unlock()
+		if !failCancel {
+			if !errors.Is(err, context.Canceled) || running {
+				t.Fatalf("a canceled call: running=%t, %v", running, err)
+			}
+			continue
+		}
+		var unstopped E
+		if !errors.As(err, &unstopped) || !running {
+			t.Fatalf("a canceled call whose stop failed: running=%t, %v", running, err)
+		}
+		if err := unstopped.Stop(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		h.mu.Lock()
+		running = h.running
+		h.mu.Unlock()
+		if running {
+			t.Fatal("Stop returned while the command still ran")
+		}
+	}
 }
