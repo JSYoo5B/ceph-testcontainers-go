@@ -2,12 +2,13 @@ package multisite
 
 import (
 	"errors"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
-	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
-	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/placement"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/placement"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 )
@@ -137,7 +138,7 @@ func TestRGWAccountPipeRefusalNamesTheSquidZone(t *testing.T) {
 		testhelper.TestSetCephVersion(c, version)
 		return c
 	}
-	f := &Fixture{realm: rgwRealmAccess{config: Config{SourceZone: "source", DestinationZone: "destination", Source: cluster("20.2.4"), Destination: cluster("19.2.5")}}}
+	f := &Fixture{realm: rgwRealmAccess{config: realmSpec{SourceZone: "source", DestinationZone: "destination", Source: cluster("20.2.4"), Destination: cluster("19.2.5")}}}
 	var refusal *ceph.OperationError
 	if err := accountPipeUnsupported(f.zoneBefore(20)); !errors.As(err, &refusal) || !errors.Is(err, ceph.ErrUnsupported) ||
 		refusal.Target != "zone destination" || refusal.Version != "19.2.5" || !strings.Contains(err.Error(), "needs Ceph 20 or later") {

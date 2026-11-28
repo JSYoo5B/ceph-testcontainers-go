@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
@@ -26,7 +25,7 @@ import (
 // creating buckets. Tenant selects a native namespace; empty preserves the
 // legacy namespace. ID is the local user ID, without a tenant prefix.
 //
-// Tenant is letters, digits and underscores and must not look like an account
+// Tenant is at most 128 letters, digits and underscores and must not look like an account
 // ID; a tenant user's canonical ID is tenant$id, and buckets with the same name
 // can exist in different tenants.
 //
@@ -219,7 +218,7 @@ func normalizeRGWUserConfig(config UserConfig) (UserConfig, error) {
 		config.DisplayName = "Testcontainers"
 	}
 	for _, value := range []string{config.DisplayName, config.Email, config.AdminCaps} {
-		if strings.TrimSpace(value) != value || strings.IndexFunc(value, unicode.IsControl) != -1 {
+		if !gwbase.ValidText(value, false) {
 			return config, servicehook.Invalid(errors.New("RGW user display name, email and capabilities must not contain control characters or surrounding whitespace"))
 		}
 	}
@@ -268,7 +267,7 @@ func (g *Gateway) CreateUser(ctx context.Context, config UserConfig) (*User, err
 	if config.Account != nil {
 		account = gwbase.AccountOf(config.Account)
 		if !account.Owned() {
-			return nil, errors.New("owned RGW account is required")
+			return nil, servicehook.Invalid(errors.New("owned RGW account is required"))
 		}
 		if config.Tenant == "" {
 			config.Tenant = account.Tenant
@@ -279,18 +278,12 @@ func (g *Gateway) CreateUser(ctx context.Context, config UserConfig) (*User, err
 		return nil, err
 	}
 	core := g.base()
-	if core.Cluster() == nil {
-		return nil, servicehook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
-	}
-	if err := servicehook.LockTopology(ctx, core.Cluster()); err != nil {
+	admission, err := gwbase.AdmitCreation(ctx, core)
+	if err != nil {
 		return nil, err
 	}
-	defer servicehook.Unlock(core.Cluster())
-	if err := core.ValidateAdmin(); err != nil {
-		return nil, err
-	}
-	ctx, cancel := gwbase.AdminContext(ctx, core.Cluster())
-	defer cancel()
+	defer admission.Done()
+	ctx = admission.Ctx
 	if account != nil && !core.ServesScopeOf(account.Origin) {
 		return nil, servicehook.Invalid(errors.New("RGW account was created in another cluster or gateway scope"))
 	}
@@ -311,17 +304,12 @@ func (u *User) withGateway(ctx context.Context, fn func(context.Context, *gwbase
 	if !user.Owned() {
 		return servicehook.Invalid(errors.New("RGW user is not owned by a Ceph cluster"))
 	}
-	cluster := user.Origin.Cluster()
-	if err := servicehook.LockTopology(ctx, cluster); err != nil {
-		return err
-	}
-	defer servicehook.Unlock(cluster)
-	g, err := user.Origin.ScopeGateway(ctx)
+	admission, err := gwbase.Admit(ctx, user.Origin)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := gwbase.AdminContext(ctx, cluster)
-	defer cancel()
+	defer admission.Done()
+	ctx, g := admission.Ctx, admission.Gateway
 	native, err := g.OwnedUser(ctx, user)
 	if err != nil {
 		return fmt.Errorf("confirm the owned RGW user (user info): %w", err)
@@ -368,15 +356,12 @@ func (u *User) SetBucketQuota(ctx context.Context, quota Quota) error {
 }
 
 func (u *User) setQuota(ctx context.Context, scope string, quota Quota) error {
-	if quota.MaxSizeBytes < -1 || quota.MaxObjects < -1 {
-		return errors.New("RGW quota limits must be -1, zero or positive")
-	}
-	if quota.MaxSizeBytes > 0 && quota.MaxSizeBytes%1024 != 0 {
-		return servicehook.Invalid(errors.New("positive RGW quota byte limits must be multiples of 1024"))
+	if err := gwbase.CheckQuotaLimits(gwbase.Quota(quota), "RGW user"); err != nil {
+		return err
 	}
 	return u.withGateway(ctx, func(ctx context.Context, g *gwbase.Core, user *gwbase.User, native *gwbase.NativeUser) error {
 		if native.Info.AccountID != "" {
-			return errors.New("account-owned storage requires the account's SetQuota or SetBucketQuota")
+			return servicehook.Invalid(errors.New("account-owned storage requires the account's SetQuota or SetBucketQuota"))
 		}
 		if _, err := g.UserCommand(ctx, user, "quota", "set", "--quota-scope", scope, "--uid", user.ID,
 			"--max-size", gwbase.QuotaSizeArgument(quota.MaxSizeBytes), "--max-objects", strconv.FormatInt(quota.MaxObjects, 10)); err != nil {
@@ -451,7 +436,7 @@ func (u *User) Remove(ctx context.Context) error {
 		return servicehook.Invalid(errors.New("RGW user is not owned by a Ceph cluster"))
 	}
 	cluster := user.Origin.Cluster()
-	if err := servicehook.LockTopology(ctx, cluster); err != nil {
+	if err := gwbase.LockCluster(ctx, cluster); err != nil {
 		return err
 	}
 	defer servicehook.Unlock(cluster)
@@ -473,12 +458,12 @@ func (u *User) Remove(ctx context.Context) error {
 		}
 		user.State.UnstoppedRemove = nil
 	}
-	g, err := user.Origin.ScopeGateway(ctx)
+	admission, err := user.Origin.AdmitLocked(ctx)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := gwbase.AdminContext(ctx, cluster)
-	defer cancel()
+	defer admission.Done()
+	ctx, g := admission.Ctx, admission.Gateway
 	exists, err := g.UserExists(ctx, user)
 	if err != nil {
 		return err

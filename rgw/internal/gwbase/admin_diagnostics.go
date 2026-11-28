@@ -76,9 +76,9 @@ func printable(text string, limit int) string {
 // The dump of recent events that Ceph's fatal signal handler writes to
 // standard error after its report: numbered lines, each with its time,
 // thread and level, and the message, which for an objecter starts with its
-// client's name. The report names the thread that took the signal.
+// client's name. The fatal signal report before it names the thread that
+// took the signal (parseSignalReport).
 var (
-	signalThread  = regexp.MustCompile(`(?m)^ *in thread ([0-9a-f]{1,16}) thread_name:`)
 	recentEvent   = regexp.MustCompile(`^ *-?\d{1,6}> \d{4}-\d\d-\d\dT(\d\d:\d\d:\d\d\.\d{3})\S* ([0-9a-f]{1,16}) +-?\d{1,2} (.*)$`)
 	objecterEvent = regexp.MustCompile(`^client\.([0-9?]{1,20})\.objecter (.*)$`)
 	// A request with its object, locator, operations, transaction ID and
@@ -129,9 +129,10 @@ const (
 	recentEventsEnd   = "--- logging levels ---"
 )
 
-// eventReport says what the thread that took the signal, which for a stopped
-// command is the thread that waited, asked of RADOS and did not get, from
-// the objecter's events in the first dump of recent events in stderr. A
+// eventReport says what thread, the thread that took the signal as the fatal
+// signal report names it (which for a stopped command is the thread that
+// waited), asked of RADOS and did not get, from the objecter's events in the
+// first dump of recent events in stderr. A
 // command has several RADOS clients, each with its own transaction IDs; the
 // report is about the one that the thread used last:
 //
@@ -150,132 +151,180 @@ const (
 // are pinged every five seconds and OSD maps keep arriving, which pushes the
 // request it waits for out of any short tail. An event that repeats is one
 // entry with its count and last time. Each entry has its time and at most
-// maxEventBytes of its text. An event's text is shown only when its shape
-// is known to hold no object name, or the name of an object that is known
-// not to be a key's; the text of every other event is replaced, since the
-// name of a key object is the key's identifier. Events of other subsystems,
-// whose text this
-// package cannot vouch for, are only counted. Without an event of the
+// maxEventBytes of its text, as redaction.shown decides it. Events of other
+// subsystems, whose text this package cannot vouch for, are only counted. Without an event of the
 // signal's thread the last maxThreadEvents events of all threads and clients
 // are shown. It returns "" when stderr holds no dump.
-func eventReport(stderr []byte) string {
-	head, dump, found := strings.Cut(string(stderr), recentEventsBegin)
+func eventReport(thread string, stderr []byte) string {
+	dump, found := parseEventDump(stderr)
 	if !found {
 		return ""
 	}
-	dump, _, _ = strings.Cut(dump, recentEventsEnd)
-	thread := ""
-	if match := signalThread.FindStringSubmatch(head); match != nil {
-		thread = match[1]
+	return dump.report(thread)
+}
+
+// dumpEvent is one objecter event of a dump of recent events: its time,
+// thread, client and text, with pointers reduced to "0x".
+type dumpEvent struct{ time, thread, client, text string }
+
+// recentDump is the first dump of recent events of a command's standard
+// error: how many events it holds and the objecter's among them, in order.
+type recentDump struct {
+	all    int
+	events []dumpEvent
+}
+
+// parseEventDump reads the first dump of recent events in stderr. It reports
+// false when stderr holds none.
+func parseEventDump(stderr []byte) (recentDump, bool) {
+	_, text, found := strings.Cut(string(stderr), recentEventsBegin)
+	if !found {
+		return recentDump{}, false
 	}
-	type event struct{ time, thread, client, text string }
-	var events []event
-	all := 0
-	for line := range strings.SplitSeq(dump, "\n") {
+	text, _, _ = strings.Cut(text, recentEventsEnd)
+	var dump recentDump
+	for line := range strings.SplitSeq(text, "\n") {
 		match := recentEvent.FindStringSubmatch(line)
 		if match == nil {
 			continue
 		}
-		all++
+		dump.all++
 		if message := objecterEvent.FindStringSubmatch(match[3]); message != nil {
-			events = append(events, event{time: match[1], thread: match[2], client: message[1], text: strings.TrimSpace(pointer.ReplaceAllString(message[2], "0x"))})
+			dump.events = append(dump.events, dumpEvent{time: match[1], thread: match[2], client: message[1], text: strings.TrimSpace(pointer.ReplaceAllString(message[2], "0x"))})
 		}
 	}
-	if len(events) == 0 {
-		return fmt.Sprintf("none of its %d recent events is of the objecter", all)
-	}
-	summary := fmt.Sprintf("of its %d recent events, %d of the objecter", all, len(events))
-	// A key object's name is a key's identifier, and the objecter prints
-	// object names in many events that have no namespace next to them: a
-	// reply, a row of its active requests, a backoff, a listing. So an
-	// event's text is shown only when its shape is known:
-	//
-	//   - a shape that holds no object name (nameless);
-	//   - a shape that holds the name with its locator (located), unless the
-	//     locator is a key namespace;
-	//   - a reply or an active request's row, when the submission of its
-	//     transaction is among the events and is no key object's.
-	//
-	// Every other event is one entry without its text.
-	submittedIDs, keyIDs := map[string]bool{}, map[string]bool{}
-	var keyNames []string
+	return dump, true
+}
+
+// redaction decides what an entry of eventReport says of an event. A key
+// object's name is a key's identifier, and the objecter prints object names
+// in many events that have no namespace next to them: a reply, a row of its
+// active requests, a backoff, a listing. So an event's text is shown only
+// when its shape is known:
+//
+//   - a shape that holds no object name (nameless);
+//   - a shape that holds the name with its locator (located), unless the
+//     locator is a key namespace;
+//   - a reply or an active request's row, when the submission of its
+//     transaction is among the events and is no key object's.
+//
+// Every other event is one entry without its text. An event that names a
+// key object submitted among the events, in its text or by its transaction,
+// is "an event of a key object".
+type redaction struct {
+	// submitted and keys hold the client/transaction of every submission
+	// among the events and of those of key objects; keyNames the names of
+	// those key objects.
+	submitted, keys map[string]bool
+	keyNames        []string
+}
+
+// newRedaction reads the submissions among events.
+func newRedaction(events []dumpEvent) redaction {
+	r := redaction{submitted: map[string]bool{}, keys: map[string]bool{}}
 	for _, e := range events {
 		match := submitEvent.FindStringSubmatch(e.text)
 		if match == nil {
 			continue
 		}
-		submittedIDs[e.client+"/"+match[4]] = true
+		r.submitted[e.client+"/"+match[4]] = true
 		if keyNamespace(e.text) {
-			keyIDs[e.client+"/"+match[4]] = true
-			if !slices.Contains(keyNames, match[1]) {
-				keyNames = append(keyNames, match[1])
+			r.keys[e.client+"/"+match[4]] = true
+			if !slices.Contains(r.keyNames, match[1]) {
+				r.keyNames = append(r.keyNames, match[1])
 			}
 		}
 	}
-	// shown is what an entry says of an event.
-	shown := func(e event) string {
-		const keyObject, unknown = "an event of a key object", "an event whose text may name an object"
-		if keyNamespace(e.text) {
+	return r
+}
+
+// shown is what an entry says of e: its text, or what replaces it.
+func (r redaction) shown(e dumpEvent) string {
+	const keyObject, unknown = "an event of a key object", "an event whose text may name an object"
+	if keyNamespace(e.text) {
+		return keyObject
+	}
+	for _, name := range r.keyNames {
+		if strings.Contains(e.text, name) {
 			return keyObject
 		}
-		for _, name := range keyNames {
-			if strings.Contains(e.text, name) {
-				return keyObject
-			}
-		}
-		if nameless.MatchString(e.text) || located.MatchString(e.text) {
-			return e.text
-		}
-		match := replyEvent.FindStringSubmatch(e.text)
-		if match == nil {
-			match = activeEvent.FindStringSubmatch(e.text)
-		}
-		switch {
-		case match == nil:
-			return unknown
-		case keyIDs[e.client+"/"+match[1]]:
-			return keyObject
-		case !submittedIDs[e.client+"/"+match[1]]:
-			return "an event of request " + match[1] + ", which was submitted before these events"
-		}
+	}
+	if nameless.MatchString(e.text) || located.MatchString(e.text) {
 		return e.text
 	}
-	// collect lists events in order, a repeated one once.
-	collect := func(selected []event, limit int, fromEnd bool) (parts []string, total int) {
-		type entry struct {
-			first, last, text string
-			count             int
-		}
-		var entries []*entry
-		seen := map[string]*entry{}
-		for _, e := range selected {
-			text := shown(e)
-			key := elapsedTime.ReplaceAllString(text, "#s")
-			if known := seen[key]; known != nil {
-				known.count++
-				known.last, known.text = e.time, text
-				continue
-			}
-			added := &entry{first: e.time, last: e.time, text: text, count: 1}
-			seen[key] = added
-			entries = append(entries, added)
-		}
-		total = len(entries)
-		if fromEnd {
-			entries = entries[max(0, total-limit):]
-		} else {
-			entries = entries[:min(total, limit)]
-		}
-		for _, e := range entries {
-			part := e.first + " " + printable(e.text, maxEventBytes)
-			if e.count > 1 {
-				part += fmt.Sprintf(" (%d times until %s)", e.count, e.last)
-			}
-			parts = append(parts, part)
-		}
-		return parts, total
+	match := replyEvent.FindStringSubmatch(e.text)
+	if match == nil {
+		match = activeEvent.FindStringSubmatch(e.text)
 	}
-	notRoutine := func(e event) bool { return !routineEvent.MatchString(e.text) }
+	switch {
+	case match == nil:
+		return unknown
+	case r.keys[e.client+"/"+match[1]]:
+		return keyObject
+	case !r.submitted[e.client+"/"+match[1]]:
+		return "an event of request " + match[1] + ", which was submitted before these events"
+	}
+	return e.text
+}
+
+// collect lists selected in order as entries of eventReport, a repeated
+// event once, at most limit of them from the start or the end, and returns
+// them with the number of different entries.
+func (r redaction) collect(selected []dumpEvent, limit int, fromEnd bool) (parts []string, total int) {
+	type entry struct {
+		first, last, text string
+		count             int
+	}
+	var entries []*entry
+	seen := map[string]*entry{}
+	for _, e := range selected {
+		text := r.shown(e)
+		key := elapsedTime.ReplaceAllString(text, "#s")
+		if known := seen[key]; known != nil {
+			known.count++
+			known.last, known.text = e.time, text
+			continue
+		}
+		added := &entry{first: e.time, last: e.time, text: text, count: 1}
+		seen[key] = added
+		entries = append(entries, added)
+	}
+	total = len(entries)
+	if fromEnd {
+		entries = entries[max(0, total-limit):]
+	} else {
+		entries = entries[:min(total, limit)]
+	}
+	for _, e := range entries {
+		part := e.first + " " + printable(e.text, maxEventBytes)
+		if e.count > 1 {
+			part += fmt.Sprintf(" (%d times until %s)", e.count, e.last)
+		}
+		parts = append(parts, part)
+	}
+	return parts, total
+}
+
+// notRoutine reports an event that says more than the objecter's routine
+// bookkeeping of a request.
+func notRoutine(e dumpEvent) bool { return !routineEvent.MatchString(e.text) }
+
+// dumpRequest is a request of the reported client: its transaction, when it
+// was submitted, its object, locator and operations, its latest target and
+// whether the reported thread submitted it.
+type dumpRequest struct {
+	id, time, object, locator, operations, osd, group string
+	own                                               bool
+}
+
+// report renders eventReport for thread from the dump.
+func (d recentDump) report(thread string) string {
+	events := d.events
+	if len(events) == 0 {
+		return fmt.Sprintf("none of its %d recent events is of the objecter", d.all)
+	}
+	summary := fmt.Sprintf("of its %d recent events, %d of the objecter", d.all, len(events))
+	r := newRedaction(events)
 	client := ""
 	for _, e := range events {
 		if e.thread == thread {
@@ -283,29 +332,67 @@ func eventReport(stderr []byte) string {
 		}
 	}
 	if client == "" {
-		var rest []event
+		var rest []dumpEvent
 		for _, e := range events {
 			if notRoutine(e) {
 				rest = append(rest, e)
 			}
 		}
-		parts, total := collect(rest, maxThreadEvents, true)
+		parts, total := r.collect(rest, maxThreadEvents, true)
 		return fmt.Sprintf("%s, none of the signalled thread, the last %d of %d different ones: %s", summary, len(parts), total, strings.Join(parts, " | "))
 	}
-	// The requests of that client: the thread's own, where each was sent,
-	// and which ended.
-	type request struct {
-		id, time, object, locator, operations, osd, group string
-		own                                               bool
+	text := summary + "; " + requestsOf(events, client, thread)
+	// The thread's last events of that client, and where they start.
+	var last []dumpEvent
+	start := 0
+	for i := len(events) - 1; i >= 0 && len(last) < maxThreadEvents; i-- {
+		if e := events[i]; e.thread == thread && e.client == client && notRoutine(e) {
+			last = append(last, e)
+			start = i
+		}
 	}
-	var requests []*request
-	byID := map[string]*request{}
+	slices.Reverse(last)
+	named := openRequestIDs(events, client, thread)
+	for _, e := range last {
+		for _, match := range requestID.FindAllStringSubmatch(e.text, -1) {
+			named[match[1]] = true
+		}
+	}
+	var others []dumpEvent
+	for _, e := range events[start:] {
+		if e.thread == thread || e.client != client || !notRoutine(e) {
+			continue
+		}
+		about := mapEvent.MatchString(e.text)
+		for _, match := range requestID.FindAllStringSubmatch(e.text, -1) {
+			about = about || named[match[1]]
+		}
+		if about {
+			others = append(others, e)
+		}
+	}
+	parts, _ := r.collect(last, maxThreadEvents, true)
+	text += fmt.Sprintf("; its last %d events: %s", len(parts), strings.Join(parts, " | "))
+	if parts, total := r.collect(others, maxOtherEvents, false); total > 0 {
+		text += fmt.Sprintf("; then of other threads, for these requests and OSD maps, the first %d of %d: %s", len(parts), total, strings.Join(parts, " | "))
+	} else {
+		text += "; then no event of another thread for these requests, and no OSD map"
+	}
+	return text
+}
+
+// clientRequests lists the requests of client among events in submission
+// order, with where each was sent last, and maps the transaction ID of each
+// request that has no reply to it.
+func clientRequests(events []dumpEvent, client, thread string) ([]*dumpRequest, map[string]*dumpRequest) {
+	var requests []*dumpRequest
+	byID := map[string]*dumpRequest{}
 	for _, e := range events {
 		if e.client != client {
 			continue
 		}
 		if match := submitEvent.FindStringSubmatch(e.text); match != nil {
-			r := &request{id: match[4], time: e.time, object: match[1], locator: match[2], operations: match[3], osd: match[5], own: e.thread == thread}
+			r := &dumpRequest{id: match[4], time: e.time, object: match[1], locator: match[2], operations: match[3], osd: match[5], own: e.thread == thread}
 			requests, byID[r.id] = append(requests, r), r
 		} else if match := sendEvent.FindStringSubmatch(e.text); match != nil && byID[match[1]] != nil {
 			// A resend after an OSD map change goes elsewhere; the placement
@@ -315,8 +402,27 @@ func eventReport(stderr []byte) string {
 			delete(byID, match[1])
 		}
 	}
-	submitted, othersOpen := 0, 0
+	return requests, byID
+}
+
+// openRequestIDs returns the transaction IDs of thread's requests through
+// client that have no reply.
+func openRequestIDs(events []dumpEvent, client, thread string) map[string]bool {
+	requests, byID := clientRequests(events, client, thread)
 	named := map[string]bool{}
+	for _, r := range requests {
+		if r.own && byID[r.id] == r {
+			named[r.id] = true
+		}
+	}
+	return named
+}
+
+// requestsOf renders how many requests thread submitted through client and
+// those without a reply, at most maxOpenRequests of them.
+func requestsOf(events []dumpEvent, client, thread string) string {
+	requests, byID := clientRequests(events, client, thread)
+	submitted, othersOpen, withoutReply := 0, 0, 0
 	var open []string
 	for _, r := range requests {
 		if r.own {
@@ -327,7 +433,7 @@ func eventReport(stderr []byte) string {
 		case !r.own:
 			othersOpen++
 		default:
-			named[r.id] = true
+			withoutReply++
 			if len(open) == maxOpenRequests {
 				continue
 			}
@@ -344,50 +450,15 @@ func eventReport(stderr []byte) string {
 			open = append(open, fmt.Sprintf("tid %s [%s] of %s in %s to %s at %s", r.id, printable(r.operations, maxNameBytes), object, printable(r.locator, maxNameBytes), target, r.time))
 		}
 	}
-	text := fmt.Sprintf("%s; through client.%s the signalled thread submitted %d requests in them, %d without a reply", summary, client, submitted, len(named))
+	text := fmt.Sprintf("through client.%s the signalled thread submitted %d requests in them, %d without a reply", client, submitted, withoutReply)
 	if len(open) > 0 {
 		text += ": " + strings.Join(open, "; ")
-		if len(named) > len(open) {
-			text += fmt.Sprintf("; %d more", len(named)-len(open))
+		if withoutReply > len(open) {
+			text += fmt.Sprintf("; %d more", withoutReply-len(open))
 		}
 	}
 	if othersOpen > 0 {
 		text += fmt.Sprintf(" (other threads: %d without a reply)", othersOpen)
-	}
-	// The thread's last events of that client, and where they start.
-	var last []event
-	start := 0
-	for i := len(events) - 1; i >= 0 && len(last) < maxThreadEvents; i-- {
-		if e := events[i]; e.thread == thread && e.client == client && notRoutine(e) {
-			last = append(last, e)
-			start = i
-		}
-	}
-	slices.Reverse(last)
-	for _, e := range last {
-		for _, match := range requestID.FindAllStringSubmatch(e.text, -1) {
-			named[match[1]] = true
-		}
-	}
-	var others []event
-	for _, e := range events[start:] {
-		if e.thread == thread || e.client != client || !notRoutine(e) {
-			continue
-		}
-		about := mapEvent.MatchString(e.text)
-		for _, match := range requestID.FindAllStringSubmatch(e.text, -1) {
-			about = about || named[match[1]]
-		}
-		if about {
-			others = append(others, e)
-		}
-	}
-	parts, _ := collect(last, maxThreadEvents, true)
-	text += fmt.Sprintf("; its last %d events: %s", len(parts), strings.Join(parts, " | "))
-	if parts, total := collect(others, maxOtherEvents, false); total > 0 {
-		text += fmt.Sprintf("; then of other threads, for these requests and OSD maps, the first %d of %d: %s", len(parts), total, strings.Join(parts, " | "))
-	} else {
-		text += "; then no event of another thread for these requests, and no OSD map"
 	}
 	return text
 }

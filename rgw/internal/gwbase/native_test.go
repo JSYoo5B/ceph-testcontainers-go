@@ -78,3 +78,28 @@ func TestRuntimeScopeIdentifiesTLSListeners(t *testing.T) {
 		})
 	}
 }
+
+func TestBucketIdentityDecoderRefusesCaseAndDuplicateMembers(t *testing.T) {
+	const valid = `{"bucket":"b","tenant":"t","id":"instance","marker":"m","owner":"t$u","zonegroup":"g","usage":{}}`
+	identity, err := DecodeBucketIdentity([]byte(valid))
+	if err != nil || identity.Bucket != "b" || identity.Tenant != "t" || identity.ID != "instance" || identity.Marker != "m" || identity.Owner != "t$u" ||
+		identity.Zonegroup != "g" || !identity.Has("tenant") || !identity.Has("zonegroup") {
+		t.Fatalf("valid document: %+v, %v", identity, err)
+	}
+	if missing, err := DecodeBucketIdentity([]byte(`{"bucket":"b","id":"instance"}`)); err != nil || missing.Has("tenant") || missing.Tenant != "" {
+		t.Fatalf("a missing tenant: %+v, %v", missing, err)
+	}
+	for name, document := range map[string]string{
+		"cased id":           `{"bucket":"b","ID":"instance"}`,
+		"cased bucket":       `{"Bucket":"b","id":"instance"}`,
+		"duplicate id":       `{"bucket":"b","id":"old","id":"instance"}`,
+		"duplicate bucket":   `{"bucket":"a","bucket":"b","id":"instance"}`,
+		"duplicate in usage": `{"bucket":"b","id":"instance","usage":{"x":1,"x":2}}`,
+		"null tenant":        `{"bucket":"b","tenant":null,"id":"instance"}`,
+		"no id":              `{"bucket":"b"}`,
+	} {
+		if _, err := DecodeBucketIdentity([]byte(document)); err == nil {
+			t.Errorf("%s was accepted", name)
+		}
+	}
+}

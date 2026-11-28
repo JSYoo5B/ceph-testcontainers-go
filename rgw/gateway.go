@@ -69,7 +69,7 @@ type Config struct {
 // can be removed because RGW is optional. Failed cleanup remains tracked.
 func removeGateway(ctx context.Context, c *ceph.Container, handle *Gateway) error {
 	name := handle.GatewayName
-	if err := servicehook.LockTopology(ctx, c); err != nil {
+	if err := gwbase.LockCluster(ctx, c); err != nil {
 		return err
 	}
 	defer servicehook.Unlock(c)
@@ -496,7 +496,7 @@ func (c *Gateway) DaemonEndpoint(ctx context.Context) (string, error) {
 func (c *Gateway) S3Endpoint(ctx context.Context) (string, error) {
 	port := c.port
 	if port == 0 {
-		// Gateways constructed by the multicluster bridge use the default.
+		// A Gateway that the caller built itself has no listener port.
 		port = 7480
 	}
 	if c.publicAddress != "" && c.publicAddress != "127.0.0.1" {

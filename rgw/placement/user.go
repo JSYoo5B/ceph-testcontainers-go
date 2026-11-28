@@ -84,10 +84,10 @@ func setUserDefault(ctx context.Context, p *Placement, user *gwbase.User, config
 		config.StorageClass = "STANDARD"
 	}
 	if !storageClassName.MatchString(config.StorageClass) {
-		return errors.New("RGW user storage class must use an uppercase class name")
+		return servicehook.Invalid(errors.New("RGW user storage class must use an uppercase class name"))
 	}
 	if config.Tags != nil && len(config.Tags) == 0 {
-		return errors.New("radosgw-admin cannot clear placement tags with an empty list; use nil to preserve tags or nonmatching tags to revoke target access")
+		return servicehook.Invalid(errors.New("radosgw-admin cannot clear placement tags with an empty list; use nil to preserve tags or nonmatching tags to revoke target access"))
 	}
 	var err error
 	config.Tags, err = normalizeTags(config.Tags)
@@ -97,29 +97,25 @@ func setUserDefault(ctx context.Context, p *Placement, user *gwbase.User, config
 	if !user.Owned() {
 		return servicehook.Invalid(errors.New("RGW user is not owned by a Ceph cluster"))
 	}
-	cluster := user.Origin.Cluster()
-	if err := servicehook.LockTopology(ctx, cluster); err != nil {
-		return err
-	}
-	defer servicehook.Unlock(cluster)
-	g, err := user.Origin.ScopeGateway(ctx)
+	admission, err := gwbase.Admit(ctx, user.Origin)
 	if err != nil {
 		return err
 	}
+	defer admission.Done()
+	g := admission.Gateway
 	if err := validateHandle(g, p); err != nil {
 		return err
 	}
 	if !p.confirmed {
-		return errors.New("RGW placement creation has not been confirmed")
+		return servicehook.Invalid(errors.New("RGW placement creation has not been confirmed"))
 	}
 	if !user.Active() {
-		return errors.New("RGW user must be an active identity created in this cluster")
+		return servicehook.Invalid(errors.New("RGW user must be an active identity created in this cluster"))
 	}
 	if user.State.NativeScope != nil && *user.State.NativeScope != p.scope {
 		return errors.New("RGW user and placement have different native runtime scopes")
 	}
-	ctx, cancel := gwbase.AdminContext(ctx, g.Cluster())
-	defer cancel()
+	ctx = admission.Ctx
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -136,7 +132,7 @@ func setUserDefault(ctx context.Context, p *Placement, user *gwbase.User, config
 	if !slices.ContainsFunc(p.config.StorageClasses, func(class StorageClass) bool { return class.Name == config.StorageClass }) {
 		return errors.New("RGW user storage class is absent from the owned placement")
 	}
-	before, err := ownedUser(ctx, g, user, p.scope)
+	before, err := g.OwnedUserIn(ctx, user, p.scope)
 	if err != nil {
 		return err
 	}
@@ -149,7 +145,7 @@ func setUserDefault(ctx context.Context, p *Placement, user *gwbase.User, config
 	if _, err := g.Command(ctx, p.scope, args...); err != nil {
 		return err
 	}
-	after, err := ownedUser(ctx, g, user, p.scope)
+	after, err := g.OwnedUserIn(ctx, user, p.scope)
 	if err != nil {
 		return err
 	}
@@ -167,26 +163,6 @@ func setUserDefault(ctx context.Context, p *Placement, user *gwbase.User, config
 		return errors.New("RGW unrelated user policy changed during placement update")
 	}
 	return nil
-}
-
-// ownedUser reads user in the placement's exact native scope and confirms its
-// fixture-created keys and creation identity.
-func ownedUser(ctx context.Context, g *gwbase.Core, user *gwbase.User, scope gwbase.NativeScope) (*gwbase.NativeUser, error) {
-	data, err := g.Command(ctx, scope, "user", "info", "--uid", user.ID)
-	if err != nil {
-		return nil, err
-	}
-	native, err := gwbase.DecodeUser(data)
-	if err != nil {
-		return nil, err
-	}
-	if native.Info.ID != user.ID || user.CheckKeys(native.Keys) != nil {
-		return nil, servicehook.Invalid(errors.New("RGW user has different credentials in the actual native scope; refusing placement update"))
-	}
-	if err := g.ValidateCreationIdentity(ctx, user, native); err != nil {
-		return nil, err
-	}
-	return native, nil
 }
 
 func unrelatedUserPolicy(document map[string]any) map[string]any {

@@ -130,8 +130,14 @@ func TestRGWAccountRootIdentityAndAccountOwnedQuota(t *testing.T) {
 	if err != nil || info.AccountID != "RGW12345678901234567" || info.Type != "root" || info.Tenant != "account_team" || info.Admin || info.System {
 		t.Fatal("root account identity wrong")
 	}
-	if err := root.SetQuota(t.Context(), Quota{Enabled: true, MaxSizeBytes: -1, MaxObjects: 1}); err == nil {
-		t.Fatal("ineffective per-user account quota accepted")
+	f.Calls = nil
+	if err := root.SetQuota(t.Context(), Quota{Enabled: true, MaxSizeBytes: -1, MaxObjects: 1}); !errors.Is(err, ceph.ErrInvalidRequest) {
+		t.Fatalf("ineffective per-user account quota returned %v", err)
+	}
+	for _, call := range f.Calls {
+		if slices.Contains(call, "quota") {
+			t.Fatalf("a refused account-owned quota changed policy: %q", call)
+		}
 	}
 	if err := root.Remove(t.Context()); err != nil {
 		t.Fatal(err)
@@ -164,7 +170,7 @@ func TestRGWCreateUserRefusesAnAccountOfAnotherClusterOrScope(t *testing.T) {
 	}
 	var missing *gwtest.RootAccount
 	for _, account := range []RootAccount{missing, gwtest.NewRootAccount(nil), &gwtest.RootAccount{}} {
-		if user, err := g.CreateUser(t.Context(), UserConfig{ID: "root", Account: account}); user != nil || err == nil || len(f.Calls) != 0 {
+		if user, err := g.CreateUser(t.Context(), UserConfig{ID: "root", Account: account}); user != nil || !errors.Is(err, ceph.ErrInvalidRequest) || len(f.Calls) != 0 {
 			t.Fatalf("an account without identity reached root creation: %v", err)
 		}
 	}

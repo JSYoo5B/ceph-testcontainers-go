@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"reflect"
 	"slices"
 	"sort"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
 )
 
 // BucketSyncPolicyStatus describes the captured master's configuration and
@@ -71,13 +73,11 @@ func (g *SyncGroup) WaitBucketPolicyReady(ctx context.Context, destinationZone s
 	}
 	for {
 		attempt, stop := context.WithTimeout(ctx, 30*time.Second)
-		if err := multicluster.LockObservation(attempt, &f.topologyMu); err != nil {
-			stop()
-			return status, fmt.Errorf("wait RGW bucket policy import: %w", err)
-		}
-		last, fatal, readErr := target.sample(attempt)
-		f.topologyMu.Unlock()
+		last, fatal, readErr := target.lockedSample(attempt)
 		stop()
+		if errors.Is(readErr, errSampleLock) {
+			return status, fmt.Errorf("wait RGW bucket policy import: %w", readErr)
+		}
 		status = last
 		if err := ctx.Err(); err != nil {
 			return last, fmt.Errorf("wait RGW bucket policy import: %w", err)
@@ -359,18 +359,14 @@ func (g *SyncGroup) policyReadyBucket(ctx context.Context, zone *rgwZoneState, b
 	if err != nil {
 		return false, false, err
 	}
-	native, err := syncJSON(data)
+	stats, err := gwbase.DecodeBucketIdentity(data)
 	if err != nil {
-		return false, true, err
-	}
-	id := nativeDoc(native).member("id").value
-	if id == "" {
 		return false, true, errors.New("RGW destination bucket statistics lack a native instance identity")
 	}
-	if stats := nativeDoc(native); !stats.member("bucket").is(bucket.Name) || !stats.member("tenant").is(bucket.Tenant) || !stats.member("zonegroup").is(g.groupID) {
+	if !stats.Has("bucket") || !stats.Has("tenant") || !stats.Has("zonegroup") || stats.Bucket != bucket.Name || stats.Tenant != bucket.Tenant || stats.Zonegroup != g.groupID {
 		return false, true, errors.New("RGW destination bucket namespace or zonegroup identity differs")
 	}
-	if id != bucket.ID {
+	if stats.ID != bucket.ID {
 		return false, true, errors.New("RGW destination bucket was recreated; refusing another native instance")
 	}
 	return true, false, nil

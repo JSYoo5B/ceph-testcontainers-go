@@ -393,7 +393,7 @@ func TestRGWQuotaUsesByteLimitsAndVerifiesReadback(t *testing.T) {
 	if !slices.Equal(lastArgs[len(lastArgs)-len(want):], want) || !slices.Contains(ctr.calls[2], "enable") {
 		t.Fatalf("incorrect quota units or activation: %v", ctr.calls)
 	}
-	if err := user.SetQuota(t.Context(), Quota{MaxSizeBytes: -2}); err == nil || len(ctr.calls) != 4 {
+	if err := user.SetQuota(t.Context(), Quota{MaxSizeBytes: -2}); !errors.Is(err, ceph.ErrInvalidRequest) || len(ctr.calls) != 4 {
 		t.Fatal("invalid quota reached native mutation")
 	}
 	gateway, _ = newRGWAdminTestGateway(Config{}, rgwAdminResponse{data: old}, rgwAdminResponse{}, rgwAdminResponse{}, rgwAdminResponse{data: old})
@@ -409,9 +409,11 @@ func TestRGWQuotaRejectsUnalignedBytesBeforeNativeCommands(t *testing.T) {
 		"user": user.SetQuota, "bucket": user.SetBucketQuota,
 	} {
 		t.Run(name, func(t *testing.T) {
-			err := set(t.Context(), Quota{Enabled: true, MaxSizeBytes: 1025, MaxObjects: 8})
-			if !errors.Is(err, ceph.ErrInvalidRequest) || len(ctr.calls) != 0 {
-				t.Fatalf("unaligned quota returned %v and issued %d native commands", err, len(ctr.calls))
+			for _, quota := range []Quota{{Enabled: true, MaxSizeBytes: 1025, MaxObjects: 8}, {MaxSizeBytes: -2}, {MaxObjects: -2}} {
+				err := set(t.Context(), quota)
+				if !errors.Is(err, ceph.ErrInvalidRequest) || len(ctr.calls) != 0 {
+					t.Fatalf("quota %+v returned %v and issued %d native commands", quota, err, len(ctr.calls))
+				}
 			}
 		})
 	}
@@ -523,5 +525,24 @@ func TestRGWRemovalRejectsIncompleteListingAfterMutation(t *testing.T) {
 	user := rgwAdminOwnedTestUser(gateway)
 	if err := user.Remove(t.Context()); err == nil || !strings.Contains(err.Error(), "decode RGW user listing") || user.base().State.Removed {
 		t.Fatalf("incomplete listing was accepted as absence: %v", err)
+	}
+}
+
+// TestRGWUserTextAndQuotaRulesKeepTheirVerdicts runs the shared text-field
+// and quota inputs through the user path: invalid UTF-8 stays accepted for a
+// user, as it always was, while an account refuses it.
+func TestRGWUserTextAndQuotaRulesKeepTheirVerdicts(t *testing.T) {
+	for value, valid := range map[string]bool{"Fixture": true, "a b": true, "\xff": true, " a": false, "a ": false, "a\tb": false, "a\x00": false} {
+		for _, config := range []UserConfig{{DisplayName: value}, {Email: value}} {
+			if _, err := normalizeRGWUserConfig(config); (err == nil) != valid || err != nil && !errors.Is(err, ceph.ErrInvalidRequest) {
+				t.Errorf("user text %q: %v, want valid %v", value, err, valid)
+			}
+		}
+	}
+	for quota, valid := range map[Quota]bool{{MaxSizeBytes: -1, MaxObjects: -1}: true, {MaxSizeBytes: 2048}: true, {}: true,
+		{MaxSizeBytes: -2}: false, {MaxObjects: -2}: false, {MaxSizeBytes: 1025}: false} {
+		if err := gwbase.CheckQuotaLimits(gwbase.Quota(quota), "RGW user"); (err == nil) != valid || err != nil && !errors.Is(err, ceph.ErrInvalidRequest) {
+			t.Errorf("user quota %+v: %v, want valid %v", quota, err, valid)
+		}
 	}
 }

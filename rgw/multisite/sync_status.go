@@ -2,16 +2,18 @@ package multisite
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/strictjson"
 
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -160,26 +162,28 @@ type syncWaitZonePin struct {
 
 func (f *Fixture) checkSyncWaitPins(pins map[string]syncWaitZonePin) error {
 	if f.closed {
-		return multisiteInvalid(errors.New("RGW multisite is terminated"))
+		return servicehook.Invalid(errors.New("RGW multisite is terminated"))
 	}
 	for name, pin := range pins {
-		attached := false
-		for _, zone := range f.zoneStates() {
-			if zone.Name == name && zone.ID == pin.id && zone.client != nil && zone.client == pin.client {
-				attached = true
-				break
-			}
-		}
-		if !attached {
+		if !f.stillAttached(name, pin.id, pin.client) {
 			return errors.New("RGW sync readiness zone is no longer attached and owned")
 		}
 	}
 	return nil
 }
 
+// stillAttached reports whether the zone name is still attached and owned
+// with the native ID id and the CLI client that a wait captured. The caller
+// holds topologyMu.
+func (f *Fixture) stillAttached(name, id string, client testcontainers.Container) bool {
+	return slices.ContainsFunc(f.zoneStates(), func(zone *rgwZoneState) bool {
+		return zone.Name == name && zone.ID == id && zone.client != nil && zone.client == client
+	})
+}
+
 func (f *Fixture) syncStatusZones(name string, sources []string) (*rgwZoneState, error) {
 	if f.closed {
-		return nil, multisiteInvalid(errors.New("RGW multisite is terminated"))
+		return nil, servicehook.Invalid(errors.New("RGW multisite is terminated"))
 	}
 	var target *rgwZoneState
 	states := f.zoneStates()
@@ -242,8 +246,7 @@ func (f *Fixture) syncStatus(ctx context.Context, zoneName string, metadataOnly 
 			return result, err
 		}
 	}
-	metadataCurrent := result.Metadata.State == "sync" && result.Metadata.PeriodID == id &&
-		result.Metadata.RealmEpoch == epoch && result.Metadata.Shards > 0 && result.Metadata.IncrementalShards == result.Metadata.Shards
+	metadataCurrent := result.Metadata.bootstrapped() && result.Metadata.PeriodID == id && result.Metadata.RealmEpoch == epoch
 	if metadataOnly {
 		switch {
 		case result.MetadataMaster:
@@ -280,7 +283,7 @@ func (f *Fixture) syncStatus(ctx context.Context, zoneName string, metadataOnly 
 // one zone's period alone cannot establish the current readiness baseline.
 func (f *Fixture) syncObservationMaster(ctx context.Context) (*rgwZoneState, map[string]any, error) {
 	if f.closed {
-		return nil, nil, multisiteInvalid(errors.New("RGW multisite is terminated"))
+		return nil, nil, servicehook.Invalid(errors.New("RGW multisite is terminated"))
 	}
 	states := f.zoneStates()
 	if len(states) == 0 || states[0].client == nil {
@@ -380,6 +383,17 @@ func syncStatusReady(status SyncStatus, sources []string) bool {
 	return true
 }
 
+// bootstrapped reports whether every shard of m entered incremental sync:
+// the reload gate (rgwMetadataBootstrapped), which CaughtUp requires too.
+func (m MetadataSyncStatus) bootstrapped() bool {
+	return m.State == "sync" && m.Shards > 0 && m.IncrementalShards == m.Shards
+}
+
+// decodeSyncMetadata is the one decoder of `metadata sync status`, for
+// SyncStatus and the reload gate. It reads members by exact name from a
+// document that repeats none, and refuses a marker without a shard key, with
+// a key outside the shards or with a key of another marker. Each marker in
+// state 1 is a shard in incremental sync.
 func decodeSyncMetadata(data []byte) (MetadataSyncStatus, map[int]*string, error) {
 	var native struct {
 		SyncStatus struct {
@@ -398,7 +412,7 @@ func decodeSyncMetadata(data []byte) (MetadataSyncStatus, map[int]*string, error
 			} `json:"markers"`
 		} `json:"sync_status"`
 	}
-	if json.Unmarshal(data, &native) != nil || native.SyncStatus.Info.Status == "" || native.SyncStatus.Info.NumShards < 0 {
+	if strictjson.Decode(data, &native, strictjson.Options{}) != nil || native.SyncStatus.Info.Status == "" || native.SyncStatus.Info.NumShards < 0 {
 		return MetadataSyncStatus{}, nil, errors.New("decode RGW native metadata sync status")
 	}
 	info := native.SyncStatus.Info

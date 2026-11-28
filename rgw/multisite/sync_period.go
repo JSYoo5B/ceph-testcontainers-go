@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
 )
 
@@ -111,7 +112,7 @@ func (f *Fixture) publishSyncPeriod(ctx context.Context, master *rgwZoneState, c
 		return nil, err
 	}
 	if staging != nil && !syncPeriodPolicyOwned(staging, current, want) {
-		return nil, multisiteInvalid(errors.New("RGW existing staging period contains unrelated policy; refusing overwrite"))
+		return nil, servicehook.Invalid(errors.New("RGW existing staging period contains unrelated policy; refusing overwrite"))
 	}
 	data, err := f.syncPolicyWrite(ctx, master, master.Zonegroup, "period", "update")
 	if err != nil {
@@ -159,7 +160,7 @@ func (f *Fixture) importSyncPeriod(ctx context.Context, master *rgwZoneState, st
 		}
 		if zone.ID != master.ID {
 			if _, err := f.syncPolicyWrite(ctx, zone, zone.Zonegroup, "realm", "pull", "--url", master.PeerEndpoint,
-				"--access-key", f.realm.systemAccess, "--secret", f.realm.systemSecret); err != nil {
+				"--access-key", f.realm.systemAccess(), "--secret", f.realm.systemSecret()); err != nil {
 				return err
 			}
 			data, err = f.syncPolicyAdmin(ctx, zone, zone.Zonegroup, "period", "get")

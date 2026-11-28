@@ -122,11 +122,12 @@ var topicNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,256}$`)
 // end-to-end delivery verdict. Correlate it with what the consumer received.
 //
 // The outcomes stay distinct: an invalid selection or sample is
-// ceph.ErrInvalidRequest before any command; a missing topic matches
-// fs.ErrNotExist and a refused read fs.ErrPermission (ceph.ErrNativeFailure
-// either way); a topic without a persistent queue is ErrNotPersistent; a
-// cluster before Ceph 19 is ceph.ErrUnsupported; an unexpected native reply
-// is an unclassified error. Errors never contain native output. Queue never
+// ceph.ErrInvalidRequest before any command, and a topic get reply that names
+// another tenant or topic is ceph.ErrInvalidRequest after that command; a
+// missing topic matches fs.ErrNotExist and a refused read fs.ErrPermission
+// (ceph.ErrNativeFailure either way); a topic without a persistent queue is
+// ErrNotPersistent; a cluster before Ceph 19 is ceph.ErrUnsupported; any
+// other unexpected native reply is an unclassified error. Errors never contain native output. Queue never
 // creates, changes, purges or removes a topic, its policy or its queue, and
 // the result is plain data, not a handle: observing a SUT-created topic does
 // not adopt its lifetime. The call is bounded by ctx and the cluster's startup
@@ -168,19 +169,12 @@ func queue(ctx context.Context, g *gwbase.Core, topic Topic, sample Sample) (Que
 		return QueueSnapshot{}, err
 	}
 	cluster := g.Cluster()
-	if cluster == nil {
-		return QueueSnapshot{}, servicehook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
-	}
-	ctx, cancel := gwbase.AdminContext(ctx, cluster)
-	defer cancel()
-	if err := servicehook.LockTopology(ctx, cluster); err != nil {
-		return QueueSnapshot{}, err
-	}
-	defer servicehook.Unlock(cluster)
-	target, err := g.AdmitAdmin()
+	admission, err := gwbase.AdmitCreation(ctx, g)
 	if err != nil {
 		return QueueSnapshot{}, err
 	}
+	defer admission.Done()
+	ctx, target := admission.Ctx, g.Container()
 	if servicehook.CephBefore(cluster, 19) {
 		return QueueSnapshot{}, unsupported(cluster)
 	}

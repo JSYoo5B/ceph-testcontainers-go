@@ -168,9 +168,11 @@ func (c *Core) ServesScopeOf(origin *Core) bool {
 	return c.SameCluster(origin) && c.scope == origin.scope
 }
 
-// ValidateAdmin refuses a gateway of a terminated cluster, or one that is no
-// longer the cluster's service of its name. The caller holds the cluster
-// mutex.
+// ValidateAdmin refuses a gateway of a terminated cluster, one that is no
+// longer the cluster's service of its name, and one whose Container field no
+// longer holds the container handle that the cluster registered: a handle
+// that a caller put there is not adopted, even with the same container ID.
+// The caller holds the cluster mutex.
 func (c *Core) ValidateAdmin() error {
 	if servicehook.Closed(c.cluster) {
 		return servicehook.Invalid(errors.New("ceph cluster is terminated"))
@@ -181,13 +183,17 @@ func (c *Core) ValidateAdmin() error {
 	if servicehook.DiagnosticHandle(ctr) == nil || servicehook.DiagnosticHandle(service) == nil || service.GetContainerID() != ctr.GetContainerID() {
 		return servicehook.Invalid(errors.New("RGW gateway is no longer owned by this cluster"))
 	}
+	// Comparing interfaces of an incomparable dynamic type would panic.
+	if value := reflect.ValueOf(service); !value.Comparable() || service != ctr {
+		return servicehook.Invalid(errors.New("RGW gateway original container handle changed"))
+	}
 	return nil
 }
 
 // AdminContext bounds a typed admin operation by the cluster's startup
-// timeout. A handle calls it before it has resolved a gateway, so it takes the
-// cluster. Gateway.Admin does not: its caller's ctx is the native command's
-// budget.
+// timeout: the admin budget, which Admit and AdmitCreation start once the
+// topology mutex is held. Gateway.Admin has none: its caller's ctx is the
+// native command's budget.
 func AdminContext(ctx context.Context, cluster *ceph.Container) (context.Context, context.CancelFunc) {
 	if servicehook.StartupTimeout(cluster) > 0 {
 		return context.WithTimeout(ctx, servicehook.StartupTimeout(cluster))

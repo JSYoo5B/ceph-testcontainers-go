@@ -164,3 +164,9 @@ func TestUserUsageMalformedObservationIsNotAMismatch(t *testing.T) {
 		}
 	}
 }
+
+func TestUsageScopesAreThoseOfTheObservation(t *testing.T) {
+	if UsageScopeUser != rgw.UsageScopeUser || UsageScopeAccount != rgw.UsageScopeAccount {
+		t.Fatalf("expectation scopes %q/%q differ from the observation's %q/%q", UsageScopeUser, UsageScopeAccount, rgw.UsageScopeUser, rgw.UsageScopeAccount)
+	}
+}

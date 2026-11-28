@@ -31,6 +31,7 @@ type rgwTLSGatewayContainer struct {
 	copied   map[string][]byte
 	listener *tlsListener
 	readFail bool
+	starts   int
 }
 
 func (c *rgwTLSGatewayContainer) GetContainerID() string { return "rgw-tls" }
@@ -95,7 +96,8 @@ func (c *rgwTLSGatewayContainer) Start(ctx context.Context) error {
 	if c.fail == "start" {
 		return errors.New("readiness failed")
 	}
-	c.state.Running, c.state.StartedAt = true, "next"
+	c.starts++
+	c.state.Running, c.state.StartedAt = true, fmt.Sprintf("next-%d", c.starts)
 	if c.listener != nil {
 		if err := c.listener.reconcile(ctx); err != nil {
 			return err
@@ -286,15 +288,17 @@ func TestRGWTLSInstallationReplyLossRecoversExpectedMaterial(t *testing.T) {
 	}
 }
 
+// A Stop whose reply was lost is decided by the run state: the stopped
+// original generation shows that it took effect, so the same call starts it.
 func TestRGWTLSCompletedStopReplyLossResumesSameReplacement(t *testing.T) {
 	first, second := testRGWTLSMaterial(t), testRGWTLSMaterial(t)
 	ctr := &rgwTLSGatewayContainer{state: container.State{Running: true}, fail: "stop-complete"}
 	gateway := tlsReplacementGateway(t, ctr, first)
-	if err := gateway.ReplaceTLS(t.Context(), *second); err == nil || ctr.state.Running {
-		t.Fatalf("completed Stop: %v", err)
+	if err := gateway.ReplaceTLS(t.Context(), *second); err != nil || !ctr.state.Running || ctr.starts != 1 {
+		t.Fatalf("completed Stop: %v, starts %d", err, ctr.starts)
 	}
-	if err := gateway.ReplaceTLS(t.Context(), *second); err != nil || !ctr.state.Running {
-		t.Fatalf("retry: %v", err)
+	if gateway.tls.fingerprint() != newTLSListener(second).fingerprint() {
+		t.Fatal("the resumed restart did not keep the replaced material")
 	}
 }
 

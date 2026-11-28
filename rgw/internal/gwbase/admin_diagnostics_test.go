@@ -87,7 +87,7 @@ func TestEventReport(t *testing.T) {
 		"12:57:48.234 _calc_target  raw pgid 2.85fca992 -> actual 2.2 acting [0] primary 0 | 12:57:48.234 _op_submit oid default.realm '@2' '@2' [read 0~0] tid 1 osd.0 | " +
 		"12:57:48.234 _send_op 1 to 2.2 on osd.0; then of other threads, for these requests and OSD maps, the first 2 of 2: " +
 		"12:57:48.234 handle_osd_map got epochs [16,16] > 0 | 12:57:53.269 tid 1 on osd.0 is laggy (3 times until 12:58:03.271)"
-	got := eventReport([]byte(eventsStderr))
+	got := eventReportOf([]byte(eventsStderr))
 	if got != want {
 		t.Fatalf("event report:\n got %q\nwant %q", got, want)
 	}
@@ -141,7 +141,7 @@ func TestEventReportFindsTheRequestsWithoutAReply(t *testing.T) {
 		event(messenger, "4440", "handle_osd_map got epochs [%d,%d] > %d", 200+i, 200+i, 199+i)
 		event(timer, "4440", " tid %d on osd.0 is laggy", 100+requests-1)
 	}
-	got := eventReport([]byte(dump.String()))
+	got := eventReportOf([]byte(dump.String()))
 	open := requests - answered
 	if !strings.HasPrefix(got, fmt.Sprintf("of its %d recent events, %d of the objecter; through client.4440 the signalled thread submitted %d requests in them, %d without a reply: "+
 		"tid %d [call rgw.bucket_list] of .dir.bucket.%d%s... in @60 to pg 60.%d on osd.0 at 12:57:", count, count, requests, open, 100+answered, answered, strings.Repeat("x", maxNameBytes-len(".dir.bucket.20")), answered%8)) ||
@@ -238,25 +238,25 @@ func TestEventReportWithholdsAKeyObjectInEveryEvent(t *testing.T) {
 		},
 	}
 	for name, events := range cases {
-		got := eventReport(eventDump(events...))
+		got := eventReportOf(eventDump(events...))
 		if got == "" || strings.Contains(got, "PRIVATE") {
 			t.Errorf("%s: %q", name, got)
 		}
 	}
 	// What is not a key object's stays: the reply to a request whose
 	// submission is among the events.
-	got := eventReport(eventDump(cases["a reply without its submission"]...))
+	got := eventReportOf(eventDump(cases["a reply without its submission"]...))
 	for _, want := range []string{"osd_op_reply(2 other [read 0~0]", "an event of request 1, which was submitted before these events"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("no %q in %q", want, got)
 		}
 	}
 	// An event that is withheld keeps its place.
-	got = eventReport(eventDump(cases["an active request without its submission, of other threads"]...))
+	got = eventReportOf(eventDump(cases["an active request without its submission, of other threads"]...))
 	if want := "the last 3 of 3 different ones: 12:57:00.234 dump_active .. 0 homeless | 12:57:01.234 an event of request 1, which was submitted before these events | 12:57:02.234 tick"; !strings.HasSuffix(got, want) {
 		t.Errorf("no %q in %q", want, got)
 	}
-	got = eventReport(eventDump(cases["other shapes"]...))
+	got = eventReportOf(eventDump(cases["other shapes"]...))
 	for _, want := range []string{"an event whose text may name an object (2 times until 12:57:02.234)", "an event whose text may name an object (3 times until 12:57:06.234)"} {
 		if !strings.Contains(got, want) || strings.Contains(got, "laggy") || strings.Contains(got, "_send_op") {
 			t.Errorf("no %q in %q", want, got)
@@ -290,7 +290,7 @@ func TestEventReportNamesTheLatestDestination(t *testing.T) {
 		},
 	}
 	for name, c := range cases {
-		if got := eventReport(eventDump(c.events...)); !strings.Contains(got, c.want) {
+		if got := eventReportOf(eventDump(c.events...)); !strings.Contains(got, c.want) {
 			t.Errorf("%s: no %q in %q", name, c.want, got)
 		}
 	}
@@ -317,7 +317,7 @@ func TestEventReportWithoutTheStoppedThread(t *testing.T) {
 			"of its 1 recent events, 1 of the objecter; through client.1 the signalled thread submitted 1 requests in them, 1 without a reply: tid 1 [read 0~0] of a in @9 to no OSD at 12:57:48.233; " +
 				"its last 1 events: 12:57:48.233 _op_submit oid a '@9' '@9' [read 0~0] tid 1 osd.-1; then no event of another thread for these requests, and no OSD map"},
 	} {
-		if got := eventReport([]byte(c.stderr)); got != c.want {
+		if got := eventReportOf([]byte(c.stderr)); got != c.want {
 			t.Errorf("%s:\n got %q\nwant %q", name, got, c.want)
 		}
 	}
@@ -357,5 +357,81 @@ func TestAdminCrashHasNoErrno(t *testing.T) {
 	err := adminRunFailure(supervised.Report{ExitCode: 2, Stderr: []byte(reply)})
 	if !errors.Is(err, fs.ErrNotExist) || !strings.HasPrefix(err.Error(), "radosgw-admin exited 2 (ENOENT)") {
 		t.Fatalf("a failed radosgw-admin: %v", err)
+	}
+}
+
+// eventReportOf is eventReport for the thread that the first thread line of
+// the fatal signal report in stderr names. Most inputs here hold that line
+// without the report's header, which adminRunFailure would need.
+func eventReportOf(stderr []byte) string {
+	thread := ""
+	for line := range strings.SplitSeq(string(stderr), "\n") {
+		if match := fatalSignalThread.FindStringSubmatch(strings.TrimSpace(line)); match != nil {
+			thread = match[1]
+			break
+		}
+	}
+	return eventReport(thread, stderr)
+}
+
+// TestSignalReportNamesOneThreadForBothReports gives the thread ID with and
+// without "0x": the crash summary and the event report name the same thread,
+// because both read it from the one parsed report header.
+func TestSignalReportNamesOneThreadForBothReports(t *testing.T) {
+	events := "  -2> 2026-11-21T12:57:00.234+0000 ffff91307040 10 client.4440.objecter _op_submit oid object '@5' '@5' [read 0~0] tid 1 osd.0\n" +
+		"  -1> 2026-11-21T12:57:01.234+0000 ffff6d7a8c40 10 client.4440.objecter tick\n"
+	for _, spelling := range []string{"ffff91307040", "0xffff91307040"} {
+		stderr := "*** Caught signal (Segmentation fault) **\n in thread " + spelling + " thread_name:radosgw-admin\n" + recentEventsBegin + "\n" + events
+		for name, err := range map[string]error{
+			"crash": adminRunFailure(supervised.Report{ExitCode: 139, Stderr: []byte(stderr)}),
+			"stop":  AdminReportFailure(supervised.Report{TimedOut: true, Stderr: []byte(strings.Replace(stderr, "Segmentation fault", "Aborted", 1))}, 5),
+		} {
+			text := err.Error()
+			if name == "crash" && !strings.Contains(text, "fatal signal Segmentation fault in thread radosgw-admin") {
+				t.Errorf("%s %s: the summary names no thread: %s", spelling, name, text)
+			}
+			if !strings.Contains(text, "through client.4440 the signalled thread submitted 1 requests in them, 1 without a reply") || strings.Contains(text, "none of the signalled thread") {
+				t.Errorf("%s %s: the event report lost the thread: %s", spelling, name, text)
+			}
+		}
+	}
+}
+
+// TestRedactionShowsOnlyEventsThatNameNoKeyObject is a table over the
+// classifier alone: which event texts are shown and what replaces the
+// others.
+func TestRedactionShowsOnlyEventsThatNameNoKeyObject(t *testing.T) {
+	const keyObject, unknown = "an event of a key object", "an event whose text may name an object"
+	r := newRedaction([]dumpEvent{
+		{client: "1", text: "_op_submit oid PRIVATEACCESSKEY '@5;users.keys' '@5;users.keys' [read 0~0] tid 7 osd.0"},
+		{client: "1", text: "_op_submit oid bucket.index '@3' '@3' [read 0~0] tid 8 osd.0"},
+	})
+	for _, c := range []struct{ client, text, want string }{
+		{"1", "_send_op 8 to 3.1 on osd.0", ""},
+		{"1", "tid 8 on osd.0 is laggy", ""},
+		{"1", "tick", ""},
+		{"1", "_op_submit oid bucket.index '@3' '@3' [read 0~0] tid 8 osd.0", ""},
+		{"1", "ms_dispatch2 0x osd_op_reply(8 bucket.index [read 0~0] v0'0 uv0 ondisk = 0)", ""},
+		{"1", "8\t3.1\tosd.0\tbucket.index\t[read 0~0]", ""},
+		// A key namespace, a key object's name or a key object's
+		// transaction is never shown.
+		{"1", "_op_submit oid OTHERKEY '@5;users.swift' '@5;users.swift' [read 0~0] tid 9 osd.0", keyObject},
+		{"1", "_calc_target epoch 5 base PRIVATEACCESSKEY @5;users.keys precalc_pgid 0", keyObject},
+		{"1", "laggy tid 2 for PRIVATEACCESSKEY", keyObject},
+		{"1", "ms_dispatch2 0x osd_op_reply(7 SOMEKEY [read 0~0] v0'0 uv0 ondisk = 0)", keyObject},
+		// A transaction of another client is another request.
+		{"2", "ms_dispatch2 0x osd_op_reply(8 bucket.index [read 0~0] v0'0 uv0 ondisk = 0)", "an event of request 8, which was submitted before these events"},
+		{"1", "ms_dispatch2 0x osd_op_reply(3 something [read 0~0] v0'0 uv0 ondisk = 0)", "an event of request 3, which was submitted before these events"},
+		// Any other shape may hold an object name.
+		{"1", "list_nobjects pool 3 nspace", unknown},
+		{"1", "handle_osd_backoff something", unknown},
+	} {
+		want := c.want
+		if want == "" {
+			want = c.text
+		}
+		if got := r.shown(dumpEvent{client: c.client, text: c.text}); got != want {
+			t.Errorf("%q: shown as %q, want %q", c.text, got, want)
+		}
 	}
 }

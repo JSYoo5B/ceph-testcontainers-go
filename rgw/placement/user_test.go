@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwtest"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -163,7 +164,7 @@ func TestRGWUserPlacementRejectsInvalidConfigurationBeforeNativeCalls(t *testing
 		{Tags: []string{}}, {Tags: []string{""}}, {Tags: []string{"writer,other"}}, {Tags: []string{"writer\n"}}, {Tags: []string{"writer other"}}, {Tags: []string{"same", "same"}}, {StorageClass: "standard_ia"},
 	} {
 		_, f, p, user := newRGWUserPlacementFixture(t)
-		if err := setUserDefault(t.Context(), p, user, config); err == nil || len(f.Calls) != 0 {
+		if err := setUserDefault(t.Context(), p, user, config); !errors.Is(err, ceph.ErrInvalidRequest) || len(f.Calls) != 0 {
 			t.Fatal("invalid/unsupported user placement request reached native command")
 		}
 	}
@@ -173,47 +174,53 @@ func TestRGWUserPlacementRejectsOwnershipScopePoolMappingAndKeyChanges(t *testin
 	for _, check := range []struct {
 		name string
 		edit func(*gwtest.Gateway, *rgwUserPlacementTestContainer, *Placement, *gwbase.User)
+		// invalid marks a refusal before any native command.
+		invalid bool
 	}{
 		{"foreign user", func(_ *gwtest.Gateway, _ *rgwUserPlacementTestContainer, _ *Placement, user *gwbase.User) {
 			user.Origin = gwtest.Foreign()
-		}},
+		}, false},
 		{"foreign scope", func(g *gwtest.Gateway, _ *rgwUserPlacementTestContainer, _ *Placement, user *gwbase.User) {
 			user.Origin = gwbase.NewCore(gwbase.Params{Cluster: g.Cluster, Name: "default", Scope: gwbase.Scope{Zone: "elsewhere"},
 				Gateways: func() []*gwbase.Core { return g.Registered }})
-		}},
+		}, false},
 		{"different captured native scope", func(_ *gwtest.Gateway, _ *rgwUserPlacementTestContainer, p *Placement, user *gwbase.User) {
 			scope := p.scope
 			scope.ZoneID = "elsewhere"
 			user.State.NativeScope = &scope
-		}},
+		}, false},
 		{"removed user", func(_ *gwtest.Gateway, _ *rgwUserPlacementTestContainer, _ *Placement, user *gwbase.User) {
 			user.State.Removed = true
-		}},
+		}, true},
 		{"unconfirmed placement", func(_ *gwtest.Gateway, _ *rgwUserPlacementTestContainer, p *Placement, _ *gwbase.User) {
 			p.confirmed = false
-		}},
+		}, true},
 		{"foreign placement", func(_ *gwtest.Gateway, _ *rgwUserPlacementTestContainer, p *Placement, _ *gwbase.User) {
 			p.origin = gwbase.NewOrigin(gwtest.Foreign())
-		}},
-		{"replaced pool", func(_ *gwtest.Gateway, f *rgwUserPlacementTestContainer, _ *Placement, _ *gwbase.User) { f.PoolID = 99 }},
+		}, false},
+		{"replaced pool", func(_ *gwtest.Gateway, f *rgwUserPlacementTestContainer, _ *Placement, _ *gwbase.User) { f.PoolID = 99 }, false},
 		{"changed native scope", func(_ *gwtest.Gateway, f *rgwUserPlacementTestContainer, _ *Placement, _ *gwbase.User) {
 			f.Zone["id"] = "elsewhere"
-		}},
+		}, false},
 		{"changed mapping", func(_ *gwtest.Gateway, f *rgwUserPlacementTestContainer, _ *Placement, _ *gwbase.User) {
 			zonePlacement(f.Zone, "tiered")["data_extra_pool"] = "elsewhere"
-		}},
+		}, false},
 		{"changed target tags", func(_ *gwtest.Gateway, f *rgwUserPlacementTestContainer, _ *Placement, _ *gwbase.User) {
 			groupTarget(f.Group, "tiered")["tags"] = []any{"foreign"}
-		}},
+		}, false},
 		{"replaced native keys", func(_ *gwtest.Gateway, f *rgwUserPlacementTestContainer, _ *Placement, _ *gwbase.User) {
 			f.user["keys"] = []gwbase.NativeKey{{AccessKey: "REPLACED", SecretKey: "SECRET"}}
-		}},
+		}, false},
 	} {
 		t.Run(check.name, func(t *testing.T) {
 			g, f, p, user := newRGWUserPlacementFixture(t)
 			check.edit(g, f, p, user)
-			if err := setUserDefault(t.Context(), p, user, UserDefault{StorageClass: "STANDARD_IA", Tags: []string{"writer"}}); err == nil {
+			err := setUserDefault(t.Context(), p, user, UserDefault{StorageClass: "STANDARD_IA", Tags: []string{"writer"}})
+			if err == nil {
 				t.Fatal("changed resource accepted")
+			}
+			if check.invalid && (!errors.Is(err, ceph.ErrInvalidRequest) || len(f.Calls) != 0) {
+				t.Fatalf("refusal %v after %d native commands", err, len(f.Calls))
 			}
 			for _, args := range f.Calls {
 				if args[0] == "radosgw-admin" && slices.Contains(args, "modify") {

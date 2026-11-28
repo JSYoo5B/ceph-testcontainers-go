@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/mutation"
@@ -16,7 +18,6 @@ import (
 )
 
 var (
-	tenantName  = regexp.MustCompile(`^[A-Za-z0-9_]{1,128}$`)
 	accountID   = regexp.MustCompile(`^RGW[0-9]{17}$`)
 	iamUserName = regexp.MustCompile(`^[A-Za-z0-9_+=,.@-]{1,64}$`)
 )
@@ -156,10 +157,11 @@ func FullUserID(tenant, namespace, id string) string {
 	return id
 }
 
-// ValidateTenant refuses a tenant that is not letters, digits and
-// underscores, or that is formatted as an account ID.
+// ValidateTenant refuses a user tenant that the UserTenant rule refuses: one
+// that is not letters, digits and underscores, or that is formatted as an
+// account ID.
 func ValidateTenant(tenant string) error {
-	if tenant != "" && (!tenantName.MatchString(tenant) || accountID.MatchString(tenant)) {
+	if !UserTenant.Valid(tenant) {
 		return servicehook.Invalid(errors.New("RGW tenant must use letters, digits or underscores and must not be formatted as an account ID"))
 	}
 	return nil
@@ -275,6 +277,9 @@ func (g *Core) UserExists(ctx context.Context, u *User) (bool, error) {
 	return slices.Contains(users, u.ID), nil
 }
 
+// errUserScopeChanged refuses a user whose gateway left its native scope.
+const errUserScopeChanged = "RGW user's native runtime scope changed"
+
 // UserCommand runs a radosgw-admin command of u through g, supervised: in the
 // user's captured native scope, after checking that g still runs in it, or in
 // g's configured scope. A call whose ctx ends stops the command before it
@@ -282,12 +287,9 @@ func (g *Core) UserExists(ctx context.Context, u *User) (bool, error) {
 // *ceph.NativeCommandUnstoppedError.
 func (g *Core) UserCommand(ctx context.Context, u *User, args ...string) ([]byte, error) {
 	if u.State.NativeScope != nil {
-		scope, err := g.RuntimeScope(ctx)
+		scope, err := g.RequireScope(ctx, *u.State.NativeScope, errUserScopeChanged)
 		if err != nil {
 			return nil, err
-		}
-		if scope != *u.State.NativeScope {
-			return nil, errors.New("RGW user's native runtime scope changed")
 		}
 		return g.Command(ctx, scope, args...)
 	}
@@ -298,10 +300,20 @@ func (g *Core) UserCommand(ctx context.Context, u *User, args ...string) ([]byte
 // identity it created: the same ID, the fixture-created keys as CheckKeys
 // requires them, and the original type and account association.
 func (g *Core) OwnedUser(ctx context.Context, u *User) (*NativeUser, error) {
+	return g.ownedUser(ctx, u, func() ([]byte, error) { return g.UserCommand(ctx, u, "user", "info", "--uid", u.ID) })
+}
+
+// OwnedUserIn is OwnedUser with u read in native scope instead of the user's
+// own, for an operation on a resource of that scope, such as a placement.
+func (g *Core) OwnedUserIn(ctx context.Context, u *User, scope NativeScope) (*NativeUser, error) {
+	return g.ownedUser(ctx, u, func() ([]byte, error) { return g.Command(ctx, scope, "user", "info", "--uid", u.ID) })
+}
+
+func (g *Core) ownedUser(ctx context.Context, u *User, read func() ([]byte, error)) (*NativeUser, error) {
 	if !u.Active() {
-		return nil, errors.New("RGW user must be an active identity created in this cluster")
+		return nil, servicehook.Invalid(errors.New("RGW user must be an active identity created in this cluster"))
 	}
-	native, err := g.readUser(ctx, u)
+	native, err := u.decodeOwn(read())
 	if err != nil {
 		return nil, err
 	}
@@ -317,7 +329,12 @@ func (g *Core) OwnedUser(ctx context.Context, u *User) (*NativeUser, error) {
 // readUser reads the native information of u through g and refuses another
 // user's. It checks no key.
 func (g *Core) readUser(ctx context.Context, u *User) (*NativeUser, error) {
-	data, err := g.UserCommand(ctx, u, "user", "info", "--uid", u.ID)
+	return u.decodeOwn(g.UserCommand(ctx, u, "user", "info", "--uid", u.ID))
+}
+
+// decodeOwn decodes the user info data that a read returned with err and
+// refuses another user's.
+func (u *User) decodeOwn(data []byte, err error) (*NativeUser, error) {
 	if err != nil {
 		return nil, err
 	}
@@ -326,7 +343,7 @@ func (g *Core) readUser(ctx context.Context, u *User) (*NativeUser, error) {
 		return nil, err
 	}
 	if native.Info.ID != u.ID {
-		return nil, servicehook.Invalid(errors.New("RGW user has different credentials; refusing owned-user operation"))
+		return nil, errOtherCredentials
 	}
 	return native, nil
 }
@@ -526,12 +543,9 @@ func (g *Core) MutateUser(ctx context.Context, u *User, args ...string) error {
 	}
 	argv := AdminArgv(g.scope, append([]string{"--format", "json"}, args...)...)
 	if u.State.NativeScope != nil {
-		scope, err := g.RuntimeScope(ctx)
+		scope, err := g.RequireScope(ctx, *u.State.NativeScope, errUserScopeChanged)
 		if err != nil {
 			return err
-		}
-		if scope != *u.State.NativeScope {
-			return errors.New("RGW user's native runtime scope changed")
 		}
 		argv = CommandArgs(scope, args...)
 	}
@@ -540,4 +554,23 @@ func (g *Core) MutateUser(ctx context.Context, u *User, args ...string) error {
 		var failure *ceph.NativeFailure
 		return err == nil || (errors.As(err, &failure) && slices.Contains([]string{"EINVAL", "EPERM", "EACCES", "ENOENT"}, failure.Errno)), err
 	})
+}
+
+// ValidText reports whether value, a free text field of a user or an account
+// (a display name, an email, a capability list, an account name), has no
+// surrounding whitespace and no control character, and, with requireUTF8,
+// is valid UTF-8. Accounts require UTF-8; users never have.
+func ValidText(value string, requireUTF8 bool) bool {
+	return (!requireUTF8 || utf8.ValidString(value)) && strings.TrimSpace(value) == value && strings.IndexFunc(value, unicode.IsControl) == -1
+}
+
+// CheckQuotaLimits refuses, with ceph.ErrInvalidRequest, a quota of a user,
+// an account or their buckets whose limits are below -1 or whose positive
+// byte limit is not a multiple of 1024: native quota sizes are KiB, so
+// another byte limit would be rounded.
+func CheckQuotaLimits(quota Quota, subject string) error {
+	if quota.MaxSizeBytes < -1 || quota.MaxObjects < -1 || quota.MaxSizeBytes > 0 && quota.MaxSizeBytes%1024 != 0 {
+		return servicehook.Invalid(fmt.Errorf("%s quota limits must be -1, zero or positive; positive byte limits must be multiples of 1024", subject))
+	}
+	return nil
 }

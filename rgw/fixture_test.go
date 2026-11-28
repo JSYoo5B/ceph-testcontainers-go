@@ -2,6 +2,7 @@ package rgw
 
 import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwtest"
 	"github.com/testcontainers/testcontainers-go"
@@ -46,4 +47,13 @@ func editedUser(u *User, edit func(*gwbase.User)) *User {
 	copied := *u.base()
 	edit(&copied)
 	return newUser(&copied)
+}
+
+// replaceGatewayContainer puts ctr, a test seam around the gateway's
+// container, in the gateway's Container field and registers it as the
+// cluster's service, as a restart that replaced the container would: typed
+// operations run only through the registered handle.
+func replaceGatewayContainer(g *Gateway, ctr testcontainers.Container) {
+	g.Container = ctr
+	testhelper.TestRecordService(g.base().Cluster(), rgwServiceName(g.config), ctr)
 }

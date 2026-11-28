@@ -2,7 +2,6 @@ package multisite
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -10,6 +9,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -51,7 +51,7 @@ func (f *Fixture) Zonegroups() []Zonegroup {
 //purpose:construction,condition
 func (f *Fixture) AddZonegroup(ctx context.Context, image string, config ZonegroupConfig, opts ...testcontainers.ContainerCustomizer) (*Zonegroup, error) {
 	if f == nil || !validRGWZoneName(config.Name) || len(config.Zones) == 0 {
-		return nil, errors.New("RGW zonegroup requires a valid name and at least one zone")
+		return nil, servicehook.Invalid(errors.New("RGW zonegroup requires a valid name and at least one zone"))
 	}
 	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
 		return nil, err
@@ -61,40 +61,31 @@ func (f *Fixture) AddZonegroup(ctx context.Context, image string, config Zonegro
 		return nil, err
 	}
 	if _, exists := f.topology.groupIDs[config.Name]; exists {
-		return nil, fmt.Errorf("RGW zonegroup %s is already owned", config.Name)
+		return nil, servicehook.Invalid(fmt.Errorf("RGW zonegroup %s is already owned", config.Name))
 	}
-	zones := slices.Clone(config.Zones)
-	master := config.MasterZone
-	if master == "" {
-		master = zones[0].Name
+	zones, master, err := rgwZonegroupZones(config)
+	if err != nil {
+		return nil, err
 	}
-	index := slices.IndexFunc(zones, func(zone ZoneConfig) bool { return zone.Name == master })
-	if index < 0 {
-		return nil, errors.New("RGW zonegroup master must name one of its zones")
+	if err := validateRGWZoneNames(zones); err != nil {
+		return nil, err
 	}
-	selected := zones[index]
-	zones = append([]ZoneConfig{selected}, slices.Delete(zones, index, index+1)...)
-	for i := range zones {
-		if zones[i].Zonegroup != "" && zones[i].Zonegroup != config.Name {
-			return nil, errors.New("conflicting RGW zonegroup name")
-		}
-		zones[i].Zonegroup = config.Name
-		if !validRGWZoneName(zones[i].Name) {
-			return nil, errors.New("invalid RGW zone name")
-		}
-		for _, existing := range f.zoneStates() {
-			if existing.Name == zones[i].Name {
-				return nil, fmt.Errorf("RGW zone %s is already owned", zones[i].Name)
+	existing := f.zoneStates()
+	for _, zone := range zones {
+		for _, owned := range existing {
+			if owned.Name == zone.Name {
+				return nil, servicehook.Invalid(fmt.Errorf("RGW zone %s is already owned", zone.Name))
 			}
-			if err := multicluster.ValidatePair(ctx, image, existing.cluster, zones[i].Cluster); err != nil {
+		}
+	}
+	for i, zone := range zones {
+		for _, owned := range existing {
+			if err := multicluster.ValidatePair(ctx, image, owned.cluster, zone.Cluster); err != nil {
 				return nil, err
 			}
 		}
 		for j := range i {
-			if zones[j].Name == zones[i].Name {
-				return nil, errors.New("RGW zones must have unique names")
-			}
-			if err := multicluster.ValidatePair(ctx, image, zones[j].Cluster, zones[i].Cluster); err != nil {
+			if err := multicluster.ValidatePair(ctx, image, zones[j].Cluster, zone.Cluster); err != nil {
 				return nil, err
 			}
 		}
@@ -126,7 +117,7 @@ func (f *Fixture) AddZonegroup(ctx context.Context, image string, config Zonegro
 //purpose:condition,lifetime
 func (f *Fixture) RemoveZone(ctx context.Context, name string) error {
 	if f == nil || !validRGWZoneName(name) {
-		return errors.New("invalid RGW fixture or zone name")
+		return servicehook.Invalid(errors.New("invalid RGW fixture or zone name"))
 	}
 	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
 		return err
@@ -136,7 +127,7 @@ func (f *Fixture) RemoveZone(ctx context.Context, name string) error {
 		return err
 	}
 	if f.closed {
-		return multisiteInvalid(errors.New("RGW multisite is terminated"))
+		return servicehook.Invalid(errors.New("RGW multisite is terminated"))
 	}
 	for pendingName, pending := range f.topology.removed {
 		if pendingName != name && (!pending.converged || !pending.gatewayRemoved || !pending.clientRemoved) {
@@ -237,13 +228,11 @@ func (f *Fixture) detachZone(ctx context.Context, master, state *rgwZoneState) e
 	if err != nil {
 		return err
 	}
-	var group struct {
-		Zones []struct{ ID, Name string } `json:"zones"`
-	}
-	if err := json.Unmarshal(groupData, &group); err != nil {
+	group, err := decodeZonegroupDocument(groupData)
+	if err != nil {
 		return err
 	}
-	if slices.ContainsFunc(group.Zones, func(zone struct{ ID, Name string }) bool { return zone.ID == state.ID }) {
+	if slices.ContainsFunc(group.Zones, func(zone rgwTopologyZone) bool { return zone.ID == state.ID }) {
 		if _, err := f.realm.adminInGroup(ctx, master.client, state.Zonegroup, state.Name, "zonegroup", "remove", "--zone-id", state.ID); err != nil {
 			return err
 		}

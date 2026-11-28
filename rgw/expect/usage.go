@@ -10,14 +10,12 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 )
 
-// The scopes of an rgw.UserUsage observation.
+// The scopes of an rgw.UserUsage observation, which package rgw owns.
 const (
-	// UsageScopeUser: the counters aggregate the selected ordinary user, who
-	// is its own owner.
-	UsageScopeUser = "user"
-	// UsageScopeAccount: the counters aggregate the account the selected user
-	// belongs to, which owns the buckets of all its users and roles.
-	UsageScopeAccount = "account"
+	// UsageScopeUser is rgw.UsageScopeUser.
+	UsageScopeUser = rgw.UsageScopeUser
+	// UsageScopeAccount is rgw.UsageScopeAccount.
+	UsageScopeAccount = rgw.UsageScopeAccount
 )
 
 // UserUsage states what a test expects of one rgw.UserUsage observation, read
@@ -30,8 +28,8 @@ const (
 // which is required and differs from UserID. Distinct users of one account
 // therefore state the same OwnerID with their own UserID.
 //
-// Objects and SizeBytes are always compared, so zero objects and zero bytes
-// are expectations of their own. SizeBytes is the native logical size, the
+// Objects, compared with the observed NumObjects, and SizeBytes are always
+// compared, so zero objects and zero bytes are expectations of their own. SizeBytes is the native logical size, the
 // sum of object sizes; the rounded accounting size (SizeActualBytes) is not
 // compared.
 //

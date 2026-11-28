@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
 	"sync"
@@ -25,13 +26,19 @@ import (
 	"github.com/testcontainers/testcontainers-go/network"
 )
 
-// Config describes a two-zone realm in fresh test clusters. The
-// source is the metadata master; both zones accept object writes.
-// Setup clients use each cluster's RGW image unless SetupImage overrides it.
+// Config describes a two-zone realm in one zonegroup on fresh test clusters:
+// Source is the metadata master and Destination the secondary, and both zones
+// accept object writes. Use it when a test needs exactly that pair and lets
+// the fixture name the realm and zones; use TopologyConfig for any other
+// topology or when every zone is named. Setup clients use each cluster's RGW
+// image unless SetupImage overrides it.
 //
 // Realm and the zone names default to generated names and Zonegroup to
 // us-east-1; set the zone names when the test refers to zones by name (sync
-// policies, ZoneAdmin, SyncStatus).
+// policies, ZoneAdmin, SyncStatus). A name that is set must be non-empty
+// without surrounding space, a leading "-" or a control character, and the
+// two zones must differ; Run refuses any other with ceph.ErrInvalidRequest
+// before it runs a command.
 type Config struct {
 	Source, Destination                           *ceph.Container
 	Realm, Zonegroup, SourceZone, DestinationZone string
@@ -39,8 +46,30 @@ type Config struct {
 	SetupImage string
 	// Timing selects startup polling and the sync lease period for every
 	// gateway this fixture owns.
-	Timing               TimingProfile
-	destinationZonegroup string
+	Timing TimingProfile
+}
+
+// realmSpec is the input of the one realm builder, translated from a Config
+// or a TopologyConfig with every name complete and validated. Source and
+// SourceZone are the metadata master in zonegroup Zonegroup, Destination and
+// DestinationZone the first other zone in destinationZonegroup, and more the
+// remaining zones in order, each with its zonegroup. suffix makes the
+// fixture's generated names unique.
+type realmSpec struct {
+	Source, Destination                                                 *ceph.Container
+	Realm, Zonegroup, SourceZone, DestinationZone, destinationZonegroup string
+	SetupImage                                                          string
+	Timing                                                              TimingProfile
+	more                                                                []ZoneConfig
+	suffix                                                              string
+}
+
+// zones lists every zone of the spec, the metadata master first.
+func (s realmSpec) zones() []ZoneConfig {
+	return append([]ZoneConfig{
+		{Name: s.SourceZone, Zonegroup: s.Zonegroup, Cluster: s.Source},
+		{Name: s.DestinationZone, Zonegroup: s.destinationZonegroup, Cluster: s.Destination},
+	}, s.more...)
 }
 
 // Fixture owns one gateway and CLI client per zone: two from Run, and one more
@@ -64,52 +93,116 @@ type Fixture struct {
 	syncWrites  mutation.Fence
 }
 
+// String names the fixture by its realm, without the system credentials or
+// the S3 test keys.
+func (f *Fixture) String() string {
+	if f == nil {
+		return "RGW multisite fixture <nil>"
+	}
+	return "RGW multisite fixture " + f.realm.config.Realm
+}
+
+// GoString formats the fixture like String, so %#v does not print the
+// system credentials.
+func (f *Fixture) GoString() string { return f.String() }
+
+// Format prints String for every verb and flag, so no verb, such as %d or %t,
+// walks the fields. The methods have pointer receivers because a Fixture
+// holds a mutex and is only handed out as *Fixture.
+func (f *Fixture) Format(state fmt.State, _ rune) { _, _ = io.WriteString(state, f.String()) }
+
 // rgwRealmAccess runs radosgw-admin in the realm. The configuration, the
 // pair's clients and URLs and the system credentials are fixed once setup has
 // recorded them. zoneGroups, the zonegroup of each added zone, is guarded by
 // scopeMu, because commands resolve it without the topology lock.
 type rgwRealmAccess struct {
-	config                          Config
+	config                          realmSpec
 	sourceClient, destinationClient testcontainers.Container
 	sourceURL, destinationURL       string
-	systemAccess, systemSecret      string
+	system                          systemCredentials
 	scopeMu                         sync.RWMutex
 	zoneGroups                      map[string]string
 }
 
+// systemCredentials holds the realm system user's keys in a closure. fmt
+// prints a function as its address for every verb, and formatting a Fixture
+// value reaches neither the pointer-receiver Format nor any method of an
+// unexported field, so this keeps the keys out of every formatted fixture.
+type systemCredentials func() (access, secret string)
+
+// systemKeys returns the systemCredentials of access and secret.
+func systemKeys(access, secret string) systemCredentials {
+	return func() (string, string) { return access, secret }
+}
+
+// systemAccess and systemSecret return the system user's keys, "" before
+// setup recorded them.
+func (r *rgwRealmAccess) systemAccess() string {
+	if r.system == nil {
+		return ""
+	}
+	access, _ := r.system()
+	return access
+}
+
+func (r *rgwRealmAccess) systemSecret() string {
+	if r.system == nil {
+		return ""
+	}
+	_, secret := r.system()
+	return secret
+}
+
 // rgwZoneTopology is the realm topology beyond the original pair: the added
 // zones, the removals in progress, each zonegroup's native ID and master
-// zone, the gateways whose period reload was interrupted, and whether the
-// pair's bootstrap staging period still needs canonicalizing. It is guarded
+// zone, and whether the pair's bootstrap staging period still needs
+// canonicalizing. An interrupted gateway reload is recorded with the
+// gateway's cluster, as every RGW restart is (gwbase.RestartTarget). It is guarded
 // by Fixture.topologyMu, or owned by setup before the fixture is shared.
 type rgwZoneTopology struct {
 	additional              map[string]*rgwZoneState
 	removed                 map[string]*rgwZoneRemoval
 	groupIDs                map[string]string
 	groupMasters            map[string]string
-	reloadNeeded            map[string]*zoneReload
 	bootstrapStagingPending bool
 }
 
 // Option carries the realm configuration of a fixture to Run: a two-zone
-// Config (WithConfig) or a larger TopologyConfig (WithTopology). It is not a
-// container customization: its Customize does nothing, so it never reaches a
-// gateway.
+// Config (WithConfig) or any TopologyConfig (WithTopology). Both build the
+// realm the same way; they differ in their defaults and in how they name the
+// zones. It is not a container customization: its Customize does nothing, so
+// it never reaches a gateway.
 type Option struct {
 	config   *Config
 	topology *TopologyConfig
 }
 
+// spec translates the carried configuration into the realm builder's input.
+func (o Option) spec() (realmSpec, error) {
+	switch {
+	case o.topology != nil:
+		return topologySpec(*o.topology)
+	case o.config != nil:
+		return pairSpec(*o.config, generatedSuffix())
+	}
+	return realmSpec{}, servicehook.Invalid(errors.New("RGW multisite Option must come from WithConfig or WithTopology"))
+}
+
+// generatedSuffix makes the generated names of one fixture unique.
+func generatedSuffix() string { return strings.ReplaceAll(uuid.NewString(), "-", "")[:12] }
+
 // Customize implements testcontainers.ContainerCustomizer.
 func (Option) Customize(*testcontainers.GenericContainerRequest) error { return nil }
 
-// WithConfig carries a two-zone realm on two existing clusters to Run.
+// WithConfig carries a two-zone realm on two existing clusters to Run, with
+// generated names for the realm and zones that Config leaves empty.
 //
 //purpose:construction
 func WithConfig(config Config) Option { return Option{config: &config} }
 
-// WithTopology carries a realm of at least two zones, in one or several
-// zonegroups, to Run. The zone lists are copied.
+// WithTopology carries a realm of at least two named zones, in one or several
+// zonegroups, to Run. It fits any topology, including a pair whose zones the
+// test names. The zone lists are copied.
 //
 //purpose:construction
 func WithTopology(config TopologyConfig) Option {
@@ -157,24 +250,53 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	if err != nil {
 		return nil, err
 	}
-	switch {
-	case carrier.topology != nil:
-		return runTopology(ctx, img, *carrier.topology, opts...)
-	case carrier.config != nil:
-		return runPair(ctx, img, *carrier.config, opts...)
-	}
-	return nil, servicehook.Invalid(errors.New("RGW multisite Option must come from WithConfig or WithTopology"))
-}
-
-// runPair configures a two-zone realm; runTopology builds larger ones on it.
-func runPair(ctx context.Context, image string, config Config, opts ...testcontainers.ContainerCustomizer) (*Fixture, error) {
-	if err := config.Timing.validate(); err != nil {
-		return nil, err
-	}
-	setup, err := preparePair(ctx, image, config)
+	spec, err := carrier.spec()
 	if err != nil {
 		return nil, err
 	}
+	return buildRealm(ctx, img, spec, opts...)
+}
+
+// buildRealm is the one realm builder behind WithConfig and WithTopology: it
+// configures the pair of spec, then joins its further zones. A non-nil result
+// on error owns partial resources and needs cleanup.
+func buildRealm(ctx context.Context, image string, spec realmSpec, opts ...testcontainers.ContainerCustomizer) (*Fixture, error) {
+	if err := spec.Timing.validate(); err != nil {
+		return nil, err
+	}
+	setup, err := prepareRealm(ctx, image, spec)
+	if err != nil {
+		return nil, err
+	}
+	f, err := runPair(ctx, image, setup, opts...)
+	if err != nil {
+		return f, err
+	}
+	if len(spec.more) > 0 {
+		// The outer constructor still owns fresh initialization and has not
+		// exposed f. Additional remote commits need a final master-local
+		// staging snapshot of the complete graph before returning it.
+		f.topology.bootstrapStagingPending = true
+	}
+	for _, zone := range spec.more {
+		f.topologyMu.Lock()
+		_, exists := f.topology.groupIDs[zone.Zonegroup]
+		_, err := f.addZone(ctx, image, zone, !exists, opts...)
+		f.topologyMu.Unlock()
+		if err != nil {
+			return f, err
+		}
+	}
+	if len(spec.more) > 0 {
+		if err := f.canonicalizeBootstrapStaging(ctx); err != nil {
+			return f, err
+		}
+	}
+	return f, nil
+}
+
+// runPair configures the two-zone realm of setup, bounded by six minutes.
+func runPair(ctx context.Context, image string, setup pairSetup, opts ...testcontainers.ContainerCustomizer) (*Fixture, error) {
 	ctx, cancel := context.WithTimeout(ctx, 6*time.Minute)
 	defer cancel()
 	f := newPairFixture(setup.config)
@@ -197,27 +319,32 @@ func runPair(ctx context.Context, image string, config Config, opts ...testconta
 	if err := f.finishPairBootstrap(ctx, reload); err != nil {
 		return f, err
 	}
-	return f, f.issueS3Credentials(ctx, setup.suffix)
+	return f, f.issueS3Credentials(ctx, setup.config.suffix)
 }
 
-// pairSetup is a validated two-zone request: the completed configuration, the
-// unique suffix of its generated names and what each cluster provides.
+// pairSetup is a validated realm request: the complete spec and what each
+// cluster of its pair provides.
 type pairSetup struct {
-	config                                    Config
-	suffix                                    string
+	config                                    realmSpec
 	sourceHostNetwork, destinationHostNetwork bool
 	sourceClientImage, destinationClientImage string
 }
 
-// preparePair validates both clusters and the requested names before anything
-// is created.
-func preparePair(ctx context.Context, image string, config Config) (pairSetup, error) {
-	if err := multicluster.ValidatePair(ctx, image, config.Source, config.Destination); err != nil {
-		return pairSetup{}, err
+// prepareRealm validates every cluster of spec before anything is created:
+// each pair of clusters, the gateway image and that each cluster is fresh.
+func prepareRealm(ctx context.Context, image string, spec realmSpec) (pairSetup, error) {
+	zones := spec.zones()
+	for i, zone := range zones {
+		for j := range i {
+			if err := multicluster.ValidatePair(ctx, image, zones[j].Cluster, zone.Cluster); err != nil {
+				return pairSetup{}, fmt.Errorf("RGW zones %s/%s: %w", zones[j].Name, zone.Name, err)
+			}
+		}
+		if err := multicluster.RequireRoleImage(image, multicluster.RoleRGW, zone.Cluster); err != nil {
+			return pairSetup{}, fmt.Errorf("RGW zone %s gateway image: %w", zone.Name, err)
+		}
 	}
-	if err := multicluster.RequireRoleImage(image, multicluster.RoleRGW, config.Source, config.Destination); err != nil {
-		return pairSetup{}, fmt.Errorf("configure RGW multisite gateway image: %w", err)
-	}
+	config := spec
 	sourceFacts, err := ceph.FactsOf(config.Source)
 	if err != nil {
 		return pairSetup{}, err
@@ -233,21 +360,19 @@ func preparePair(ctx context.Context, image string, config Config) (pairSetup, e
 	if setup.destinationClientImage, err = rgwSetupImage(config.SetupImage, destinationFacts.Images.RGW); err != nil {
 		return pairSetup{}, err
 	}
-	for _, cluster := range []*ceph.Container{config.Source, config.Destination} {
-		if err := ensureFreshRGWCluster(ctx, cluster); err != nil {
+	for _, zone := range zones {
+		if err := ensureFreshRGWCluster(ctx, zone.Cluster); err != nil {
 			return pairSetup{}, err
 		}
 	}
-	setup.suffix = strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
-	if setup.config, err = completePairConfig(config, setup.suffix); err != nil {
-		return pairSetup{}, err
-	}
+	setup.config = config
 	return setup, nil
 }
 
-// completePairConfig fills the default realm, zonegroup and zone names from
-// suffix and refuses names radosgw-admin would misread.
-func completePairConfig(config Config, suffix string) (Config, error) {
+// pairSpec translates a WithConfig pair: it fills the default realm,
+// zonegroup and zone names from suffix, puts both zones in that zonegroup and
+// refuses names radosgw-admin would misread before any command.
+func pairSpec(config Config, suffix string) (realmSpec, error) {
 	if config.Realm == "" {
 		config.Realm = "tc-multicluster-" + suffix
 	}
@@ -261,20 +386,21 @@ func completePairConfig(config Config, suffix string) (Config, error) {
 		config.DestinationZone = "tc-secondary-" + suffix
 	}
 	for _, name := range []string{config.Realm, config.Zonegroup, config.SourceZone, config.DestinationZone} {
-		if strings.TrimSpace(name) != name || name == "" || strings.HasPrefix(name, "-") || strings.ContainsAny(name, "\x00\r\n") {
-			return Config{}, fmt.Errorf("invalid RGW realm/zone name")
+		if !validRGWZoneName(name) {
+			return realmSpec{}, servicehook.Invalid(errors.New("invalid RGW realm/zone name"))
 		}
 	}
 	if config.SourceZone == config.DestinationZone {
-		return Config{}, fmt.Errorf("RGW zones must be distinct")
+		return realmSpec{}, servicehook.Invalid(errors.New("RGW zones must be distinct"))
 	}
-	if config.destinationZonegroup == "" {
-		config.destinationZonegroup = config.Zonegroup
-	}
-	return config, nil
+	return realmSpec{
+		Source: config.Source, Destination: config.Destination,
+		Realm: config.Realm, Zonegroup: config.Zonegroup, SourceZone: config.SourceZone, DestinationZone: config.DestinationZone,
+		destinationZonegroup: config.Zonegroup, SetupImage: config.SetupImage, Timing: config.Timing, suffix: suffix,
+	}, nil
 }
 
-func newPairFixture(config Config) *Fixture {
+func newPairFixture(config realmSpec) *Fixture {
 	f := &Fixture{realm: rgwRealmAccess{config: config, zoneGroups: map[string]string{config.SourceZone: config.Zonegroup, config.DestinationZone: config.destinationZonegroup}}, topology: rgwZoneTopology{bootstrapStagingPending: true, groupIDs: make(map[string]string), groupMasters: map[string]string{config.Zonegroup: config.SourceZone}}}
 	if config.destinationZonegroup != config.Zonegroup {
 		f.topology.groupMasters[config.destinationZonegroup] = config.DestinationZone
@@ -321,20 +447,20 @@ func pairAliases(suffix string) (source, destination string) {
 // the endpoint its gateway will serve, and the system user on the source,
 // then starts its gateway.
 func (f *Fixture) bootstrapSourceZone(ctx context.Context, image string, setup pairSetup, bridge *testcontainers.DockerNetwork, opts ...testcontainers.ContainerCustomizer) error {
-	sourceAlias, destinationAlias := pairAliases(setup.suffix)
+	sourceAlias, destinationAlias := pairAliases(setup.config.suffix)
 	source, err := reserveZoneEndpoint(ctx, setup.config.Source, setup.sourceHostNetwork, sourceAlias)
 	if err != nil {
 		return err
 	}
 	defer source.releaseUnused(ctx)
 	f.realm.sourceURL, f.realm.destinationURL = source.endpoint, "http://"+destinationAlias+":7480"
-	f.realm.systemAccess, f.realm.systemSecret = strings.ReplaceAll(uuid.NewString(), "-", ""), uuid.NewString()+uuid.NewString()
+	f.realm.system = systemKeys(strings.ReplaceAll(uuid.NewString(), "-", ""), uuid.NewString()+uuid.NewString())
 	if err := f.realm.runZoneCommands(ctx, f.realm.sourceClient, f.realm.config.SourceZone, [][]string{
 		{"realm", "create", "--default"},
 		rgwEndpointArgs([]string{"zonegroup", "create", "--master", "--default"}, f.realm.sourceURL),
 		rgwEndpointArgs([]string{"zone", "create", "--master", "--default"}, f.realm.sourceURL),
-		{"user", "create", "--uid", "tc-sync-" + setup.suffix, "--display-name", "Testcontainers multisite sync", "--system", "--access-key", f.realm.systemAccess, "--secret-key", f.realm.systemSecret},
-		{"zone", "modify", "--access-key", f.realm.systemAccess, "--secret", f.realm.systemSecret},
+		{"user", "create", "--uid", "tc-sync-" + setup.config.suffix, "--display-name", "Testcontainers multisite sync", "--system", "--access-key", f.realm.systemAccess(), "--secret-key", f.realm.systemSecret()},
+		{"zone", "modify", "--access-key", f.realm.systemAccess(), "--secret", f.realm.systemSecret()},
 		{"period", "update", "--commit"},
 	}); err != nil {
 		return err
@@ -350,7 +476,7 @@ func (f *Fixture) joinDestinationZone(ctx context.Context, image string, setup p
 	if f.realm.config.destinationZonegroup != f.realm.config.Zonegroup {
 		newGroup = f.realm.config.destinationZonegroup
 	}
-	_, destinationAlias := pairAliases(setup.suffix)
+	_, destinationAlias := pairAliases(setup.config.suffix)
 	destination, err := reserveZoneEndpoint(ctx, setup.config.Destination, setup.destinationHostNetwork, destinationAlias)
 	if err != nil {
 		return err
@@ -502,10 +628,10 @@ type zoneJoin struct {
 
 func (r *rgwRealmAccess) joinZone(ctx context.Context, join zoneJoin) error {
 	commands := [][]string{
-		{"realm", "pull", "--url", join.masterURL, "--access-key", r.systemAccess, "--secret", r.systemSecret},
+		{"realm", "pull", "--url", join.masterURL, "--access-key", r.systemAccess(), "--secret", r.systemSecret()},
 		{"realm", "default"},
 	}
-	create := []string{"zone", "create", "--access-key", r.systemAccess, "--secret", r.systemSecret}
+	create := []string{"zone", "create", "--access-key", r.systemAccess(), "--secret", r.systemSecret()}
 	if join.newGroup != "" {
 		commands = append(commands, rgwEndpointArgs([]string{"zonegroup", "create", "--api-name", join.newGroup}, join.endpoint))
 		create = append(create, "--master")
@@ -657,7 +783,9 @@ func ensureFreshRGWCluster(ctx context.Context, cluster *ceph.Container) error {
 //
 //purpose:condition
 func (f *Fixture) PullSourcePeriod(ctx context.Context) error {
-	return f.pullPeriod(ctx, f.realm.sourceClient, f.realm.config.SourceZone, f.realm.destinationURL)
+	return f.pullPeriod(ctx, func() (testcontainers.Container, string, string, error) {
+		return f.realm.sourceClient, f.realm.config.SourceZone, f.realm.destinationURL, nil
+	})
 }
 
 // PullDestinationPeriod imports the source's realm and current committed
@@ -670,13 +798,53 @@ func (f *Fixture) PullSourcePeriod(ctx context.Context) error {
 //
 //purpose:condition
 func (f *Fixture) PullDestinationPeriod(ctx context.Context) error {
-	return f.pullPeriod(ctx, f.realm.destinationClient, f.realm.config.DestinationZone, f.realm.sourceURL)
+	return f.pullPeriod(ctx, func() (testcontainers.Container, string, string, error) {
+		return f.realm.destinationClient, f.realm.config.DestinationZone, f.realm.sourceURL, nil
+	})
 }
 
-// pullPeriod runs realm pull from url in zone through client. It holds
-// topologyMu, like the other operations that change the period, and refuses a
-// terminated fixture.
-func (f *Fixture) pullPeriod(ctx context.Context, client testcontainers.Container, zone, url string) error {
+// PullPeriod imports the realm and current committed period of the owned
+// zone fromZone into the owned zone zone, through zone's CLI client and
+// fromZone's peer endpoint, using private system-user credentials, as
+// PullSourcePeriod and PullDestinationPeriod do for the two zones of Run. It
+// reaches every zone of a topology, including those that WithTopology,
+// AddZone and AddZonegroup added. Native realm pull updates the realm's
+// current-period pointer and reflects its zonegroups. Fencing a former
+// metadata master, promotion and gateway restart remain caller decisions.
+//
+// It waits for other topology operations within ctx. An unknown or equal
+// zone name, and a terminated fixture, return ceph.ErrInvalidRequest.
+//
+//purpose:condition
+func (f *Fixture) PullPeriod(ctx context.Context, zone, fromZone string) error {
+	return f.pullPeriod(ctx, func() (testcontainers.Container, string, string, error) {
+		if zone == fromZone {
+			return nil, "", "", servicehook.Invalid(errors.New("RGW period pull needs two different zones"))
+		}
+		var into, from *rgwZoneState
+		for _, state := range f.zoneStates() {
+			switch state.Name {
+			case zone:
+				into = state
+			case fromZone:
+				from = state
+			}
+		}
+		if into == nil || from == nil {
+			return nil, "", "", servicehook.Invalid(fmt.Errorf("RGW zones %s and %s must both be attached owned zones", zone, fromZone))
+		}
+		if into.client == nil {
+			return nil, "", "", fmt.Errorf("RGW zone %s has no running owned CLI client", zone)
+		}
+		return into.client, into.Name, from.PeerEndpoint, nil
+	})
+}
+
+// pullPeriod runs realm pull in the zone that target resolves, through its
+// client, from the resolved peer URL. It holds topologyMu, like the other
+// operations that change the period, and refuses a terminated fixture before
+// it resolves the zones.
+func (f *Fixture) pullPeriod(ctx context.Context, target func() (client testcontainers.Container, zone, url string, err error)) error {
 	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
 		return err
 	}
@@ -685,12 +853,16 @@ func (f *Fixture) pullPeriod(ctx context.Context, client testcontainers.Containe
 		return err
 	}
 	if f.closed {
-		return multisiteInvalid(errors.New("RGW multisite fixture is terminated"))
+		return servicehook.Invalid(errors.New("RGW multisite fixture is terminated"))
 	}
-	if f.realm.systemAccess == "" || f.realm.systemSecret == "" || url == "" {
+	client, zone, url, err := target()
+	if err != nil {
+		return err
+	}
+	if f.realm.systemAccess() == "" || f.realm.systemSecret() == "" || url == "" {
 		return fmt.Errorf("RGW multisite system credentials are unavailable")
 	}
-	_, err := f.realm.admin(ctx, client, zone, "realm", "pull", "--url", url, "--access-key", f.realm.systemAccess, "--secret", f.realm.systemSecret)
+	_, err = f.realm.admin(ctx, client, zone, "realm", "pull", "--url", url, "--access-key", f.realm.systemAccess(), "--secret", f.realm.systemSecret())
 	return err
 }
 

@@ -166,22 +166,16 @@ func (g *Gateway) CreateRole(ctx context.Context, config RoleConfig) (*Role, err
 		return nil, err
 	}
 	core := g.base()
-	if core.Cluster() == nil {
-		return nil, servicehook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
-	}
-	if err := servicehook.LockTopology(ctx, core.Cluster()); err != nil {
+	admission, err := gwbase.AdmitCreation(ctx, core)
+	if err != nil {
 		return nil, err
 	}
-	defer servicehook.Unlock(core.Cluster())
-	if err := core.ValidateAdmin(); err != nil {
-		return nil, err
-	}
+	defer admission.Done()
+	ctx = admission.Ctx
 	registry := gateways(core.Cluster())
 	if slices.ContainsFunc(registry.roles, func(r *roleState) bool { return r.name == config.Name && !r.removed }) {
 		return nil, servicehook.Invalid(errors.New("an RGW role of this name is still tracked by the fixture; remove it first"))
 	}
-	ctx, cancel := gwbase.AdminContext(ctx, core.Cluster())
-	defer cancel()
 	native, err := readRole(ctx, core, config.Name)
 	if err != nil {
 		return nil, err
@@ -367,19 +361,19 @@ func (r *Role) Remove(ctx context.Context) error {
 	}
 	s := r.state
 	cluster := s.origin.Cluster()
-	if err := servicehook.LockTopology(ctx, cluster); err != nil {
+	if err := gwbase.LockCluster(ctx, cluster); err != nil {
 		return err
 	}
 	defer servicehook.Unlock(cluster)
 	if s.removed {
 		return nil
 	}
-	g, err := s.origin.ScopeGateway(ctx)
+	admission, err := s.origin.AdmitLocked(ctx)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := gwbase.AdminContext(ctx, cluster)
-	defer cancel()
+	defer admission.Done()
+	ctx, g := admission.Ctx, admission.Gateway
 	if s.unstopped != nil {
 		if err := s.unstopped.Stop(ctx); err != nil {
 			return fmt.Errorf("an earlier command of the RGW role may still run: %w", err)

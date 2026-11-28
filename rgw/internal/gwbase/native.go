@@ -14,6 +14,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/strictjson"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -165,4 +166,49 @@ func DecodeObject(data []byte) (map[string]any, error) {
 		return nil, errors.New("RGW native JSON object contains trailing output")
 	}
 	return native, nil
+}
+
+// BucketIdentity is the identity of a bucket as a native `bucket stats`
+// document reports it. A member that the document lacks is "" here and
+// false in Has.
+type BucketIdentity struct {
+	Bucket, Tenant, ID, Marker, Owner, Zonegroup string
+	present                                      map[string]bool
+}
+
+// Has reports whether the document held the member named member (bucket,
+// tenant, id, marker, owner or zonegroup).
+func (b BucketIdentity) Has(member string) bool { return b.present[member] }
+
+// DecodeBucketIdentity reads the identity of a `bucket stats` document by
+// exact member name: a document that repeats a member at any depth, spells
+// an identity member in another case, holds null or another type for it, or
+// has no non-empty instance id is refused. It is the one decoder of that
+// document, so every check that refuses a recreated bucket reads the same
+// identity.
+func DecodeBucketIdentity(data []byte) (BucketIdentity, error) {
+	var stats struct {
+		Bucket    *string `json:"bucket"`
+		Tenant    *string `json:"tenant"`
+		ID        *string `json:"id"`
+		Marker    *string `json:"marker"`
+		Owner     *string `json:"owner"`
+		Zonegroup *string `json:"zonegroup"`
+	}
+	if strictjson.Decode(data, &stats, strictjson.Options{RejectNull: true}) != nil || stats.ID == nil || *stats.ID == "" {
+		return BucketIdentity{}, errors.New("decode RGW bucket identity")
+	}
+	identity := BucketIdentity{present: map[string]bool{}}
+	for name, member := range map[string]struct {
+		value  *string
+		target *string
+	}{
+		"bucket": {stats.Bucket, &identity.Bucket}, "tenant": {stats.Tenant, &identity.Tenant}, "id": {stats.ID, &identity.ID},
+		"marker": {stats.Marker, &identity.Marker}, "owner": {stats.Owner, &identity.Owner}, "zonegroup": {stats.Zonegroup, &identity.Zonegroup},
+	} {
+		if member.value != nil {
+			*member.target, identity.present[name] = *member.value, true
+		}
+	}
+	return identity, nil
 }

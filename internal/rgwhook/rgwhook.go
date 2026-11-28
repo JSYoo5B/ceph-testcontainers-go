@@ -15,7 +15,7 @@ import (
 )
 
 type hooks interface {
-	ReserveGatewayPort(context.Context, *ceph.Container) (string, func(context.Context, rgw.Config, ...testcontainers.ContainerCustomizer) (*rgw.Gateway, error), func(context.Context) error, error)
+	ReserveGatewayPort(context.Context, *ceph.Container) (string, GatewayStart, func(context.Context) error, error)
 }
 
 // GatewayStart starts a gateway on a reserved host port, as rgw.Start does

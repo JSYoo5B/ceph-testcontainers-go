@@ -161,9 +161,9 @@ func (c *rgwLifecycleCLI) Exec(ctx context.Context, args []string, opts ...tcexe
 			data = rgwAfterRemoveB
 		}
 	case strings.Contains(cmd, "zonegroup get"):
-		data = `{"zones":[{"id":"a-id","name":"a"},{"id":"b-id","name":"b"}]}`
+		data = `{"id":"us-id","name":"us","zones":[{"id":"a-id","name":"a"},{"id":"b-id","name":"b"}]}`
 		if c.removed {
-			data = `{"zones":[{"id":"a-id","name":"a"}]}`
+			data = `{"id":"us-id","name":"us","zones":[{"id":"a-id","name":"a"}]}`
 		}
 	case strings.Contains(cmd, "zonegroup remove"):
 		c.removed = true
@@ -190,7 +190,7 @@ func (c *rgwLifecycleCLI) Terminate(context.Context, ...testcontainers.Terminate
 func rgwRemovalFixture() (*Fixture, *rgwLifecycleCLI, *rgwLifecycleContainer, *rgwLifecycleContainer, *rgwLifecycleContainer) {
 	cli := &rgwLifecycleCLI{}
 	a, b, c := &rgwLifecycleContainer{running: true}, &rgwLifecycleContainer{running: true}, &rgwLifecycleContainer{}
-	f := &Fixture{RealmID: "realm", SourceZoneID: "a-id", DestinationZoneID: "b-id", Source: &rgw.Gateway{Container: a}, Destination: &rgw.Gateway{Container: b}, realm: rgwRealmAccess{config: Config{SourceZone: "a", DestinationZone: "b", Zonegroup: "us"}, sourceClient: cli, destinationClient: cli, sourceURL: "http://a:7480", destinationURL: "http://b:7480", zoneGroups: map[string]string{"a": "us", "b": "us", "c": "eu"}}, topology: rgwZoneTopology{groupIDs: map[string]string{"us": "us-id", "eu": "eu-id"}, groupMasters: map[string]string{"us": "a", "eu": "c"}, additional: map[string]*rgwZoneState{"c": {Zone: Zone{Name: "c", ID: "c-id", Zonegroup: "eu", PeerEndpoint: "http://c:7480", Gateway: &rgw.Gateway{Container: c}}, client: cli}}}}
+	f := &Fixture{RealmID: "realm", SourceZoneID: "a-id", DestinationZoneID: "b-id", Source: &rgw.Gateway{Container: a}, Destination: &rgw.Gateway{Container: b}, realm: rgwRealmAccess{config: realmSpec{SourceZone: "a", DestinationZone: "b", Zonegroup: "us", Source: zoneCluster()}, sourceClient: cli, destinationClient: cli, sourceURL: "http://a:7480", destinationURL: "http://b:7480", zoneGroups: map[string]string{"a": "us", "b": "us", "c": "eu"}}, topology: rgwZoneTopology{groupIDs: map[string]string{"us": "us-id", "eu": "eu-id"}, groupMasters: map[string]string{"us": "a", "eu": "c"}, additional: map[string]*rgwZoneState{"c": {Zone: Zone{Name: "c", ID: "c-id", Zonegroup: "eu", PeerEndpoint: "http://c:7480", Gateway: &rgw.Gateway{Container: c}}, client: cli, cluster: zoneCluster()}}}}
 	return f, cli, a, b, c
 }
 

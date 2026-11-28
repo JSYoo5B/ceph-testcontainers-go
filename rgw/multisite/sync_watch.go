@@ -10,6 +10,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/watch"
 )
 
@@ -39,13 +40,13 @@ var errSyncPeriodChanged = errors.New("the committed period changed; start a new
 func syncWatchSettings(operation string, cfg ceph.WatchConfig, defaultInterval time.Duration) (watch.Settings, error) {
 	s, err := watch.Validate(cfg.Interval, cfg.QueryTimeout, cfg.Buffer, defaultInterval)
 	if err != nil {
-		return watch.Settings{}, multisiteInvalid(fmt.Errorf("%s: %v", operation, err))
+		return watch.Settings{}, servicehook.Invalid(fmt.Errorf("%s: %v", operation, err))
 	}
 	return s, nil
 }
 
 func syncWatchNotStarted(operation string) error {
-	return multisiteInvalid(fmt.Errorf("%s: the watch is not started by its Watch call", operation))
+	return servicehook.Invalid(fmt.Errorf("%s: the watch is not started by its Watch call", operation))
 }
 
 // SyncWatchEvent is one event of a SyncWatch.
@@ -141,7 +142,7 @@ func (w *SyncWatch) Stop() error {
 //purpose:observation
 func (f *Fixture) WatchSync(ctx context.Context, cfg ceph.WatchConfig, zoneName string, sourceZones ...string) (*SyncWatch, error) {
 	if f == nil {
-		return nil, multisiteInvalid(errors.New("RGW multisite fixture is required"))
+		return nil, servicehook.Invalid(errors.New("RGW multisite fixture is required"))
 	}
 	settings, err := syncWatchSettings(syncWatchOperation, cfg, syncWatchDefaultInterval)
 	if err != nil {
@@ -197,7 +198,7 @@ func (f *Fixture) watchSyncRead(ctx context.Context, zoneName string, sources []
 	}
 	defer f.topologyMu.Unlock()
 	if f.closed {
-		return SyncStatus{}, watch.Fatal(multisiteInvalid(fmt.Errorf("%s: RGW multisite is terminated", syncWatchOperation)))
+		return SyncStatus{}, watch.Fatal(servicehook.Invalid(fmt.Errorf("%s: RGW multisite is terminated", syncWatchOperation)))
 	}
 	if _, err := f.syncStatusZones(zoneName, sources); err != nil {
 		return SyncStatus{}, watch.Fatal(fmt.Errorf("%s: %w", syncWatchOperation, err))
@@ -577,11 +578,16 @@ func (g *SyncGroup) policyImportWatchBaseline(ctx context.Context, destinationZo
 	}
 }
 
-// lockedSample is one sample under the topology lock.
+// errSampleLock marks a sample that ended while it waited for the topology
+// lock, before it read anything.
+var errSampleLock = errors.New("the topology lock was not acquired")
+
+// lockedSample is one sample under the topology lock. A sample that could not
+// take the lock returns errSampleLock with the lock wait's error.
 func (t *policyImportTarget) lockedSample(ctx context.Context) (BucketSyncPolicyStatus, bool, error) {
 	f := t.group.owner
 	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
-		return BucketSyncPolicyStatus{}, false, err
+		return BucketSyncPolicyStatus{}, false, fmt.Errorf("%w: %w", errSampleLock, err)
 	}
 	defer f.topologyMu.Unlock()
 	return t.sample(ctx)

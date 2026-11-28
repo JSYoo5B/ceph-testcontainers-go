@@ -11,8 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
@@ -111,7 +109,7 @@ func normalizeConfig(config Config) (Config, error) {
 		return config, err
 	}
 	for _, value := range []string{config.Name, config.Email} {
-		if !utf8.ValidString(value) || strings.TrimSpace(value) != value || strings.IndexFunc(value, unicode.IsControl) != -1 {
+		if !gwbase.ValidText(value, true) {
 			return config, servicehook.Invalid(errors.New("RGW account name and email must be valid UTF-8 without control characters or surrounding whitespace"))
 		}
 	}
@@ -153,18 +151,12 @@ func create(ctx context.Context, g *gwbase.Core, config Config) (*gwbase.Account
 	if err != nil {
 		return nil, err
 	}
-	if g.Cluster() == nil {
-		return nil, servicehook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
-	}
-	if err := servicehook.LockTopology(ctx, g.Cluster()); err != nil {
+	admission, err := gwbase.AdmitCreation(ctx, g)
+	if err != nil {
 		return nil, err
 	}
-	defer servicehook.Unlock(g.Cluster())
-	if err := g.ValidateAdmin(); err != nil {
-		return nil, err
-	}
-	ctx, cancel := gwbase.AdminContext(ctx, g.Cluster())
-	defer cancel()
+	defer admission.Done()
+	ctx = admission.Ctx
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -237,18 +229,13 @@ func accountInfo(ctx context.Context, a *gwbase.Account) (gwbase.AccountInfo, er
 	if !a.Owned() {
 		return gwbase.AccountInfo{}, servicehook.Invalid(errors.New("RGW account is not owned by a Ceph cluster"))
 	}
-	cluster := a.Origin.Cluster()
-	if err := servicehook.LockTopology(ctx, cluster); err != nil {
-		return gwbase.AccountInfo{}, err
-	}
-	defer servicehook.Unlock(cluster)
-	ctx, cancel := gwbase.AdminContext(ctx, cluster)
-	defer cancel()
-	if err := ctx.Err(); err != nil {
-		return gwbase.AccountInfo{}, err
-	}
-	g, err := a.Origin.ScopeGateway(ctx)
+	admission, err := gwbase.Admit(ctx, a.Origin)
 	if err != nil {
+		return gwbase.AccountInfo{}, err
+	}
+	defer admission.Done()
+	ctx, g := admission.Ctx, admission.Gateway
+	if err := ctx.Err(); err != nil {
 		return gwbase.AccountInfo{}, err
 	}
 	native, err := g.OwnedAccount(ctx, a)
@@ -276,24 +263,19 @@ func (a *Account) SetBucketQuota(ctx context.Context, quota rgw.Quota) error {
 }
 
 func setQuota(ctx context.Context, a *gwbase.Account, scope string, quota gwbase.Quota) error {
-	if quota.MaxObjects < -1 || quota.MaxSizeBytes < -1 || (quota.MaxSizeBytes > 0 && quota.MaxSizeBytes%1024 != 0) {
-		return errors.New("RGW account quota limits must be -1, zero or positive; byte limits must be multiples of 1024")
+	if err := gwbase.CheckQuotaLimits(quota, "RGW account"); err != nil {
+		return err
 	}
 	if !a.Owned() {
 		return servicehook.Invalid(errors.New("RGW account is not owned by a Ceph cluster"))
 	}
-	cluster := a.Origin.Cluster()
-	if err := servicehook.LockTopology(ctx, cluster); err != nil {
-		return err
-	}
-	defer servicehook.Unlock(cluster)
-	ctx, cancel := gwbase.AdminContext(ctx, cluster)
-	defer cancel()
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	g, err := a.Origin.ScopeGateway(ctx)
+	admission, err := gwbase.Admit(ctx, a.Origin)
 	if err != nil {
+		return err
+	}
+	defer admission.Done()
+	ctx, g := admission.Ctx, admission.Gateway
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	before, err := g.OwnedAccount(ctx, a)
@@ -343,7 +325,7 @@ func remove(ctx context.Context, a *gwbase.Account) error {
 		return servicehook.Invalid(errors.New("RGW account is not owned by a Ceph cluster"))
 	}
 	cluster := a.Origin.Cluster()
-	if err := servicehook.LockTopology(ctx, cluster); err != nil {
+	if err := gwbase.LockCluster(ctx, cluster); err != nil {
 		return err
 	}
 	defer servicehook.Unlock(cluster)
@@ -353,21 +335,17 @@ func remove(ctx context.Context, a *gwbase.Account) error {
 	if a.State.Removed {
 		return nil
 	}
-	ctx, cancel := gwbase.AdminContext(ctx, cluster)
-	defer cancel()
+	admission, err := a.Origin.AdmitLocked(ctx)
+	if err != nil {
+		return err
+	}
+	defer admission.Done()
+	ctx, g := admission.Ctx, admission.Gateway
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	g, err := a.Origin.ScopeGateway(ctx)
-	if err != nil {
+	if _, err := g.RequireScope(ctx, a.Scope, "RGW account native runtime scope changed"); err != nil {
 		return err
-	}
-	current, err := g.RuntimeScope(ctx)
-	if err != nil {
-		return err
-	}
-	if current != a.Scope {
-		return errors.New("RGW account native runtime scope changed")
 	}
 	exists, err := g.AccountExists(ctx, a)
 	if err != nil {

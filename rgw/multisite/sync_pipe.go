@@ -4,15 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"slices"
 	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
+
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/placement"
 )
@@ -21,7 +23,8 @@ import (
 // instance ID is captured and stored in the pipe, preventing a recreated name
 // from silently becoming a new replication source/destination. Nil selectors
 // retain Ceph's current-bucket wildcard behavior. Same-zone replication is not
-// supported by native RGW multisite.
+// supported by native RGW multisite. Name and Tenant follow the rule of
+// SyncPolicyScope's Bucket and Tenant, and Name is not "*".
 type SyncBucketSelector struct{ Name, Tenant string }
 
 // SyncObjectTag matches an exact key/value. Multiple pairs are ORed and
@@ -69,7 +72,7 @@ func (g *SyncGroup) pipeConfig(ctx context.Context, master *rgwZoneState, config
 		destParams["storage_class"] = config.DestinationStorageClass
 		args = append(args, "--storage-class", config.DestinationStorageClass)
 	} else if len(config.DestinationPlacements) > 0 {
-		return nil, nil, multisiteInvalid(errors.New("RGW destination placements require a requested storage class"))
+		return nil, nil, servicehook.Invalid(errors.New("RGW destination placements require a requested storage class"))
 	}
 	return args, map[string]any{"id": config.ID, "source": src, "dest": dst, "params": params}, nil
 }
@@ -152,16 +155,16 @@ func (g *SyncGroup) pipePrincipals(ctx context.Context, config SyncPipeConfig, s
 			return nil, err
 		}
 		if info.AccountID != "" || (info.Type != "" && info.Type != "rgw") {
-			return nil, multisiteInvalid(errors.New("RGW owner translation requires a confirmed ordinary user; account owner translation is unproven"))
+			return nil, servicehook.Invalid(errors.New("RGW owner translation requires a confirmed ordinary user; account owner translation is unproven"))
 		}
 		if err := checkSyncPrincipalTenants(g.scope, config, info.Tenant); err != nil {
 			return nil, err
 		}
 		if destinationInfo == nil {
-			return nil, multisiteInvalid(errors.New("RGW owner translation requires a concrete destination bucket"))
+			return nil, servicehook.Invalid(errors.New("RGW owner translation requires a concrete destination bucket"))
 		}
 		if config.User != nil && !destinationInfo.Owner.is(info.ID) {
-			return nil, multisiteInvalid(errors.New("RGW user-mode owner translation must select the destination bucket owner"))
+			return nil, servicehook.Invalid(errors.New("RGW user-mode owner translation must select the destination bucket owner"))
 		}
 		destParams["acl_translation"] = map[string]any{"owner": info.ID}
 		args = append(args, "--dest-owner", info.ID)
@@ -180,7 +183,7 @@ func (g *SyncGroup) pipePrincipals(ctx context.Context, config SyncPipeConfig, s
 		return nil, accountPipeUnsupported(zone)
 	}
 	if destinationInfo == nil {
-		return nil, multisiteInvalid(errors.New("RGW user mode requires a concrete destination bucket"))
+		return nil, servicehook.Invalid(errors.New("RGW user mode requires a concrete destination bucket"))
 	}
 	params["mode"], params["user"] = "user", info.ID
 	return append(args, "--mode", "user", "--uid", info.ID), nil
@@ -188,7 +191,7 @@ func (g *SyncGroup) pipePrincipals(ctx context.Context, config SyncPipeConfig, s
 
 func checkSyncPrincipalTenants(scope SyncPolicyScope, config SyncPipeConfig, tenant string) error {
 	if scope.Bucket == "" && (config.SourceBucket == nil || config.DestinationBucket == nil) {
-		return multisiteInvalid(errors.New("RGW sync principal requires concrete bucket namespaces"))
+		return servicehook.Invalid(errors.New("RGW sync principal requires concrete bucket namespaces"))
 	}
 	sourceTenant, destTenant := scope.Tenant, scope.Tenant
 	if config.SourceBucket != nil {
@@ -198,7 +201,7 @@ func checkSyncPrincipalTenants(scope SyncPolicyScope, config SyncPipeConfig, ten
 		destTenant = config.DestinationBucket.Tenant
 	}
 	if sourceTenant != tenant || destTenant != tenant || (scope.Bucket != "" && scope.Tenant != tenant) {
-		return multisiteInvalid(errors.New("RGW sync principal and all selected bucket tenants must match; cross-tenant translation is unproven"))
+		return servicehook.Invalid(errors.New("RGW sync principal and all selected bucket tenants must match; cross-tenant translation is unproven"))
 	}
 	return nil
 }
@@ -207,7 +210,7 @@ func normalizeSyncTags(tags []SyncObjectTag) ([]SyncObjectTag, error) {
 	result := slices.Clone(tags)
 	for _, tag := range result {
 		if tag.Key == "" || utf8.RuneCountInString(tag.Key) > 128 || utf8.RuneCountInString(tag.Value) > 256 || strings.ContainsAny(tag.Key, ",=") || strings.Contains(tag.Value, ",") || strings.IndexFunc(tag.Key+tag.Value, unicode.IsControl) != -1 {
-			return nil, multisiteInvalid(errors.New("RGW sync tags require exact key/value pairs without native CLI comma delimiters"))
+			return nil, servicehook.Invalid(errors.New("RGW sync tags require exact key/value pairs without native CLI comma delimiters"))
 		}
 	}
 	slices.SortFunc(result, func(a, b SyncObjectTag) int {
@@ -218,7 +221,7 @@ func normalizeSyncTags(tags []SyncObjectTag) ([]SyncObjectTag, error) {
 	})
 	for i := 1; i < len(result); i++ {
 		if result[i] == result[i-1] {
-			return nil, multisiteInvalid(errors.New("RGW sync tag pairs must be unique"))
+			return nil, servicehook.Invalid(errors.New("RGW sync tag pairs must be unique"))
 		}
 	}
 	return result, nil
@@ -226,8 +229,8 @@ func normalizeSyncTags(tags []SyncObjectTag) ([]SyncObjectTag, error) {
 
 func (g *SyncGroup) selectedBucket(ctx context.Context, master *rgwZoneState, selector SyncBucketSelector) (string, *rgwBucketInstance, error) {
 	f := g.owner
-	if !validRGWSyncID(selector.Name) || selector.Name == "*" || (selector.Tenant != "" && !validRGWSyncID(selector.Tenant)) {
-		return "", nil, multisiteInvalid(errors.New("RGW sync bucket selector requires an existing concrete bucket and valid tenant"))
+	if !validSyncBucket(selector.Name) || selector.Name == "*" || !validSyncTenant(selector.Tenant) {
+		return "", nil, servicehook.Invalid(errors.New("RGW sync bucket selector requires an existing concrete bucket and valid tenant"))
 	}
 	selected := &SyncGroup{owner: f, scope: SyncPolicyScope{Zonegroup: g.scope.Zonegroup, Bucket: selector.Name, Tenant: selector.Tenant}, realmID: g.realmID, groupID: g.groupID}
 	id, err := selected.bucketInstanceID(ctx, master)
@@ -245,7 +248,7 @@ func (g *SyncGroup) ownedPrincipal(ctx context.Context, user *rgw.User) (rgw.Use
 	// A replicated user handle retains its creating cluster's ownership, so
 	// it must be served by an attached owned gateway rather than adopting a
 	// remote UID.
-	unconfirmed := multisiteInvalid(errors.New("RGW sync principal was not confirmed as created through an attached owned gateway"))
+	unconfirmed := servicehook.Invalid(errors.New("RGW sync principal was not confirmed as created through an attached owned gateway"))
 	if !slices.ContainsFunc(f.zoneStates(), func(zone *rgwZoneState) bool {
 		return zone.Zonegroup == g.scope.Zonegroup && zone.Gateway != nil && gwbase.UserOf(user).ServedBy(gwbase.Of(zone.Gateway))
 	}) {
@@ -259,7 +262,7 @@ func (g *SyncGroup) ownedPrincipal(ctx context.Context, user *rgw.User) (rgw.Use
 		return rgw.UserInfo{}, unconfirmed
 	}
 	if info.ID != user.ID() || info.Namespace != "" || info.Admin || info.System {
-		return rgw.UserInfo{}, multisiteInvalid(errors.New("RGW sync principal requires a confirmed local user without global admin or system permissions"))
+		return rgw.UserInfo{}, servicehook.Invalid(errors.New("RGW sync principal requires a confirmed local user without global admin or system permissions"))
 	}
 	return info, nil
 }
@@ -270,14 +273,14 @@ func checkSyncUserModePrincipal(scope SyncPolicyScope, config SyncPipeConfig, in
 	}
 	if info.AccountID == "" {
 		if info.Type != "" && info.Type != "rgw" {
-			return multisiteInvalid(errors.New("RGW sync user-mode principal is not an ordinary owned user"))
+			return servicehook.Invalid(errors.New("RGW sync user-mode principal is not an ordinary owned user"))
 		}
 		return nil
 	}
 	// Native --uid is the canonical root user's ID, never the account ID.
 	// User.Info has already checked its private creation account and lifetime.
 	if info.Type != "root" || config.DestinationOwner != nil || config.SourceBucket == nil || config.DestinationBucket == nil || source == nil || destination == nil || !source.Owner.is(info.AccountID) || !destination.Owner.is(info.AccountID) {
-		return multisiteInvalid(errors.New("RGW account user mode requires its confirmed root, concrete buckets owned by the same account and no owner translation; IAM or cross-account modes are unproven"))
+		return servicehook.Invalid(errors.New("RGW account user mode requires its confirmed root, concrete buckets owned by the same account and no owner translation; IAM or cross-account modes are unproven"))
 	}
 	return nil
 }
@@ -285,11 +288,11 @@ func checkSyncUserModePrincipal(scope SyncPolicyScope, config SyncPipeConfig, in
 func (g *SyncGroup) destinationClass(ctx context.Context, config SyncPipeConfig, info *rgwBucketInstance) error {
 	f := g.owner
 	if info == nil || len(config.DestinationPlacements) != len(config.DestinationZones) || slices.Contains(config.DestinationZones, "*") {
-		return multisiteInvalid(errors.New("RGW storage-class translation requires a concrete bucket and confirmed placements for concrete destination zones"))
+		return servicehook.Invalid(errors.New("RGW storage-class translation requires a concrete bucket and confirmed placements for concrete destination zones"))
 	}
 	target := strings.SplitN(info.PlacementRule.value, "/", 2)[0]
 	if target == "" {
-		return multisiteInvalid(errors.New("RGW destination bucket native placement is missing"))
+		return servicehook.Invalid(errors.New("RGW destination bucket native placement is missing"))
 	}
 	for _, name := range config.DestinationZones {
 		var zone *rgwZoneState
@@ -299,7 +302,7 @@ func (g *SyncGroup) destinationClass(ctx context.Context, config SyncPipeConfig,
 			}
 		}
 		if zone == nil || zone.Gateway == nil {
-			return multisiteInvalid(errors.New("RGW destination placement zone is not attached and owned"))
+			return servicehook.Invalid(errors.New("RGW destination placement zone is not attached and owned"))
 		}
 		owned := config.DestinationPlacements[name]
 		// The placement's pools and resources live in the cluster of the
@@ -307,36 +310,40 @@ func (g *SyncGroup) destinationClass(ctx context.Context, config SyncPipeConfig,
 		// IDs do not show this: a period can be imported into another storage
 		// cluster.
 		if !gwbase.Of(zone.Gateway).SameCluster(gwbase.OriginOf(owned)) {
-			return multisiteInvalid(errors.New("RGW destination placement is not owned by the destination zone's cluster"))
+			return servicehook.Invalid(errors.New("RGW destination placement is not owned by the destination zone's cluster"))
 		}
 		state, err := owned.Status(ctx)
 		if err != nil {
 			return err
 		}
 		if !state.Confirmed || state.RealmID != g.realmID || state.ZonegroupID != g.groupID || state.ZoneID != zone.ID || state.Name != target || !slices.ContainsFunc(state.StorageClasses, func(c placement.StorageClass) bool { return c.Name == config.DestinationStorageClass }) {
-			return multisiteInvalid(errors.New("RGW destination class does not match its confirmed native placement/bucket scope"))
+			return servicehook.Invalid(errors.New("RGW destination class does not match its confirmed native placement/bucket scope"))
 		}
-		_, period, err := f.syncPolicyMaster(ctx)
-		if err != nil {
-			return err
+	}
+	if len(config.DestinationZones) == 0 {
+		return nil
+	}
+	// The committed period is the same for every destination zone.
+	_, period, err := f.syncPolicyMaster(ctx)
+	if err != nil {
+		return err
+	}
+	var committed map[string]any
+	for _, group := range syncPeriodGroups(period) {
+		if group["id"] != g.groupID {
+			continue
 		}
-		var committed map[string]any
-		for _, group := range syncPeriodGroups(period) {
-			if group["id"] != g.groupID {
-				continue
+		targets, _ := group["placement_targets"].([]any)
+		for _, value := range targets {
+			candidate, _ := value.(map[string]any)
+			if candidate["name"] == target {
+				committed = candidate
 			}
-			targets, _ := group["placement_targets"].([]any)
-			for _, value := range targets {
-				candidate, _ := value.(map[string]any)
-				if candidate["name"] == target {
-					committed = candidate
-				}
-			}
 		}
-		classes, _ := committed["storage_classes"].([]any)
-		if !slices.Contains(classes, any(config.DestinationStorageClass)) {
-			return multisiteInvalid(errors.New("RGW destination class has not been published in the current committed period"))
-		}
+	}
+	classes, _ := committed["storage_classes"].([]any)
+	if !slices.Contains(classes, any(config.DestinationStorageClass)) {
+		return servicehook.Invalid(errors.New("RGW destination class has not been published in the current committed period"))
 	}
 	return nil
 }

@@ -304,7 +304,7 @@ func TestRoleReadbackAfterSuccessfulReplyAndCancellation(t *testing.T) {
 	ctx, cancel := context.WithDeadline(t.Context(), deadline)
 	defer cancel()
 	readback := &gwtest.CancelAtCreateReadback{Container: ctr, Cancel: cancel}
-	g.Container = readback
+	replaceGatewayContainer(g, readback)
 	role, err := g.CreateRole(ctx, RoleConfig{Name: "reader", TrustPolicy: testTrust})
 	if !readback.ReadbackDeadline.Equal(deadline) {
 		t.Fatalf("readback deadline = %v, want %v", readback.ReadbackDeadline, deadline)
@@ -365,9 +365,9 @@ func TestRoleWithUnknownCreationIsOnlyRemovable(t *testing.T) {
 	ctr.faults["role create"] = keyFault{err: errors.New("connection reset"), apply: true}
 	// The readback that settles the failed call fails too.
 	settle := &settleOnCreate{roleTestContainer: ctr, fault: keyFault{code: 5}}
-	gateway.Container = settle
+	replaceGatewayContainer(gateway, settle)
 	role, err := gateway.CreateRole(t.Context(), testRoleConfig())
-	gateway.Container = ctr
+	replaceGatewayContainer(gateway, ctr)
 	if err == nil || role == nil {
 		t.Fatalf("an unknown outcome returned role %v, error %v", role, err)
 	}
@@ -388,10 +388,10 @@ func TestRoleWithUnknownCreationIsOnlyRemovable(t *testing.T) {
 
 	// A pending role whose name now holds another role is never removed.
 	ctr.faults["role create"] = keyFault{err: errors.New("connection reset")}
-	gateway.Container = settle
+	replaceGatewayContainer(gateway, settle)
 	settle.fault = keyFault{code: 5}
 	role, err = gateway.CreateRole(t.Context(), testRoleConfig())
-	gateway.Container = ctr
+	replaceGatewayContainer(gateway, ctr)
 	if err == nil || role == nil {
 		t.Fatalf("an unknown outcome returned role %v, error %v", role, err)
 	}
@@ -449,9 +449,9 @@ func TestRolePolicyFailureLeavesARemovableRole(t *testing.T) {
 	gateway, ctr := newRoleTestGateway()
 	ctx, cancel := context.WithCancel(t.Context())
 	cancelAfterPut := &cancelOnPut{roleTestContainer: ctr, cancel: cancel}
-	gateway.Container = cancelAfterPut
+	replaceGatewayContainer(gateway, cancelAfterPut)
 	role, err := gateway.CreateRole(ctx, testRoleConfig())
-	gateway.Container = ctr
+	replaceGatewayContainer(gateway, ctr)
 	if !errors.Is(err, context.Canceled) || role == nil || ctr.count("role-policy put") != 1 {
 		t.Fatalf("a CreateRole canceled between policies: %v after %d puts", err, ctr.count("role-policy put"))
 	}

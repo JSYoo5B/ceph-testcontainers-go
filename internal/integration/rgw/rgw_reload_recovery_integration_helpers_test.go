@@ -100,7 +100,7 @@ func checkNativeReloadRecovery(t *testing.T, ctx context.Context, link *multisit
 		t.Fatalf("caller did not fence a new generation: %+v %v", state, err)
 	}
 	fencedStart := state.StartedAt
-	if err := group.Apply(ctx); err == nil || !strings.Contains(err.Error(), "stopped outside the pending reload") {
+	if err := group.Apply(ctx); err == nil || !strings.Contains(err.Error(), "stopped outside its restart") {
 		t.Fatalf("reload did not refuse the externally fenced generation: %v", err)
 	}
 	state, err = original.State(ctx)

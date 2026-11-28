@@ -5,9 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"time"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
 	"github.com/testcontainers/testcontainers-go"
@@ -55,177 +53,83 @@ func (p *Placement) readPolicy(ctx context.Context, g *gwbase.Core, target testc
 	return group, nil
 }
 
-// Gateway run state and an outstanding Docker request are shared by all
-// placements on the cluster. The topology lock serializes access to the map.
-type gatewayRestarts map[string]*gatewayRestart
-
-type gatewayRestart struct {
-	owner          *activationState
-	policy         restartPolicy
-	originalStart  string
-	startConfirmed bool
-	observedStart  *string
+// placementRestart is the owner of a placement's gateway restart: the
+// activation that requested it and the policy it loads.
+type placementRestart struct {
+	activation *activationState
+	policy     restartPolicy
 }
 
-func restartsFor(cluster *ceph.Container) gatewayRestarts {
-	return servicehook.Extension(cluster, "rgw/placement/gateway-restarts", func() any {
-		return make(gatewayRestarts)
-	}).(gatewayRestarts)
+// target is the gateway container of g as the restart protocol sees it.
+func target(g *gwbase.Core) gwbase.RestartTarget {
+	return gwbase.RestartTarget{Cluster: g.Cluster(), Container: g.Container()}
 }
 
-// resumeRestart verifies or restores the run state owed by an earlier call.
-// Only the initiating placement can resume its stopped generation. An already
-// completed restart cannot stand in for another placement's activation.
+// resumeRestart settles the restart that the gateway still owes, whoever
+// requested it, and verifies this placement's own restart once its gateway
+// runs again. It reports true when that verification completed the
+// activation. Another placement's restart, or another requester's, is
+// settled by the shared protocol and leaves this placement to dispatch its
+// own restart.
 func (p *Placement) resumeRestart(ctx context.Context, g *gwbase.Core, wanted restartPolicy) (bool, error) {
-	ctr := g.Container()
-	id := ctr.GetContainerID()
-	restarts := restartsFor(g.Cluster())
-	record := restarts[id]
-	if record == nil {
-		return false, nil
-	}
-	state, err := ctr.State(ctx)
+	resumed, err := target(g).Resume(ctx)
 	if err != nil {
-		return false, fmt.Errorf("inspect RGW after placement restart: %w", err)
+		return false, err
 	}
-	if state == nil || state.Paused || state.Restarting {
-		return false, errors.New("RGW run state cannot confirm the placement restart")
-	}
-	if record.observedStart != nil && state.StartedAt != *record.observedStart {
-		delete(restarts, id)
-		if record.owner == p.activation || !state.Running {
-			return false, errors.New("the RGW generation awaiting placement verification was replaced; request a fresh activation for the current gateway")
-		}
+	owner, ok := resumed.Owner.(*placementRestart)
+	if !ok || owner.activation != p.activation || !resumed.Running {
 		return false, nil
 	}
-	sameGeneration := state.StartedAt == record.originalStart
-	if !record.startConfirmed && sameGeneration && state.Running {
-		return false, errors.New("the earlier RGW placement stop is unconfirmed and its original generation is still running; retry after the container stops or its generation changes")
+	if resumed.Replaced {
+		return false, errors.New("the RGW generation awaiting placement verification was replaced; request a fresh activation for the current gateway")
 	}
-	if !state.Running && (!sameGeneration || record.startConfirmed) {
-		delete(restarts, id)
-		return false, errors.New("RGW was stopped outside this placement restart; leaving it stopped")
-	}
-	if record.owner != p.activation {
-		if !state.Running {
-			return false, errors.New("retry the placement that stopped this RGW gateway before activating another placement")
-		}
-		// The old Stop has settled. The new placement must pass fresh admission
-		// and dispatch its own restart before it can replace this record.
-		return false, nil
-	}
-	wanted.exact = wanted.exact || record.policy.exact
-	wanted.published = wanted.published || record.policy.published
-	if !state.Running {
-		target := servicehook.CLI(g.Cluster())
-		if peer, err := g.ScopeGateway(ctx); err == nil {
-			target = peer.Container()
-		}
-		if err := restartScope(ctx, g, target, p.scope); err != nil {
-			return false, fmt.Errorf("verify stopped RGW startup scope before resuming: %w", err)
-		}
-		if _, err := p.readPolicy(ctx, g, target, wanted); err != nil {
-			return false, err
-		}
-		if err := startOriginalGateway(ctx, g, record); err != nil {
-			return false, fmt.Errorf("resume RGW after placement restart: %w", err)
-		}
-	}
-	record.startConfirmed = true
-	if err := p.confirmRestart(ctx, g, record, wanted); err != nil {
+	wanted.exact = wanted.exact || owner.policy.exact
+	wanted.published = wanted.published || owner.policy.published
+	if err := p.confirmRestart(ctx, g, owner, wanted); err != nil {
 		return false, err
 	}
 	return true, nil
 }
 
-// Docker Start acts on a container ID, so check the process generation again
-// after Stop or any intervening policy reads before requesting a start.
-func startOriginalGateway(ctx context.Context, g *gwbase.Core, record *gatewayRestart) error {
-	ctr := g.Container()
-	state, err := ctr.State(ctx)
-	if err != nil {
-		return fmt.Errorf("inspect stopped gateway before Start: %w", err)
+// beforeResume is what a restart of this placement checks before its stopped
+// gateway starts again after an interrupted stop: the cluster's pool IDs and,
+// through another admin container, the startup scope and the policy.
+func (p *Placement) beforeResume(g *gwbase.Core, policy restartPolicy) func(context.Context) error {
+	return func(ctx context.Context) error {
+		admin := servicehook.CLI(g.Cluster())
+		if peer, err := g.ScopeGateway(ctx); err == nil {
+			admin = peer.Container()
+		}
+		if err := restartScope(ctx, g, admin, p.scope); err != nil {
+			return fmt.Errorf("verify stopped RGW startup scope before resuming: %w", err)
+		}
+		_, err := p.readPolicy(ctx, g, admin, policy)
+		return err
 	}
-	if state == nil || state.Paused || state.Restarting || state.Running {
-		return errors.New("cannot confirm the gateway is stopped before Start")
-	}
-	if state.StartedAt != record.originalStart {
-		delete(restartsFor(g.Cluster()), ctr.GetContainerID())
-		return errors.New("another RGW generation was stopped before Start; leaving it stopped")
-	}
-	return ctr.Start(ctx)
 }
 
-func (p *Placement) confirmRestart(ctx context.Context, g *gwbase.Core, record *gatewayRestart, policy restartPolicy) error {
-	ctr := g.Container()
-	state, err := ctr.State(ctx)
-	if err != nil {
-		return fmt.Errorf("inspect restarted RGW for placement verification: %w", err)
-	}
-	if state == nil || !state.Running || state.Paused || state.Restarting {
-		return errors.New("restarted RGW is unavailable for placement verification")
-	}
-	if record.observedStart != nil && state.StartedAt != *record.observedStart {
-		delete(restartsFor(g.Cluster()), ctr.GetContainerID())
-		return errors.New("RGW generation changed during placement verification")
-	}
-	startedAt := state.StartedAt
-	record.observedStart = &startedAt
-	if err := restartScope(ctx, g, ctr, p.scope); err != nil {
+// confirmRestart verifies the policy that the restarted gateway loaded, and
+// that its generation did not change meanwhile, before it completes the
+// restart record. A failed verification keeps the record for a read-only
+// retry.
+func (p *Placement) confirmRestart(ctx context.Context, g *gwbase.Core, owner *placementRestart, policy restartPolicy) error {
+	if err := restartScope(ctx, g, g.Container(), p.scope); err != nil {
 		return err
 	}
 	if _, err := p.runningPolicy(ctx, g, policy); err != nil {
 		return err
 	}
-	// The gateway may also be restarted externally during the policy read.
-	state, err = ctr.State(ctx)
-	if err != nil {
-		return fmt.Errorf("confirm restarted RGW generation: %w", err)
-	}
-	if state == nil || !state.Running || state.Paused || state.Restarting || state.StartedAt != *record.observedStart {
-		return errors.New("RGW generation changed during placement verification")
-	}
-	delete(restartsFor(g.Cluster()), ctr.GetContainerID())
-	return nil
+	return target(g).Complete(ctx, owner)
 }
 
-// restart dispatches one stop/start pair, then confirms the loaded policy.
-// A failed confirmation leaves the record available to a read-only retry.
+// restart restarts the gateway once to load the policy, then confirms it.
 func (p *Placement) restart(ctx context.Context, g *gwbase.Core, policy restartPolicy) error {
-	ctr := g.Container()
-	if err := restartScope(ctx, g, ctr, p.scope); err != nil {
+	if err := restartScope(ctx, g, g.Container(), p.scope); err != nil {
 		return err
 	}
-	state, err := ctr.State(ctx)
-	if err != nil {
-		return fmt.Errorf("inspect RGW before placement restart: %w", err)
-	}
-	if state == nil || !state.Running || state.Paused || state.Restarting {
-		return servicehook.Invalid(errors.New("RGW placement restart requires a running gateway"))
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	restarts := restartsFor(g.Cluster())
-	id := ctr.GetContainerID()
-	record := &gatewayRestart{owner: p.activation, policy: policy, originalStart: state.StartedAt}
-	restarts[id] = record
-	grace := 3 * time.Second
-	stopCtx, finishStop := gwbase.SettlementContext(ctx)
-	stopErr := ctr.Stop(stopCtx, &grace)
-	finishStop()
-	startCtx, cancel := gwbase.SettlementContext(ctx)
-	defer cancel()
-	if stopErr != nil {
-		restored, err := p.resumeRestart(startCtx, g, policy)
-		if restored {
-			return nil
-		}
-		return errors.Join(fmt.Errorf("stop RGW for placement restart: %w", stopErr), err)
-	}
-	if err := startOriginalGateway(startCtx, g, record); err != nil {
+	owner := &placementRestart{activation: p.activation, policy: policy}
+	if err := target(g).Restart(ctx, gwbase.Restart{Owner: owner, BeforeStart: p.beforeResume(g, policy), AwaitCompletion: true}); err != nil {
 		return fmt.Errorf("restart RGW to load placement: %w", err)
 	}
-	record.startConfirmed = true
-	return p.confirmRestart(startCtx, g, record, policy)
+	return p.confirmRestart(ctx, g, owner, policy)
 }

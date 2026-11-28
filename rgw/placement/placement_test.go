@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwtest"
 )
@@ -352,6 +353,23 @@ func TestRGWPlacementCreationRequiresCompleteZoneMapping(t *testing.T) {
 				if slices.Contains(call, "placement") {
 					t.Fatalf("creation reached a placement mutation: %v", call)
 				}
+			}
+		})
+	}
+}
+
+func TestRGWPlacementUnconfirmedCreationIsRefusedBeforeNativeCommands(t *testing.T) {
+	for name, activate := range map[string]func(context.Context, *gwbase.Core, *Placement) error{"Apply": apply, "Reload": reload} {
+		t.Run(name, func(t *testing.T) {
+			g, f := newRGWPlacementFixture()
+			p, err := create(t.Context(), g.Core, testConfig())
+			if err != nil {
+				t.Fatal(err)
+			}
+			p.confirmed = false
+			f.Calls = nil
+			if err := activate(t.Context(), g.Core, p); !errors.Is(err, ceph.ErrInvalidRequest) || len(f.Calls) != 0 || f.StopCount != 0 {
+				t.Fatalf("unconfirmed placement returned %v after %d native commands", err, len(f.Calls))
 			}
 		})
 	}

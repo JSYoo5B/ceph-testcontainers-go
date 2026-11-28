@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -14,9 +13,19 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
 )
 
+// The scopes of a UserUsage snapshot: what its counters aggregate.
+const (
+	// UsageScopeUser: the counters aggregate the selected ordinary user, who
+	// is its own owner.
+	UsageScopeUser = "user"
+	// UsageScopeAccount: the counters aggregate the account the selected user
+	// belongs to, which owns the buckets of all its users and roles.
+	UsageScopeAccount = "account"
+)
+
 // UserUsage is a native storage-accounting snapshot, not dated request or
-// bandwidth usage. Scope is "user" for an ordinary user and "account" for an
-// account identity. OwnerID identifies that effective aggregation owner; account
+// bandwidth usage. Scope is UsageScopeUser for an ordinary user and
+// UsageScopeAccount for an account identity. OwnerID identifies that effective aggregation owner; account
 // stats cover all of the account's users, roles and buckets, not only UserID.
 // Native accounting updates asynchronously; this snapshot does not force sync,
 // flush quota caches, prove quota enforcement or verify object content.
@@ -45,20 +54,12 @@ func (u *User) Usage(ctx context.Context) (UserUsage, error) {
 	if !user.Owned() {
 		return UserUsage{}, servicehook.Invalid(errors.New("RGW user is not owned by a Ceph cluster"))
 	}
-	cluster := user.Origin.Cluster()
-	ctx, cancel := gwbase.AdminContext(ctx, cluster)
-	defer cancel()
-	if err := servicehook.LockTopology(ctx, cluster); err != nil {
-		return UserUsage{}, err
-	}
-	defer servicehook.Unlock(cluster)
-	g, err := user.Origin.ScopeGateway(ctx)
+	admission, err := gwbase.Admit(ctx, user.Origin)
 	if err != nil {
 		return UserUsage{}, err
 	}
-	if err := validateUsageGateway(g); err != nil {
-		return UserUsage{}, err
-	}
+	defer admission.Done()
+	ctx, g := admission.Ctx, admission.Gateway
 	before, err := g.OwnedUser(ctx, user)
 	if err != nil {
 		return UserUsage{}, rgwUserUsageReadError(ctx, err)
@@ -91,16 +92,16 @@ func (u *User) Usage(ctx context.Context) (UserUsage, error) {
 	if before.Info.ID != after.Info.ID || before.Info.Tenant != after.Info.Tenant || before.Info.Type != after.Info.Type || before.Info.AccountID != after.Info.AccountID {
 		return UserUsage{}, errors.New("RGW user storage aggregation identity changed")
 	}
-	if err := validateUsageGateway(g); err != nil {
+	if err := g.ValidateAdmin(); err != nil {
 		return UserUsage{}, err
 	}
 	if err := ctx.Err(); err != nil {
 		return UserUsage{}, err
 	}
 	usage.UserID, usage.Tenant = after.Info.ID, after.Info.Tenant
-	usage.Scope, usage.OwnerID = "user", after.Info.ID
+	usage.Scope, usage.OwnerID = UsageScopeUser, after.Info.ID
 	if after.Info.AccountID != "" {
-		usage.Scope, usage.OwnerID = "account", after.Info.AccountID
+		usage.Scope, usage.OwnerID = UsageScopeAccount, after.Info.AccountID
 	}
 	return usage, nil
 }
@@ -118,24 +119,6 @@ func rgwUserUsageReadError(ctx context.Context, err error) error {
 		return context.DeadlineExceeded
 	}
 	return errors.New("RGW user storage identity read failed; native output is redacted")
-}
-
-// Only the originally registered container handle may run these typed reads.
-// A public embedded handle replacement with the same CID is not adopted.
-func validateUsageGateway(g *gwbase.Core) error {
-	service := servicehook.Service(g.Cluster(), gwbase.ServiceName(g.Name()))
-	ctr := g.Container()
-	if servicehook.DiagnosticHandle(ctr) == nil || servicehook.DiagnosticHandle(service) == nil {
-		return servicehook.Invalid(errors.New("RGW gateway is no longer owned by this cluster"))
-	}
-	if err := g.ValidateAdmin(); err != nil {
-		return err
-	}
-	value := reflect.ValueOf(service)
-	if !value.IsValid() || !value.Comparable() || service != ctr {
-		return servicehook.Invalid(errors.New("RGW gateway original container handle changed"))
-	}
-	return nil
 }
 
 func decodeRGWUserUsage(data []byte) (UserUsage, error) {

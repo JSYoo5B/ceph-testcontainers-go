@@ -117,7 +117,7 @@ func TestRGWPublishSyncPeriodRefusesUnrelatedStagingBeforeUpdate(t *testing.T) {
 
 func TestRGWImportSyncPeriodRequiresTheExactPeriodInEveryZone(t *testing.T) {
 	f, cli, _, _ := newRGWSyncTestFixture()
-	f.realm.systemAccess, f.realm.systemSecret = "ACCESS", "SECRET-MARKER"
+	f.realm.system = systemKeys("ACCESS", "SECRET-MARKER")
 	states := f.zoneStates()
 	if err := f.importSyncPeriod(t.Context(), states[0], states, cli.current); err != nil {
 		t.Fatal(err)
