@@ -11,6 +11,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -170,6 +171,40 @@ func TestClockConfigValidation(t *testing.T) {
 		if err := resolve(opts...); !errors.Is(err, ErrInvalidRequest) {
 			t.Errorf("%s: %v", name, err)
 		}
+	}
+}
+
+// TestClockConfigRefusalWritesNothing checks that a refused ClockConfig
+// leaves every clock setting as it was, also the fields it set validly.
+func TestClockConfigRefusalWritesNothing(t *testing.T) {
+	for _, c := range []struct {
+		name          string
+		held, refused ClockConfig
+	}{
+		{"valid helper, empty MON list", ClockConfig{}, ClockConfig{}.WithHelperImage("helper:v1").WithMonitors()},
+		{"valid helper, MON named twice", ClockConfig{}, ClockConfig{}.WithHelperImage("helper:v1").WithMonitors("a", "b", "a")},
+		{"MON named twice after a helper", ClockConfig{}.WithHelperImage("helper:v1"), ClockConfig{}.WithMonitors("a", "b", "a")},
+		{"invalid helper after MONs", ClockConfig{}.WithMonitors("a"), ClockConfig{}.WithHelperImage("helper :v1")},
+		{"monitors set twice", ClockConfig{}.WithMonitors("a"), ClockConfig{}.WithHelperImage("helper:v1").WithMonitors("b")},
+	} {
+		var o options
+		if err := c.held.apply(&o); err != nil {
+			t.Fatalf("%s: held value refused: %v", c.name, err)
+		}
+		before := o.clock
+		if err := c.refused.apply(&o); err == nil {
+			t.Fatalf("%s: accepted", c.name)
+		}
+		if o.clock.helperImage != before.helperImage || !slices.Equal(o.clock.monitors, before.monitors) || o.clock.set != before.set {
+			t.Errorf("%s: a refused ClockConfig wrote %+v over %+v", c.name, o.clock, before)
+		}
+	}
+	var o options
+	if err := (ClockConfig{}.WithMonitors("a")).apply(&o); err != nil {
+		t.Fatal(err)
+	}
+	if err := (ClockConfig{}.WithHelperImage("helper:v1")).apply(&o); err != nil || o.clock.helperImage != "helper:v1" || !slices.Equal(o.clock.monitors, []string{"a"}) {
+		t.Fatalf("a valid second ClockConfig: %+v, %v", o.clock, err)
 	}
 }
 
