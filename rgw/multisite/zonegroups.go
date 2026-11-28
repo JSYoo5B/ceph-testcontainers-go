@@ -2,7 +2,6 @@ package multisite
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -229,13 +228,11 @@ func (f *Fixture) detachZone(ctx context.Context, master, state *rgwZoneState) e
 	if err != nil {
 		return err
 	}
-	var group struct {
-		Zones []struct{ ID, Name string } `json:"zones"`
-	}
-	if err := json.Unmarshal(groupData, &group); err != nil {
+	group, err := decodeZonegroupDocument(groupData)
+	if err != nil {
 		return err
 	}
-	if slices.ContainsFunc(group.Zones, func(zone struct{ ID, Name string }) bool { return zone.ID == state.ID }) {
+	if slices.ContainsFunc(group.Zones, func(zone rgwTopologyZone) bool { return zone.ID == state.ID }) {
 		if _, err := f.realm.adminInGroup(ctx, master.client, state.Zonegroup, state.Name, "zonegroup", "remove", "--zone-id", state.ID); err != nil {
 			return err
 		}

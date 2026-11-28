@@ -2,7 +2,6 @@ package multisite
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/strictjson"
 
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -244,8 +244,7 @@ func (f *Fixture) syncStatus(ctx context.Context, zoneName string, metadataOnly 
 			return result, err
 		}
 	}
-	metadataCurrent := result.Metadata.State == "sync" && result.Metadata.PeriodID == id &&
-		result.Metadata.RealmEpoch == epoch && result.Metadata.Shards > 0 && result.Metadata.IncrementalShards == result.Metadata.Shards
+	metadataCurrent := result.Metadata.bootstrapped() && result.Metadata.PeriodID == id && result.Metadata.RealmEpoch == epoch
 	if metadataOnly {
 		switch {
 		case result.MetadataMaster:
@@ -382,6 +381,17 @@ func syncStatusReady(status SyncStatus, sources []string) bool {
 	return true
 }
 
+// bootstrapped reports whether every shard of m entered incremental sync:
+// the reload gate (rgwMetadataBootstrapped), which CaughtUp requires too.
+func (m MetadataSyncStatus) bootstrapped() bool {
+	return m.State == "sync" && m.Shards > 0 && m.IncrementalShards == m.Shards
+}
+
+// decodeSyncMetadata is the one decoder of `metadata sync status`, for
+// SyncStatus and the reload gate. It reads members by exact name from a
+// document that repeats none, and refuses a marker without a shard key, with
+// a key outside the shards or with a key of another marker. Each marker in
+// state 1 is a shard in incremental sync.
 func decodeSyncMetadata(data []byte) (MetadataSyncStatus, map[int]*string, error) {
 	var native struct {
 		SyncStatus struct {
@@ -400,7 +410,7 @@ func decodeSyncMetadata(data []byte) (MetadataSyncStatus, map[int]*string, error
 			} `json:"markers"`
 		} `json:"sync_status"`
 	}
-	if json.Unmarshal(data, &native) != nil || native.SyncStatus.Info.Status == "" || native.SyncStatus.Info.NumShards < 0 {
+	if strictjson.Decode(data, &native, strictjson.Options{}) != nil || native.SyncStatus.Info.Status == "" || native.SyncStatus.Info.NumShards < 0 {
 		return MetadataSyncStatus{}, nil, errors.New("decode RGW native metadata sync status")
 	}
 	info := native.SyncStatus.Info

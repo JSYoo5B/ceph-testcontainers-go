@@ -161,9 +161,9 @@ func (c *rgwLifecycleCLI) Exec(ctx context.Context, args []string, opts ...tcexe
 			data = rgwAfterRemoveB
 		}
 	case strings.Contains(cmd, "zonegroup get"):
-		data = `{"zones":[{"id":"a-id","name":"a"},{"id":"b-id","name":"b"}]}`
+		data = `{"id":"us-id","name":"us","zones":[{"id":"a-id","name":"a"},{"id":"b-id","name":"b"}]}`
 		if c.removed {
-			data = `{"zones":[{"id":"a-id","name":"a"}]}`
+			data = `{"id":"us-id","name":"us","zones":[{"id":"a-id","name":"a"}]}`
 		}
 	case strings.Contains(cmd, "zonegroup remove"):
 		c.removed = true

@@ -467,29 +467,18 @@ func bindRateLimitBucket(ctx context.Context, g *gwbase.Core, user *gwbase.User,
 	if err != nil {
 		return rateLimitTarget{}, fmt.Errorf("read RGW bucket identity (bucket stats): %w", err)
 	}
-	var stats struct {
-		Bucket *string `json:"bucket"`
-		Tenant *string `json:"tenant"`
-		ID     *string `json:"id"`
-		Marker *string `json:"marker"`
-		Owner  *string `json:"owner"`
-	}
-	if strictjson.Decode(data, &stats, strictjson.Options{RejectNull: true}) != nil || stats.Bucket == nil || stats.ID == nil || stats.Marker == nil || stats.Owner == nil ||
-		*stats.ID == "" || *stats.Marker == "" {
+	stats, err := gwbase.DecodeBucketIdentity(data)
+	if err != nil || !stats.Has("bucket") || !stats.Has("marker") || !stats.Has("owner") || stats.Marker == "" {
 		return rateLimitTarget{}, errors.New("decode RGW bucket identity")
 	}
-	actualTenant := ""
-	if stats.Tenant != nil {
-		actualTenant = *stats.Tenant
-	}
-	if *stats.Bucket != bucket || actualTenant != tenant {
+	if stats.Bucket != bucket || stats.Tenant != tenant {
 		return rateLimitTarget{}, errors.New("RGW bucket statistics name another bucket")
 	}
-	target := rateLimitTarget{uid: user.ID, bucket: bucket, tenant: tenant, bucketID: *stats.ID, bucketMarker: *stats.Marker}
+	target := rateLimitTarget{uid: user.ID, bucket: bucket, tenant: tenant, bucketID: stats.ID, bucketMarker: stats.Marker}
 	if len(expected) > 0 && (target.bucketID != expected[0].bucketID || target.bucketMarker != expected[0].bucketMarker) {
 		return rateLimitTarget{}, servicehook.Invalid(errors.New("RGW bucket was replaced since the rate-limit override bound it; refusing mutation"))
 	}
-	if *stats.Owner != user.ID {
+	if stats.Owner != user.ID {
 		return rateLimitTarget{}, servicehook.Invalid(errors.New("RGW bucket is not owned by this user; refusing rate-limit override"))
 	}
 	return target, nil

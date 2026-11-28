@@ -723,8 +723,8 @@ func (g *SyncGroup) bucketInstanceID(ctx context.Context, master *rgwZoneState) 
 	if err != nil {
 		return "", err
 	}
-	var bucket struct{ ID, Bucket, Tenant, Zonegroup string }
-	if json.Unmarshal(data, &bucket) != nil || bucket.ID == "" || bucket.Bucket != g.scope.Bucket || bucket.Tenant != g.scope.Tenant || bucket.Zonegroup != g.groupID {
+	bucket, err := gwbase.DecodeBucketIdentity(data)
+	if err != nil || bucket.Bucket != g.scope.Bucket || bucket.Tenant != g.scope.Tenant || bucket.Zonegroup != g.groupID {
 		return "", errors.New("RGW bucket native instance or zonegroup identity differs")
 	}
 	return bucket.ID, nil

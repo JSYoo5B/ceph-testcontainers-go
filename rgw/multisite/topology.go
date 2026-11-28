@@ -2,7 +2,6 @@ package multisite
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/strictjson"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
 
@@ -653,6 +653,29 @@ func decodeRGWTopologyPeriod(data []byte) (*rgwTopologyPeriod, error) {
 	return &period, nil
 }
 
+// decodeZonegroupDocument is the decoder of a `zonegroup get` document,
+// which decides zone membership: decodeRGWTopologyZonegroup over a document
+// that repeats no member, with an identity for the zonegroup and each zone.
+func decodeZonegroupDocument(data []byte) (rgwTopologyZonegroup, error) {
+	if strictjson.Check(data, strictjson.Options{}) != nil {
+		return rgwTopologyZonegroup{}, errInvalidTopologyPeriod
+	}
+	document, err := syncJSON(data)
+	if err != nil {
+		return rgwTopologyZonegroup{}, errInvalidTopologyPeriod
+	}
+	group, err := decodeRGWTopologyZonegroup(document)
+	if err != nil || group.ID == "" || group.Name == "" {
+		return rgwTopologyZonegroup{}, errInvalidTopologyPeriod
+	}
+	for _, zone := range group.Zones {
+		if zone.ID == "" || zone.Name == "" {
+			return rgwTopologyZonegroup{}, errInvalidTopologyPeriod
+		}
+	}
+	return group, nil
+}
+
 func decodeRGWTopologyZonegroup(doc nativeDoc) (rgwTopologyZonegroup, error) {
 	var group rgwTopologyZonegroup
 	var ok [4]bool
@@ -873,37 +896,16 @@ func (r *rgwRealmAccess) waitZoneMetadataBootstrap(ctx context.Context, master *
 	return nil
 }
 
+// rgwMetadataBootstrapped is the reload gate: the zone's metadata sync
+// status, decoded as SyncStatus decodes it, has entered incremental sync on
+// every shard.
 func rgwMetadataBootstrapped(data []byte) error {
-	var status struct {
-		SyncStatus struct {
-			Info struct {
-				Status    string `json:"status"`
-				NumShards int    `json:"num_shards"`
-			} `json:"info"`
-			Markers []struct {
-				Key int `json:"key"`
-				Val struct {
-					State int `json:"state"`
-				} `json:"val"`
-			} `json:"markers"`
-		} `json:"sync_status"`
+	status, _, err := decodeSyncMetadata(data)
+	if err != nil {
+		return err
 	}
-	if err := json.Unmarshal(data, &status); err != nil {
-		return errors.New("invalid RGW metadata sync status")
-	}
-	sync := status.SyncStatus
-	if sync.Info.Status != "sync" || sync.Info.NumShards <= 0 || len(sync.Markers) != sync.Info.NumShards {
-		return errors.New("RGW metadata full-sync maps are not initialized")
-	}
-	seen := make(map[int]bool, len(sync.Markers))
-	for _, marker := range sync.Markers {
-		if marker.Key < 0 || marker.Key >= sync.Info.NumShards || seen[marker.Key] {
-			return errors.New("invalid RGW metadata sync shard identities")
-		}
-		seen[marker.Key] = true
-		if marker.Val.State != 1 {
-			return fmt.Errorf("RGW metadata shard %d has not finished initial full sync", marker.Key)
-		}
+	if !status.bootstrapped() {
+		return fmt.Errorf("RGW metadata sync has %d of %d shards in incremental sync; initial full sync is not complete", status.IncrementalShards, status.Shards)
 	}
 	return nil
 }
