@@ -105,3 +105,26 @@ func TestScrubPGWaitsForANewerNativeStamp(t *testing.T) {
 		t.Fatal("unchanged scrub stamp satisfied the wait")
 	}
 }
+
+// TestDeepScrubResolvesANonCanonicalPGID shows that a PG ID with leading
+// zeros, which the v1.0.2 grammar accepts, reaches the PG that Ceph reports
+// as 7.0, both through ParsePGID and as an untyped constant.
+func TestDeepScrubResolvesANonCanonicalPGID(t *testing.T) {
+	parsed, err := ParsePGID("07.00")
+	if err != nil || parsed != "7.0" {
+		t.Fatalf("ParsePGID(07.00) = %q, %v", parsed, err)
+	}
+	for _, pgid := range []PGID{parsed, "07.00"} {
+		ctr := &scrubbingFixture{poolFixtureContainer: scrubFixture(), reports: []string{
+			scrubReport("active+clean", "03"), scrubReport("active+clean", "10"),
+		}}
+		cluster := poolFixtureCluster(ctr, 2)
+		cluster.settings.startupTimeout = 10 * time.Second
+		if err := cluster.DeepScrubPG(t.Context(), pgid); err != nil {
+			t.Fatalf("DeepScrubPG(%q): %v", pgid, err)
+		}
+		if want := []string{"pg deep-scrub 7.0"}; !slices.Equal(scrubCommands(ctr.poolFixtureContainer), want) {
+			t.Fatalf("DeepScrubPG(%q) ran %v", pgid, scrubCommands(ctr.poolFixtureContainer))
+		}
+	}
+}

@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -173,9 +172,8 @@ func startPoolPGWatch(ctx context.Context, settings watch.Settings, name string,
 // sortPoolPGs orders PGs by pool and numeric seed. The decoder accepted only
 // canonical "<pool>.<hex>" PGIDs of one pool, so the seeds parse.
 func sortPoolPGs(pgs []PGState) {
-	seed := func(id PGID) uint64 {
-		_, hex, _ := strings.Cut(string(id), ".")
-		n, _ := strconv.ParseUint(hex, 16, 32)
+	seed := func(id PGID) uint32 {
+		_, n, _, _ := parsePGID(string(id))
 		return n
 	}
 	slices.SortFunc(pgs, func(a, b PGState) int {

@@ -2,8 +2,6 @@ package ceph
 
 import (
 	"errors"
-	"strconv"
-	"strings"
 )
 
 // PoolPGSnapshot contains one pool's reported PGs, bracketed by two native
@@ -194,11 +192,9 @@ func decodePoolPGReports(data []byte, poolID int64) (bool, []PGState, error) {
 	return *native.Ready, result, nil
 }
 
+// poolPGIdentity reports whether value is a PG of poolID in the canonical
+// form that Ceph reports.
 func poolPGIdentity(value string, poolID int64) bool {
-	pool, seed, found := strings.Cut(value, ".")
-	if !found || poolID < 0 || pool != strconv.FormatInt(poolID, 10) {
-		return false
-	}
-	ps, err := strconv.ParseUint(seed, 16, 32)
-	return err == nil && seed == strconv.FormatUint(ps, 16)
+	pool, _, canonical, err := parsePGID(value)
+	return err == nil && poolID >= 0 && pool == poolID && string(canonical) == value
 }

@@ -32,16 +32,35 @@ type InconsistentShard struct {
 	Errors     []string
 }
 
-var (
-	pgIDPattern      = regexp.MustCompile(`^[0-9]+\.[0-9a-f]+$`)
-	scrubStampLayout = "2006-01-02T15:04:05.999999-0700"
-)
+const scrubStampLayout = "2006-01-02T15:04:05.999999-0700"
 
-func validatePGID(pgid string) error {
-	if !pgIDPattern.MatchString(pgid) {
-		return invalid(errors.New("invalid native PG ID"))
+// pgIDGrammar is the input grammar of every PG ID: decimal pool digits, a
+// dot and lowercase hexadecimal PG number digits. Leading zeros are allowed
+// on input; Ceph reports only the canonical form without them.
+var pgIDGrammar = regexp.MustCompile(`^[0-9]+\.[0-9a-f]+$`)
+
+// parsePGID is the one PG ID parser. It accepts the grammar and returns the
+// native pool ID, the PG number and the canonical form "<pool>.<hex>" that
+// Ceph reports. A pool ID beyond int64 or a PG number beyond 32 bits names no
+// PG Ceph can have and is refused. The refusal matches ErrInvalidRequest.
+func parsePGID(s string) (pool int64, seed uint32, canonical PGID, err error) {
+	refusal := invalid(fmt.Errorf("invalid native PG ID %q: want <pool>.<hex>, such as 1.0 or 3.1f", s))
+	if !pgIDGrammar.MatchString(s) {
+		return 0, 0, "", refusal
 	}
-	return nil
+	poolText, seedText, _ := strings.Cut(s, ".")
+	pool, poolErr := strconv.ParseInt(poolText, 10, 64)
+	ps, seedErr := strconv.ParseUint(seedText, 16, 32)
+	if poolErr != nil || seedErr != nil {
+		return 0, 0, "", refusal
+	}
+	return pool, uint32(ps), PGID(strconv.FormatInt(pool, 10) + "." + strconv.FormatUint(ps, 16)), nil
+}
+
+// canonicalPGID returns the canonical form of pgid, or the parser's refusal.
+func canonicalPGID(pgid PGID) (PGID, error) {
+	_, _, canonical, err := parsePGID(string(pgid))
+	return canonical, err
 }
 
 // PGID identifies one placement group as "<pool>.<hex>": the decimal native
@@ -49,20 +68,25 @@ func validatePGID(pgid string) error {
 // "3.1f". Pool.PGs reports PGs with this type, so a reported PG passes straight
 // to DeepScrubPG, RepairPG and PGInconsistencies. An untyped string constant
 // converts to PGID without validation, so these methods check the grammar
-// again and refuse an invalid value; ParsePGID checks it up front.
+// again, refuse an invalid value and use the canonical form of a valid one;
+// ParsePGID checks it up front.
 type PGID string
 
-// ParsePGID returns s as a PGID when it matches the grammar
-// "<pool>.<hex>", which is exactly what DeepScrubPG, RepairPG and
-// PGInconsistencies accept. Otherwise it returns an error that matches
-// ErrInvalidRequest and the zero PGID.
+// ParsePGID returns s as a PGID when it matches the grammar "<pool>.<hex>",
+// which is what DeepScrubPG, RepairPG, PGInconsistencies and
+// Pool.OverridePGPrimary accept. Leading zeros are accepted, and the result
+// is the canonical form Ceph reports without them: ParsePGID("01.00") returns
+// "1.0", so a later operation and a comparison with Pool.PGs find the PG. A
+// pool ID beyond int64 or a PG number beyond 32 bits is refused. Otherwise it
+// returns an error that matches ErrInvalidRequest and the zero PGID.
 //
 //purpose:observation
 func ParsePGID(s string) (PGID, error) {
-	if err := validatePGID(s); err != nil {
+	_, _, canonical, err := parsePGID(s)
+	if err != nil {
 		return "", err
 	}
-	return PGID(s), nil
+	return canonical, nil
 }
 
 // String returns the native PG ID.
@@ -99,7 +123,8 @@ func (c *Container) RepairPG(ctx context.Context, pgid PGID) error {
 }
 
 func (c *Container) scrubPG(ctx context.Context, pgid PGID, operation string) (string, error) {
-	if err := validatePGID(string(pgid)); err != nil {
+	pgid, err := canonicalPGID(pgid)
+	if err != nil {
 		return "", err
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
@@ -137,14 +162,17 @@ func (c *Container) pgScrubReport(ctx context.Context, pgid PGID) (time.Time, st
 	if err := c.poolPolicyReady(); err != nil {
 		return time.Time{}, "", err
 	}
-	poolID, _, _ := strings.Cut(string(pgid), ".")
+	poolID, _, _, err := parsePGID(string(pgid))
+	if err != nil {
+		return time.Time{}, "", err
+	}
 	pools, err := poolCatalog{c.conn()}.states(ctx)
 	if err != nil {
 		return time.Time{}, "", err
 	}
 	name := ""
 	for _, pool := range pools {
-		if strconv.FormatInt(pool.ID, 10) == poolID {
+		if pool.ID == poolID {
 			name = pool.Name
 		}
 	}

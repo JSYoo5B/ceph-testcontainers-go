@@ -455,7 +455,8 @@ func (o *Observer) PGInconsistencies(ctx context.Context, pgid PGID) ([]Inconsis
 	if err != nil {
 		return nil, err
 	}
-	if err := validatePGID(string(pgid)); err != nil {
+	pgid, err = canonicalPGID(pgid)
+	if err != nil {
 		return nil, err
 	}
 	if err := c.lockTopology(ctx); err != nil {

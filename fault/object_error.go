@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,13 +15,11 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/nshelper"
 )
 
-var pgIDPattern = regexp.MustCompile(`^[0-9]+\.[0-9a-f]+$`)
-
-func validatePGID(pgid string) error {
-	if !pgIDPattern.MatchString(pgid) {
-		return nshelper.InvalidRequest("invalid native PG ID")
-	}
-	return nil
+// nativePGID reports whether pgid is a PG ID in the canonical form Ceph
+// reports.
+func nativePGID(pgid string) bool {
+	parsed, err := ceph.ParsePGID(pgid)
+	return err == nil && string(parsed) == pgid
 }
 
 // RADOS accepts arbitrary object names, but the fixture passes them as CLI
@@ -115,7 +112,7 @@ func InjectObjectDataError(ctx context.Context, c *ceph.Container, pool, object 
 			PGID   string `json:"pgid"`
 			Acting []int  `json:"acting"`
 		}
-		if err := json.Unmarshal(data, &mapping); err != nil || mapping.PoolID == nil || *mapping.PoolID != state.ID || validatePGID(mapping.PGID) != nil {
+		if err := json.Unmarshal(data, &mapping); err != nil || mapping.PoolID == nil || *mapping.PoolID != state.ID || !nativePGID(mapping.PGID) {
 			return errors.New("decode native object mapping")
 		}
 		if !slices.Contains(mapping.Acting, osdID) {

@@ -137,7 +137,7 @@ func (p *Pool) OverridePGPrimary(ctx context.Context, primary PGPrimary) (*PGPri
 	if err := validateExistingPoolName(name); err != nil {
 		return nil, err
 	}
-	if err := validatePGID(string(primary.PG)); err != nil {
+	if primary.PG, err = canonicalPGID(primary.PG); err != nil {
 		return nil, err
 	}
 	if primary.OSD == nil || primary.OSD.owner != c {
@@ -598,9 +598,8 @@ func pgActiveClean(state string) bool {
 
 // checkPGOfPool refuses a PG that is not one of pool's current PGs.
 func checkPGOfPool(pg PGID, pool pgPrimaryPool) error {
-	poolID, seed, _ := strings.Cut(string(pg), ".")
-	ps, err := strconv.ParseUint(seed, 16, 32)
-	if poolID != strconv.FormatInt(pool.id, 10) || err != nil || ps >= uint64(pool.pgNum) {
+	poolID, seed, _, err := parsePGID(string(pg))
+	if err != nil || poolID != pool.id || int64(seed) >= int64(pool.pgNum) {
 		return invalidRequest("Pool.OverridePGPrimary: PG %s is not a PG of pool %q", pg, pool.name)
 	}
 	if !pool.replicated {
