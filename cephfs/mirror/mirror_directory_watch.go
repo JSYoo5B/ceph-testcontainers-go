@@ -276,7 +276,7 @@ func directoryStatusEqual(a, b DirectoryStatus) bool {
 	fields := func(s DirectoryStatus) compared {
 		return compared{s.SourceFilesystem, s.DestinationFilesystem, s.SourceFilesystemID, s.DestinationFilesystemID,
 			s.Directory, s.PeerID, s.MappingState, s.InstanceID, s.DaemonName, s.State,
-			s.SnapshotsSynced, s.SnapshotsDeleted, s.SnapsRenamed, s.Ready}
+			s.SnapshotsSynced, s.SnapshotsDeleted, s.SnapshotsRenamed, s.Ready}
 	}
 	return fields(a) == fields(b) && snapshotEqual(a.CurrentSnapshot, b.CurrentSnapshot) &&
 		snapshotEqual(a.LastSyncedSnapshot, b.LastSyncedSnapshot) && maps.Equal(a.DaemonProblems, b.DaemonProblems)

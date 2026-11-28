@@ -632,3 +632,26 @@ func TestCephFSDirectoryWaitRejectsReplacementRegistration(t *testing.T) {
 		})
 	}
 }
+
+// TestDirectoryStatusReportsRenamedSnapshotsInBothFields checks that the
+// deprecated SnapsRenamed holds the count of SnapshotsRenamed in a status and
+// in a watch event.
+func TestDirectoryStatusReportsRenamedSnapshotsInBothFields(t *testing.T) {
+	mirror, _, _, a, _ := newCephFSObserverDraft()
+	a.replay = `{"/owned":{"state":"idle","last_synced_snap":{"id":120,"name":"checkpoint"},"snaps_synced":4,"snaps_deleted":1,"snaps_renamed":3}}`
+	status, err := mirror.DirectoryStatus(t.Context(), "/owned")
+	if err != nil && !errors.As(err, new(*cephFSObservationPartialError)) {
+		t.Fatal(err)
+	}
+	if status.SnapshotsRenamed != 3 || status.SnapsRenamed != status.SnapshotsRenamed { //nolint:staticcheck // the deprecated field is still filled
+		t.Fatalf("renamed counts %d and %d", status.SnapshotsRenamed, status.SnapsRenamed) //nolint:staticcheck // the deprecated field is still filled
+	}
+	f := newDirectoryWatchFixture()
+	f.a.replay = a.replay
+	w := f.start(t, t.Context(), fastDirectoryWatch(4))
+	t.Cleanup(func() { _ = w.Stop() })
+	event := nextDirectoryEvent(t, w)
+	if event.Status.SnapshotsRenamed != 3 || event.Status.SnapsRenamed != 3 { //nolint:staticcheck // the deprecated field is still filled
+		t.Fatalf("watch baseline renamed counts %d and %d", event.Status.SnapshotsRenamed, event.Status.SnapsRenamed) //nolint:staticcheck // the deprecated field is still filled
+	}
+}

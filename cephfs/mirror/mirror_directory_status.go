@@ -31,14 +31,18 @@ const cephFSObservationMaxSnapshotID = ^uint64(0) - 2
 // an application checkpoint. DaemonProblems reports other unavailable members.
 // Native counters reset on daemon restart/directory reassignment.
 type DirectoryStatus struct {
-	SourceFilesystem, DestinationFilesystem         string
-	SourceFilesystemID, DestinationFilesystemID     int
-	Directory, PeerID, MappingState, InstanceID     string
-	DaemonName, State, FailureReason                string
-	CurrentSnapshot, LastSyncedSnapshot             *Snapshot
-	SnapshotsSynced, SnapshotsDeleted, SnapsRenamed uint64
-	DaemonProblems                                  map[string]string
-	Ready                                           bool
+	SourceFilesystem, DestinationFilesystem             string
+	SourceFilesystemID, DestinationFilesystemID         int
+	Directory, PeerID, MappingState, InstanceID         string
+	DaemonName, State, FailureReason                    string
+	CurrentSnapshot, LastSyncedSnapshot                 *Snapshot
+	SnapshotsSynced, SnapshotsDeleted, SnapshotsRenamed uint64
+	// SnapsRenamed holds the same count as SnapshotsRenamed.
+	//
+	// Deprecated: Use SnapshotsRenamed.
+	SnapsRenamed   uint64
+	DaemonProblems map[string]string
+	Ready          bool
 }
 
 // DirectoryStatus uses current owned processes and exact native filesystem,
@@ -230,7 +234,8 @@ func (mirror *Container) readDirectoryReplay(ctx context.Context, selected *Daem
 	if present {
 		result.State, result.FailureReason = replay.State, replay.FailureReason
 		result.CurrentSnapshot, result.LastSyncedSnapshot = replay.Current, replay.Last
-		result.SnapshotsSynced, result.SnapshotsDeleted, result.SnapsRenamed = replay.Synced, replay.Deleted, replay.Renamed
+		result.SnapshotsSynced, result.SnapshotsDeleted, result.SnapshotsRenamed = replay.Synced, replay.Deleted, replay.Renamed
+		result.SnapsRenamed = replay.Renamed
 		result.Ready = replay.State == "idle" || replay.State == "syncing"
 	}
 	return nil
