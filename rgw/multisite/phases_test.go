@@ -585,7 +585,8 @@ func TestRGWPeriodPullRefusesATerminatedFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.closed = true
-	for name, pull := range map[string]func(context.Context) error{"source": f.PullSourcePeriod, "destination": f.PullDestinationPeriod} {
+	for name, pull := range map[string]func(context.Context) error{"source": f.PullSourcePeriod, "destination": f.PullDestinationPeriod,
+		"zone": func(ctx context.Context) error { return f.PullPeriod(ctx, "a", "b") }} {
 		if err := pull(t.Context()); !errors.Is(err, ceph.ErrInvalidRequest) {
 			t.Fatalf("%s pull on a terminated fixture = %v", name, err)
 		}
@@ -758,5 +759,50 @@ func TestRGWFixtureFormatsOnlyItsRealm(t *testing.T) {
 	var none *Fixture
 	if got := fmt.Sprint(none); got != "RGW multisite fixture <nil>" {
 		t.Fatalf("nil fixture: %s", got)
+	}
+}
+
+// TestRGWPullPeriodReachesEveryZoneOnThePairsPath pulls the period into the
+// third zone of a topology, from each other zone, and checks that the pair's
+// named forms run the same command for their zones.
+func TestRGWPullPeriodReachesEveryZoneOnThePairsPath(t *testing.T) {
+	source, destination, third := &rgwScriptCLI{}, &rgwScriptCLI{}, &rgwScriptCLI{}
+	f := newPhaseFixture(source, destination)
+	f.realm.sourceURL, f.realm.destinationURL = "http://a:7480", "http://b:7480"
+	f.topology.additional = map[string]*rgwZoneState{"c": {Zone: Zone{Name: "c", Zonegroup: "us", PeerEndpoint: "http://c:7480"}, client: third}}
+	for _, from := range []string{"a", "b"} {
+		if err := f.PullPeriod(t.Context(), "c", from); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := []string{"realm pull --url http://a:7480 --access-key ACCESS --secret SECRET", "realm pull --url http://b:7480 --access-key ACCESS --secret SECRET"}
+	if !slices.Equal(third.ops, want) || len(source.ops)+len(destination.ops) != 0 {
+		t.Fatalf("third zone pulls %q, pair %q %q", third.ops, source.ops, destination.ops)
+	}
+	if err := f.PullPeriod(t.Context(), "a", "c"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.PullSourcePeriod(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.PullPeriod(t.Context(), "b", "a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.PullDestinationPeriod(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"realm pull --url http://c:7480 --access-key ACCESS --secret SECRET", "realm pull --url http://b:7480 --access-key ACCESS --secret SECRET"}; !slices.Equal(source.ops, want) {
+		t.Fatalf("source pulls %q, want %q", source.ops, want)
+	}
+	if want := []string{"realm pull --url http://a:7480 --access-key ACCESS --secret SECRET", "realm pull --url http://a:7480 --access-key ACCESS --secret SECRET"}; !slices.Equal(destination.ops, want) {
+		t.Fatalf("destination pulls %q, want %q", destination.ops, want)
+	}
+	for name, pair := range map[string][2]string{"same zone": {"c", "c"}, "unknown zone": {"c", "d"}, "unknown target": {"d", "a"}} {
+		if err := f.PullPeriod(t.Context(), pair[0], pair[1]); !errors.Is(err, ceph.ErrInvalidRequest) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if len(third.ops) != 2 {
+		t.Fatalf("refused pulls ran commands: %q", third.ops)
 	}
 }

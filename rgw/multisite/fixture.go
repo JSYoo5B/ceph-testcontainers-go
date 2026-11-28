@@ -754,7 +754,9 @@ func ensureFreshRGWCluster(ctx context.Context, cluster *ceph.Container) error {
 //
 //purpose:condition
 func (f *Fixture) PullSourcePeriod(ctx context.Context) error {
-	return f.pullPeriod(ctx, f.realm.sourceClient, f.realm.config.SourceZone, f.realm.destinationURL)
+	return f.pullPeriod(ctx, func() (testcontainers.Container, string, string, error) {
+		return f.realm.sourceClient, f.realm.config.SourceZone, f.realm.destinationURL, nil
+	})
 }
 
 // PullDestinationPeriod imports the source's realm and current committed
@@ -767,13 +769,53 @@ func (f *Fixture) PullSourcePeriod(ctx context.Context) error {
 //
 //purpose:condition
 func (f *Fixture) PullDestinationPeriod(ctx context.Context) error {
-	return f.pullPeriod(ctx, f.realm.destinationClient, f.realm.config.DestinationZone, f.realm.sourceURL)
+	return f.pullPeriod(ctx, func() (testcontainers.Container, string, string, error) {
+		return f.realm.destinationClient, f.realm.config.DestinationZone, f.realm.sourceURL, nil
+	})
 }
 
-// pullPeriod runs realm pull from url in zone through client. It holds
-// topologyMu, like the other operations that change the period, and refuses a
-// terminated fixture.
-func (f *Fixture) pullPeriod(ctx context.Context, client testcontainers.Container, zone, url string) error {
+// PullPeriod imports the realm and current committed period of the owned
+// zone fromZone into the owned zone zone, through zone's CLI client and
+// fromZone's peer endpoint, using private system-user credentials, as
+// PullSourcePeriod and PullDestinationPeriod do for the two zones of Run. It
+// reaches every zone of a topology, including those that WithTopology,
+// AddZone and AddZonegroup added. Native realm pull updates the realm's
+// current-period pointer and reflects its zonegroups. Fencing a former
+// metadata master, promotion and gateway restart remain caller decisions.
+//
+// It waits for other topology operations within ctx. An unknown or equal
+// zone name, and a terminated fixture, return ceph.ErrInvalidRequest.
+//
+//purpose:condition
+func (f *Fixture) PullPeriod(ctx context.Context, zone, fromZone string) error {
+	return f.pullPeriod(ctx, func() (testcontainers.Container, string, string, error) {
+		if zone == fromZone {
+			return nil, "", "", servicehook.Invalid(errors.New("RGW period pull needs two different zones"))
+		}
+		var into, from *rgwZoneState
+		for _, state := range f.zoneStates() {
+			switch state.Name {
+			case zone:
+				into = state
+			case fromZone:
+				from = state
+			}
+		}
+		if into == nil || from == nil {
+			return nil, "", "", servicehook.Invalid(fmt.Errorf("RGW zones %s and %s must both be attached owned zones", zone, fromZone))
+		}
+		if into.client == nil {
+			return nil, "", "", fmt.Errorf("RGW zone %s has no running owned CLI client", zone)
+		}
+		return into.client, into.Name, from.PeerEndpoint, nil
+	})
+}
+
+// pullPeriod runs realm pull in the zone that target resolves, through its
+// client, from the resolved peer URL. It holds topologyMu, like the other
+// operations that change the period, and refuses a terminated fixture before
+// it resolves the zones.
+func (f *Fixture) pullPeriod(ctx context.Context, target func() (client testcontainers.Container, zone, url string, err error)) error {
 	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
 		return err
 	}
@@ -784,10 +826,14 @@ func (f *Fixture) pullPeriod(ctx context.Context, client testcontainers.Containe
 	if f.closed {
 		return servicehook.Invalid(errors.New("RGW multisite fixture is terminated"))
 	}
+	client, zone, url, err := target()
+	if err != nil {
+		return err
+	}
 	if f.realm.systemAccess == "" || f.realm.systemSecret == "" || url == "" {
 		return fmt.Errorf("RGW multisite system credentials are unavailable")
 	}
-	_, err := f.realm.admin(ctx, client, zone, "realm", "pull", "--url", url, "--access-key", f.realm.systemAccess, "--secret", f.realm.systemSecret)
+	_, err = f.realm.admin(ctx, client, zone, "realm", "pull", "--url", url, "--access-key", f.realm.systemAccess, "--secret", f.realm.systemSecret)
 	return err
 }
 

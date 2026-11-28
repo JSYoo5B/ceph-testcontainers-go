@@ -38,6 +38,7 @@ func TestSerializedMultisiteMutationQueuedDeadline(t *testing.T) {
 		},
 		"PullSourcePeriod":      func(ctx context.Context) error { return f.PullSourcePeriod(ctx) },
 		"PullDestinationPeriod": func(ctx context.Context) error { return f.PullDestinationPeriod(ctx) },
+		"PullPeriod":            func(ctx context.Context) error { return f.PullPeriod(ctx, "a", "b") },
 		"Terminate":             func(ctx context.Context) error { return f.Terminate(ctx) },
 	}
 	for name, operation := range operations {
