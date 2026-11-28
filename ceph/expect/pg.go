@@ -326,7 +326,7 @@ func (e PGs) validate() error {
 		return invalid("pins a negative pool ID")
 	}
 	if e.FSID != "" {
-		if !validFSID(e.FSID) {
+		if _, ok := nativeUUID(e.FSID); !ok {
 			return invalid("pins an invalid FSID")
 		}
 	}

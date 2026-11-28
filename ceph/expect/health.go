@@ -200,30 +200,9 @@ func (e Health) Evaluate(observed ceph.HealthSnapshot) (HealthEvaluation, error)
 	if err := e.validate(); err != nil {
 		return HealthEvaluation{}, err
 	}
-	if _, ok := healthRank(observed.Status); !ok {
-		return HealthEvaluation{}, fmt.Errorf("malformed health observation: invalid status %q", observed.Status)
-	}
-	for code, check := range observed.Checks {
-		if code == "" {
-			return HealthEvaluation{}, fmt.Errorf("malformed health observation: a check has no code")
-		}
-		if _, ok := healthRank(check.Severity); !ok {
-			return HealthEvaluation{}, fmt.Errorf("malformed health observation: check %s has invalid severity %q", code, check.Severity)
-		}
-	}
-	mutes := make(map[string]ceph.HealthMute, len(observed.Mutes))
-	for _, m := range observed.Mutes {
-		if m.Code == "" {
-			return HealthEvaluation{}, fmt.Errorf("malformed health observation: a mute has no code")
-		}
-		if _, dup := mutes[m.Code]; dup {
-			return HealthEvaluation{}, fmt.Errorf("malformed health observation: mute %s reported twice", m.Code)
-		}
-		mutes[m.Code] = m
-	}
-	otherCluster, err := fsidDiffers(e.FSID, observed.FSID)
+	mutes, otherCluster, err := healthObservation(observed, e.FSID)
 	if err != nil {
-		return HealthEvaluation{}, fmt.Errorf("malformed health observation: %w", err)
+		return HealthEvaluation{}, err
 	}
 
 	result := HealthEvaluation{Expectation: e.clone(), Observed: cloneHealth(observed)}
@@ -296,6 +275,38 @@ func (e Health) Evaluate(observed ceph.HealthSnapshot) (HealthEvaluation, error)
 	return result, nil
 }
 
+// healthObservation checks the observation and returns its mutes by code and
+// whether it names another cluster than the pinned FSID. The FSID is checked
+// only when one is pinned.
+func healthObservation(observed ceph.HealthSnapshot, fsid string) (mutes map[string]ceph.HealthMute, otherCluster bool, err error) {
+	if _, ok := healthRank(observed.Status); !ok {
+		return nil, false, fmt.Errorf("malformed health observation: invalid status %q", observed.Status)
+	}
+	for code, check := range observed.Checks {
+		if code == "" {
+			return nil, false, fmt.Errorf("malformed health observation: a check has no code")
+		}
+		if _, ok := healthRank(check.Severity); !ok {
+			return nil, false, fmt.Errorf("malformed health observation: check %s has invalid severity %q", code, check.Severity)
+		}
+	}
+	mutes = make(map[string]ceph.HealthMute, len(observed.Mutes))
+	for _, m := range observed.Mutes {
+		if m.Code == "" {
+			return nil, false, fmt.Errorf("malformed health observation: a mute has no code")
+		}
+		if _, dup := mutes[m.Code]; dup {
+			return nil, false, fmt.Errorf("malformed health observation: mute %s reported twice", m.Code)
+		}
+		mutes[m.Code] = m
+	}
+	otherCluster, err = fsidDiffers(fsid, observed.FSID)
+	if err != nil {
+		return nil, false, fmt.Errorf("malformed health observation: %w", err)
+	}
+	return mutes, otherCluster, nil
+}
+
 func (e Health) validate() error {
 	invalid := func(format string, args ...any) error {
 		return fmt.Errorf("%w: health expectation "+format, append([]any{ceph.ErrInvalidRequest}, args...)...)
@@ -304,7 +315,7 @@ func (e Health) validate() error {
 		return invalid("states nothing")
 	}
 	if e.FSID != "" {
-		if !validFSID(e.FSID) {
+		if _, ok := nativeUUID(e.FSID); !ok {
 			return invalid("pins an invalid FSID")
 		}
 	}
@@ -406,21 +417,25 @@ func cloneHealth(s ceph.HealthSnapshot) ceph.HealthSnapshot {
 
 // fsidDiffers reports whether a pinned FSID, valid by validation, names
 // another cluster than the observed one. Nothing is pinned when want is
-// empty; an observed FSID that is not a UUID is an error.
+// empty; an observed FSID that is not a native UUID is an error.
 func fsidDiffers(want, observed string) (bool, error) {
 	if want == "" {
 		return false, nil
 	}
-	if !validFSID(observed) {
+	got, ok := nativeUUID(observed)
+	if !ok {
 		return false, fmt.Errorf("no valid FSID")
 	}
-	return uuid.MustParse(observed) != uuid.MustParse(want), nil
+	pinned, _ := nativeUUID(want)
+	return got != pinned, nil
 }
 
-// validFSID reports whether s is a non-nil UUID, as every native FSID is.
-func validFSID(s string) bool {
+// nativeUUID parses s as a native identity (an FSID or an OSD UUID): any
+// spelling the uuid package parses, except the nil UUID, which no native identity
+// is. Equal identities compare equal whatever their spelling.
+func nativeUUID(s string) (uuid.UUID, bool) {
 	parsed, err := uuid.Parse(s)
-	return err == nil && parsed != uuid.Nil
+	return parsed, err == nil && parsed != uuid.Nil
 }
 
 func healthRank(value string) (int, bool) {
