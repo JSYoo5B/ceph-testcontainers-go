@@ -52,17 +52,13 @@ const (
 	// ClockOffsetInconclusive: the measurement cannot tell, for example
 	// because its interval contains both zero and the offset.
 	ClockOffsetInconclusive ClockOffsetState = "inconclusive"
-	// ClockOffsetRestored: Restore completed; nothing was measured.
-	ClockOffsetRestored ClockOffsetState = "restored"
 )
 
 // ClockOffsetStatus is one measurement of the daemon of an offset lease.
 type ClockOffsetStatus struct {
-	// Offset is the offset the lease applied.
-	Offset time.Duration
 	// MeasuredMin and MeasuredMax bound the daemon's own clock minus an
 	// uninstrumented reference clock in the same container, at the time of
-	// the measurement. Both are zero for ClockOffsetRestored.
+	// the measurement.
 	MeasuredMin, MeasuredMax time.Duration
 	State                    ClockOffsetState
 	// Reason explains State.
@@ -194,11 +190,9 @@ func applyClockOffset(ctx context.Context, engine clockEngine, ctr testcontainer
 	ledger := clockOffsetLedger{
 		Target:   target,
 		Owned:    clockOwnedFile{Namespace: id, Path: path, Identity: seen.File.Identity, ExpectedText: "+0"},
-		Env:      seen.environment(),
-		Initial:  seen.File,
 		CacheSec: seen.cacheSeconds(),
 	}
-	if r := admitClockLiveFileMode(ledger.Env, ledger.Owned, ledger.Initial); r.Verdict != clockProvenanceValid {
+	if r := admitClockLiveFileMode(seen.environment(), ledger.Owned, seen.File); r.Verdict != clockProvenanceValid {
 		return nil, nshelper.InvalidRequest("%s does not read its owned timestamp file as a live +0 channel: %s", daemon, r.Reason)
 	}
 	if _, known := settleWindowNs(ledger.CacheSec); !known {
@@ -208,12 +202,12 @@ func applyClockOffset(ctx context.Context, engine clockEngine, ctr testcontainer
 	if err != nil {
 		return nil, fmt.Errorf("measure %s before the offset: %w", daemon, err)
 	}
-	ledger.Baseline, ledger.BaselineTarget = baseline.Offset, baseline.Target(id)
-	if !baseline.Offset.overlaps(clockOffsetInterval{Known: true}) || !sameInstance(target, ledger.BaselineTarget) {
+	ledger.Baseline = baseline.Offset
+	if r := admitClockBaseline(target, baseline.Target(id), baseline.Offset); r.Verdict != clockProvenanceValid {
 		return nil, nshelper.InvalidRequest("%s is not at the reference clock before the offset: measured %s", daemon, baseline.Offset)
 	}
 	lease := &ClockOffsetLease{ContainerID: id, Daemon: daemon, Offset: offset, engine: engine, target: ctr, ledger: ledger}
-	lease.step = clockOffsetStep{Label: "offset", IntendedNs: int64(offset), Write: clockWriteFailed}
+	lease.step = clockOffsetStep{IntendedNs: int64(offset), Write: clockWriteFailed}
 	file, err := engine.write(ctx, ctr, path, text)
 	if err != nil {
 		// The write may have landed: the handle owns its restore.
@@ -270,8 +264,9 @@ func (lease *ClockOffsetLease) isComplete(ctx context.Context) (bool, error) {
 
 // Status measures the daemon's clock now and judges it against the lease's
 // offset, for a test that needs to know that the daemon still runs with it.
-// It refuses a stopped, paused or removed container; after Restore it
-// returns ClockOffsetRestored without measuring.
+// It refuses a stopped, paused or removed container, and a restored lease
+// with an error matching ceph.ErrInvalidRequest: after Restore there is no
+// offset left to measure.
 //
 //purpose:observation
 func (lease *ClockOffsetLease) Status(ctx context.Context) (ClockOffsetStatus, error) {
@@ -282,33 +277,32 @@ func (lease *ClockOffsetLease) Status(ctx context.Context) (ClockOffsetStatus, e
 		return ClockOffsetStatus{}, err
 	}
 	defer lease.mu.Unlock()
-	status := ClockOffsetStatus{Offset: lease.Offset}
 	if lease.complete {
-		status.State, status.Reason = ClockOffsetRestored, "the lease was restored"
-		return status, nil
+		return ClockOffsetStatus{}, nshelper.InvalidRequest("the clock offset of %s was restored", lease.Daemon)
 	}
 	running, err := lease.engine.state(ctx, lease.ContainerID)
 	if err != nil {
-		return status, err
+		return ClockOffsetStatus{}, err
 	}
 	if running != clockContainerRunning {
-		return status, nshelper.InvalidRequest("the container of %s is %s; only a running daemon can be measured", lease.Daemon, running)
+		return ClockOffsetStatus{}, nshelper.InvalidRequest("the container of %s is %s; only a running daemon can be measured", lease.Daemon, running)
 	}
 	if !lease.step.AckKnown {
-		return status, errors.New("the offset write was not acknowledged; restore the lease")
+		return ClockOffsetStatus{}, errors.New("the offset write was not acknowledged; restore the lease")
 	}
 	step := lease.step
 	sample, err := lease.engine.measure(ctx, lease.target, lease.Daemon)
 	if err != nil {
-		return status, fmt.Errorf("measure %s: %w", lease.Daemon, err)
+		return ClockOffsetStatus{}, fmt.Errorf("measure %s: %w", lease.Daemon, err)
 	}
 	step.Target, step.Measured, step.SampleKnown, step.SampleLoMono, step.TargetSampleOK = sample.Target(lease.ContainerID), sample.Offset, true, sample.LoMono, true
 	file, err := lease.engine.inspect(ctx, lease.target, "", lease.ledger.Owned.Path)
 	if err != nil {
-		return status, err
+		return ClockOffsetStatus{}, err
 	}
 	step.File = file.File
 	state, reason := judgeClockStep(lease.ledger, step)
+	var status ClockOffsetStatus
 	status.MeasuredMin, status.MeasuredMax = time.Duration(sample.Offset.Lo), time.Duration(sample.Offset.Hi)
 	status.State, status.Reason = clockStatusState(state), reason
 	status.Replaced = !sameInstance(lease.ledger.Target, step.Target)
@@ -370,7 +364,7 @@ func (lease *ClockOffsetLease) Restore(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("restore the clock offset of %s: %w", lease.Daemon, err)
 	}
-	restore := clockOffsetStep{Label: "restore", Write: clockWriteAcked, AckKnown: true, AckedMono: lease.engine.now(), File: file}
+	restore := clockOffsetStep{Write: clockWriteAcked, AckKnown: true, AckedMono: lease.engine.now(), File: file}
 	window, _ := settleWindowNs(lease.ledger.CacheSec)
 	if wait := time.Duration(restore.AckedMono+window-lease.engine.now()) + clockMeasureMargin; wait > 0 {
 		if err := lease.engine.sleep(ctx, wait); err != nil {
@@ -386,43 +380,33 @@ func (lease *ClockOffsetLease) Restore(ctx context.Context) error {
 	if verdict != clockRestoreVerified {
 		return nshelper.Category(fmt.Sprintf("%s was not restored to the reference clock: %s", lease.Daemon, reason), ceph.ErrNativeFailure)
 	}
-	if cleanup, why := judgeClockCleanup(clockOffsetCleanup{Process: clockProcessRunning, File: clockFilePresent}, true); cleanup != clockProvenanceValid {
-		return errors.New(why)
-	}
 	lease.complete = true
 	return nil
 }
 
-// judgeRestore judges restore with the ledger. A step without an admitted
-// measurement still names the offset that the daemon may show, so that a
-// restore is verified only when it discriminates the reference from that
-// offset. A replaced process is judged as a fresh instance: its owned file
-// must hold +0 and it must be measured at the reference.
+// judgeRestore judges restore against the lease's one step. The daemon may
+// still show the measured offset of an admitted step, or else the intended
+// one, so a restore is verified only when it discriminates the reference from
+// that offset. A replaced process is judged as a fresh instance: its owned
+// file must hold +0 and it must be measured at the reference.
 func (lease *ClockOffsetLease) judgeRestore(restore clockOffsetStep) (clockRestoreState, string) {
 	l := lease.ledger
 	l.Owned.ExpectedText = "+0"
-	l.Restore = &restore
+	intended := clockOffsetInterval{Known: true, Lo: lease.step.IntendedNs, Hi: lease.step.IntendedNs}
 	if !sameInstance(l.Target, restore.Target) && restore.Target.complete() {
 		if r := verifyClockLiveFileMode(l.Owned, restore.File); r.Verdict != clockProvenanceValid {
 			return clockRestoreNotRestored, "owned file: " + r.Reason
 		}
-		if restore.Measured.overlaps(clockOffsetInterval{Known: true}) && !restore.Measured.overlaps(clockOffsetInterval{Known: true, Lo: lease.step.IntendedNs, Hi: lease.step.IntendedNs}) {
+		if restore.Measured.overlaps(clockOffsetInterval{Known: true}) && !restore.Measured.overlaps(intended) {
 			return clockRestoreVerified, "the restarted daemon reads the +0 file and was measured at the reference"
 		}
 		return clockRestoreNotRestored, "the restarted daemon was not measured at the reference"
 	}
-	if lease.step.Write == clockWriteAcked {
-		l.Steps = []clockOffsetStep{lease.step}
+	shift := intended
+	if state, _ := judgeClockStep(l, lease.step); state == clockStepAdmitted {
+		shift = lease.step.Measured
 	}
-	if state, _ := judgeClockStep(l, lease.step); len(l.Steps) == 1 && state == clockStepAdmitted {
-		j := judgeClockOffsetLedger(l)
-		return j.Restore, j.RestoreReason
-	}
-	state, reason := judgeClockRestore(l, restore, clockOffsetInterval{Known: true, Lo: lease.step.IntendedNs, Hi: lease.step.IntendedNs})
-	if state == clockRestoreVerified && len(l.Steps) > 0 {
-		state, reason = demoteRestoreByChronology(l)
-	}
-	return state, reason
+	return judgeClockRestore(l, restore, shift)
 }
 
 // clockContainerState is the engine's state of the target container.

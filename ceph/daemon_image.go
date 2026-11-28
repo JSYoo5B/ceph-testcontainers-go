@@ -77,7 +77,7 @@ func resolveDaemonOptions(configs []DaemonOptions) (DaemonOptions, error) {
 		if resolved.imageSet {
 			return DaemonOptions{}, invalidRequest("daemon image set by more than one DaemonOptions")
 		}
-		if err := validateDaemonImage(config.image); err != nil {
+		if err := validateImageReference(config.image); err != nil {
 			return DaemonOptions{}, invalid(fmt.Errorf("daemon options %d: %w", i, err))
 		}
 		resolved = config
@@ -174,14 +174,16 @@ func (d *DetachedOSD) Image() string {
 	return d.image
 }
 
-// validateDaemonImage is the one validation of a per-daemon image reference,
-// shared by DaemonOptions.WithImage and OSDOptions.WithImage.
-func validateDaemonImage(image string) error {
+// validateImageReference is the one validation of an image reference that a
+// caller passes for one container: DaemonOptions.WithImage,
+// OSDOptions.WithImage and ClockConfig.WithHelperImage. Each caller names the
+// image in its error.
+func validateImageReference(image string) error {
 	if image == "" {
-		return fmt.Errorf("daemon image must not be empty")
+		return fmt.Errorf("image reference must not be empty")
 	}
 	if strings.ContainsFunc(image, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
-		return fmt.Errorf("daemon image must not contain whitespace or control characters")
+		return fmt.Errorf("image reference must not contain whitespace or control characters")
 	}
 	return nil
 }

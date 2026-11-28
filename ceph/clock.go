@@ -103,15 +103,26 @@ func WithClockConfig(clock ClockConfig) Option {
 	return func(o *options) error { return clock.apply(o) }
 }
 
-// clockSettings is the clock part of the cluster settings.
-type clockSettings struct {
-	helperImage string
-	monitors    []string
-	set         clockField
+// apply validates every field c sets and then merges them into the cluster
+// settings, so that a refused value writes nothing.
+func (c ClockConfig) apply(o *options) error {
+	if err := c.validate(o.clock); err != nil {
+		return err
+	}
+	if c.set&clockHelperImage != 0 {
+		o.clock.helperImage = c.helperImage
+	}
+	if c.set&clockMonitors != 0 {
+		o.clock.monitors = slices.Clone(c.monitors)
+	}
+	o.clock.set |= c.set
+	return nil
 }
 
-func (c ClockConfig) apply(o *options) error {
-	if clash := c.set & o.clock.set; clash != 0 {
+// validate checks the fields c sets on their own and against held, the
+// ClockConfig fields already set. It changes nothing.
+func (c ClockConfig) validate(held ClockConfig) error {
+	if clash := c.set & held.set; clash != 0 {
 		name := "helper image"
 		if clash&clockMonitors != 0 {
 			name = "monitors"
@@ -119,23 +130,20 @@ func (c ClockConfig) apply(o *options) error {
 		return fmt.Errorf("clock %s set by more than one WithClockConfig", name)
 	}
 	if c.set&clockHelperImage != 0 {
-		if err := validateDaemonImage(c.helperImage); err != nil {
+		if err := validateImageReference(c.helperImage); err != nil {
 			return fmt.Errorf("clock helper image: %w", err)
 		}
-		o.clock.helperImage = c.helperImage
 	}
 	if c.set&clockMonitors != 0 {
 		if len(c.monitors) == 0 {
 			return errors.New("ClockConfig.WithMonitors needs at least one MON name")
 		}
-		for _, name := range c.monitors {
-			if slices.Contains(o.clock.monitors, name) {
+		for i, name := range c.monitors {
+			if slices.Contains(c.monitors[:i], name) {
 				return fmt.Errorf("ClockConfig.WithMonitors names MON %q twice", name)
 			}
-			o.clock.monitors = append(o.clock.monitors, name)
 		}
 	}
-	o.clock.set |= c.set
 	return nil
 }
 
@@ -294,15 +302,23 @@ func checkClockInterposerELF(data []byte, machine elf.Machine) error {
 	return nil
 }
 
+// clockHelperRequest creates the helper container of the cluster with owner
+// ID owner. The helper has no executable; its container is created only so
+// that its files can be copied, and never starts.
+func clockHelperRequest(owner string) []testcontainers.ContainerCustomizer {
+	return []testcontainers.ContainerCustomizer{
+		testcontainers.WithEntrypoint("/clock-helper-is-not-started"), testcontainers.WithCmd(),
+		testcontainers.WithNoStart(), testcontainers.WithLabels(map[string]string{clusterOwnerLabel: owner}),
+	}
+}
+
 // clockHelperFiles copies the interposer and the build manifest out of a
-// created, never started, container of the helper image, and removes it.
+// created, never started, container of the helper image, labelled for the
+// cluster with owner ID owner, and removes it.
 //
 //testdouble:dependency-port
-var clockHelperFiles = func(ctx context.Context, image string) (manifest, interposer []byte, err error) {
-	// The helper has no executable; its container is created only so that
-	// its files can be copied, and never starts.
-	ctr, err := runContainer(ctx, image, testcontainers.WithEntrypoint("/clock-helper-is-not-started"), testcontainers.WithCmd(),
-		testcontainers.WithNoStart())
+var clockHelperFiles = func(ctx context.Context, image, owner string) (manifest, interposer []byte, err error) {
+	ctr, err := runContainer(ctx, image, clockHelperRequest(owner)...)
 	if ctr != nil {
 		defer func() {
 			if terminateErr := ctr.Terminate(context.WithoutCancel(ctx)); terminateErr != nil {
@@ -347,13 +363,16 @@ type clockState struct {
 }
 
 // loadClockInterposer admits the helper of settings, when it names one,
-// before Run creates anything else.
-func loadClockInterposer(ctx context.Context, settings options) (clockState, error) {
+// before Run creates anything else; owner is the ID that labels the
+// cluster's containers. Only MON a is armed here, because Run creates it
+// without AddMonitor; the other initial MONs are armed by AddMonitor through
+// clockDaemonOption, like any MON it adds.
+func loadClockInterposer(ctx context.Context, settings options, owner string) (clockState, error) {
 	state := clockState{armed: map[string]bool{}}
 	if settings.clock.set&clockHelperImage == 0 {
 		return state, nil
 	}
-	manifest, interposer, err := clockHelperFiles(ctx, settings.clock.helperImage)
+	manifest, interposer, err := clockHelperFiles(ctx, settings.clock.helperImage, owner)
 	if err != nil {
 		return clockState{}, err
 	}
@@ -362,8 +381,8 @@ func loadClockInterposer(ctx context.Context, settings options) (clockState, err
 		return clockState{}, err
 	}
 	state.interposer = interposer
-	for _, name := range settings.clock.monitors {
-		state.armed[name] = true
+	if slices.Contains(settings.clock.monitors, "a") {
+		state.armed["a"] = true
 	}
 	return state, nil
 }

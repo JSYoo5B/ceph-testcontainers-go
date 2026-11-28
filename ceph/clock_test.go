@@ -11,6 +11,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -173,11 +174,59 @@ func TestClockConfigValidation(t *testing.T) {
 	}
 }
 
+// TestClockConfigRefusalWritesNothing checks that a refused ClockConfig
+// leaves every clock setting as it was, also the fields it set validly.
+func TestClockConfigRefusalWritesNothing(t *testing.T) {
+	for _, c := range []struct {
+		name          string
+		held, refused ClockConfig
+	}{
+		{"valid helper, empty MON list", ClockConfig{}, ClockConfig{}.WithHelperImage("helper:v1").WithMonitors()},
+		{"valid helper, MON named twice", ClockConfig{}, ClockConfig{}.WithHelperImage("helper:v1").WithMonitors("a", "b", "a")},
+		{"MON named twice after a helper", ClockConfig{}.WithHelperImage("helper:v1"), ClockConfig{}.WithMonitors("a", "b", "a")},
+		{"invalid helper after MONs", ClockConfig{}.WithMonitors("a"), ClockConfig{}.WithHelperImage("helper :v1")},
+		{"monitors set twice", ClockConfig{}.WithMonitors("a"), ClockConfig{}.WithHelperImage("helper:v1").WithMonitors("b")},
+	} {
+		var o options
+		if err := c.held.apply(&o); err != nil {
+			t.Fatalf("%s: held value refused: %v", c.name, err)
+		}
+		before := o.clock
+		if err := c.refused.apply(&o); err == nil {
+			t.Fatalf("%s: accepted", c.name)
+		}
+		if o.clock.helperImage != before.helperImage || !slices.Equal(o.clock.monitors, before.monitors) || o.clock.set != before.set {
+			t.Errorf("%s: a refused ClockConfig wrote %+v over %+v", c.name, o.clock, before)
+		}
+	}
+	var o options
+	if err := (ClockConfig{}.WithMonitors("a")).apply(&o); err != nil {
+		t.Fatal(err)
+	}
+	if err := (ClockConfig{}.WithHelperImage("helper:v1")).apply(&o); err != nil || o.clock.helperImage != "helper:v1" || !slices.Equal(o.clock.monitors, []string{"a"}) {
+		t.Fatalf("a valid second ClockConfig: %+v, %v", o.clock, err)
+	}
+}
+
+// TestClockHelperContainerCarriesTheClusterLabel checks that the helper
+// container is labelled for the cluster that creates it.
+func TestClockHelperContainerCarriesTheClusterLabel(t *testing.T) {
+	req := testcontainers.GenericContainerRequest{}
+	for _, opt := range clockHelperRequest("owner-1") {
+		if err := opt.Customize(&req); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if req.Labels[clusterOwnerLabel] != "owner-1" || req.Started {
+		t.Fatalf("helper request labels = %v, started = %v", req.Labels, req.Started)
+	}
+}
+
 func TestClockHelperIsAdmittedBeforeAnythingStarts(t *testing.T) {
 	restore := clockHelperFiles
 	t.Cleanup(func() { clockHelperFiles = restore })
 	good := clockTestELF(elf.EM_X86_64, map[string]elf.SectionIndex{"clock_gettime": 1})
-	clockHelperFiles = func(context.Context, string) ([]byte, []byte, error) {
+	clockHelperFiles = func(context.Context, string, string) ([]byte, []byte, error) {
 		return clockTestManifest(t, good, func(m map[string]any) { m["interposer"].(map[string]any)["intercept_syscall"] = true }), good, nil
 	}
 	c, err := Run(t.Context(), DefaultImage, WithClockConfig(ClockConfig{}.WithHelperImage("helper:v1").WithMonitors("a")))
@@ -188,14 +237,14 @@ func TestClockHelperIsAdmittedBeforeAnythingStarts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	clockHelperFiles = func(context.Context, string) ([]byte, []byte, error) {
+	clockHelperFiles = func(context.Context, string, string) ([]byte, []byte, error) {
 		return clockTestManifest(t, good, nil), good, nil
 	}
-	state, err := loadClockInterposer(t.Context(), settings)
+	state, err := loadClockInterposer(t.Context(), settings, "owner")
 	if err != nil || !state.armed["a"] || !bytes.Equal(state.interposer, good) || state.identity.HelperImage != "helper:v1" {
 		t.Fatalf("admitted helper: %+v, %v", state.identity, err)
 	}
-	none, err := loadClockInterposer(t.Context(), options{})
+	none, err := loadClockInterposer(t.Context(), options{}, "owner")
 	if err != nil || none.interposer != nil || len(none.armed) != 0 || none.identity != (ClockInterposer{}) {
 		t.Fatalf("a cluster without a helper loaded one: %+v, %v", none, err)
 	}
@@ -289,6 +338,42 @@ func TestMonClockBlockPreloadsOnlyTheDaemon(t *testing.T) {
 // MON, with a quorum reply it cannot read, and requires the name to stay
 // unarmed, so that a later AddMonitor of that name without
 // WithClockInstrumentation gets no interposer.
+// TestInitialMonitorsAreArmedByAddMonitor checks that Run pre-arms only MON
+// a, and that an initial MON whose AddMonitor fails before the cluster owns
+// it is not recorded as armed.
+func TestInitialMonitorsAreArmedByAddMonitor(t *testing.T) {
+	restore := clockHelperFiles
+	t.Cleanup(func() { clockHelperFiles = restore })
+	good := clockTestELF(elf.EM_X86_64, map[string]elf.SectionIndex{"clock_gettime": 1})
+	clockHelperFiles = func(context.Context, string, string) ([]byte, []byte, error) {
+		return clockTestManifest(t, good, nil), good, nil
+	}
+	settings, err := resolveOptions(DefaultImage, []testcontainers.ContainerCustomizer{
+		WithClusterConfig(ClusterConfig{}.WithMonitorCount(3)),
+		WithClockConfig(ClockConfig{}.WithHelperImage("helper:v1").WithMonitors("a", "b")),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := loadClockInterposer(t.Context(), settings, "owner")
+	if err != nil || !state.armed["a"] || len(state.armed) != 1 {
+		t.Fatalf("pre-armed MONs = %v, %v; want only a", state.armed, err)
+	}
+	if settings.clockDaemonOption("b") == nil || settings.clockDaemonOption("c") != nil {
+		t.Fatal("clockDaemonOption does not follow ClockConfig.WithMonitors")
+	}
+	c, control := newMonitorConfigFixture()
+	c.settings.clock = settings.clock
+	c.clock = state
+	control.native = []byte("{not a quorum reply")
+	if mon, err := c.AddMonitor(t.Context(), "b", c.settings.clockDaemonOption("b")...); err == nil || mon != nil {
+		t.Fatalf("AddMonitor = %v, %v; want a failure before registration", mon, err)
+	}
+	if c.clockArmed("b") || c.clockFiles("b", false) != nil {
+		t.Fatal("an initial MON that was never owned is recorded as armed")
+	}
+}
+
 func TestAddMonitorArmsOnlyAnOwnedMonitor(t *testing.T) {
 	c, control := newMonitorConfigFixture()
 	c.clock = clockState{interposer: []byte("interposer"), armed: map[string]bool{}}

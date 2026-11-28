@@ -265,9 +265,11 @@ after the cache window shows the same process back at the real clock. It is
 retryable: a paused container is refused until it is resumed, a stopped
 container gets the `+0` file back, which its daemon reads when it starts,
 and a removed container needs nothing. The offset survives a restart of the
-MON in the file, and `Status` reports such a process as `Replaced`. The
-cluster's `Terminate` restores a held lease after it resumes paused
-containers and before it stops the daemons.
+MON in the file, and `Status` reports such a process as `Replaced`. After
+`Restore`, `Status` refuses with an error matching `ceph.ErrInvalidRequest`,
+because no offset is left to measure. The cluster's `Terminate` restores a
+held lease after it resumes paused containers and before it stops the
+daemons.
 
 What the interposer does not change:
 

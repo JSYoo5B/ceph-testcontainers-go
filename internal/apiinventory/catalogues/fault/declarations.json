@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "fault",
-  "count": 64,
+  "count": 63,
   "entries": [
     {
       "current": "fault.AllPackets",
@@ -147,12 +147,6 @@
       "current": "fault.ClockOffsetPending",
       "kind": "const",
       "proposed": "fault.ClockOffsetPending",
-      "decision": "baseline"
-    },
-    {
-      "current": "fault.ClockOffsetRestored",
-      "kind": "const",
-      "proposed": "fault.ClockOffsetRestored",
       "decision": "baseline"
     },
     {

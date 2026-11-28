@@ -41,7 +41,9 @@ after the cluster.
 3. **Run the SUT** under the fault.
 4. **Observe** the effect with the cluster's observation APIs
    (`ceph.Observer`, `Pool.PGs`, `NetworkProfileLease.Status`,
-   `CPULimitLease.Status`, `ClockOffsetLease.Status`, ...).
+   `CPULimitLease.Status`, `ClockOffsetLease.Status`, ...). A restored
+   `NetworkProfileLease` or `ClockOffsetLease` has nothing left to measure,
+   and its `Status` is refused with `ceph.ErrInvalidRequest`.
 5. **Restore** with the handle's `Resume` / `Restore` when the scenario needs
    recovery; `Terminate` restores what is still held. Keep a non-nil handle
    returned with an error: restoring it stays retryable.
