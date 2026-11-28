@@ -701,8 +701,9 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertEqual(scalar(caller.split("    with:", 1)[0], "name"), "Scenarios")
         self.assertEqual((scalar(caller, "category"), scalar(caller, "goarch"), scalar(caller, "check_name")),
                          ("architecture", "arm64", "ARM64"))
-        # Its cohort comes from the source, never from the workflow.
-        for key in ("profiles", "optional_batch", "release", "storage_policy", "networks"):
+        # Its cohort comes from the source, never from the workflow; a
+        # dispatch only selects the release of the role images.
+        for key in ("profiles", "optional_batch", "storage_policy", "networks"):
             self.assertNotRegex(caller, r"(?m)^      " + key + ":")
         # Every pull request path is a file or tree that exists, so that a
         # rename cannot silently stop the trial on changes that matter.
@@ -1203,6 +1204,11 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertEqual(scalar(release_input, "options"), supported)
         self.assertEqual(scalar(release_input, "default"), default)
         self.assertIn("      release: ${{ inputs.release || " + default + " }}\n", periodic)
+        arm64 = self.workflows["arm64.yml"]
+        arm64_input = arm64.split("      release:\n", 1)[1].split("\npermissions:", 1)[0]
+        self.assertEqual(scalar(arm64_input, "options"), supported)
+        self.assertEqual(scalar(arm64_input, "default"), default)
+        self.assertIn("      release: ${{ inputs.release || " + default + " }}\n", arm64)
         self.assertRegex(self.workflows["block-fault-probe.yml"], r"(?m)^        release: " + re.escape(supported) + "$")
         runtime_input = self.workflows["tagged-runtime.yml"].split("\n      release:\n", 1)[1].split("\n      changed_since:", 1)[0]
         self.assertEqual(scalar(runtime_input, "default"), default)

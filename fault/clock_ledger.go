@@ -1,18 +1,163 @@
-//go:build all || integration
+package fault
 
-package integration_test
+// This file holds the verdict rules of ApplyClockOffset for the libfaketime
+// v0.9.12 interposer of the clock helper
+// (3ccdd344aadf1e317156fa5fb7c881f2c4404778): when a daemon reads the owned
+// timestamp file as its live control channel, and how its offset steps,
+// restore and cleanup are judged.
 
 import (
 	"fmt"
 	"strings"
 )
 
-// This file models, without a clock, a process or Docker, how a per-target
-// offset and restore ledger for a libfaketime v0.9.12 live-file fixture
-// (3ccdd344aadf1e317156fa5fb7c881f2c4404778) is judged. It classifies recorded
-// observations only. It never writes a file, never samples a clock and is not
-// evidence that any interposer reaches a Ceph daemon or that a clock fault
-// backend works.
+// clockOffsetInterval is a closed interval of possible offsets in nanoseconds.
+// Known false keeps an unmeasured interval from reading as [0,0].
+type clockOffsetInterval struct {
+	Known  bool
+	Lo, Hi int64
+}
+
+func (a clockOffsetInterval) overlaps(b clockOffsetInterval) bool {
+	return a.Known && b.Known && a.Lo <= b.Hi && b.Lo <= a.Hi
+}
+
+// clockFileIdentity is the device and inode of the controller's owned file as
+// captured at creation. HasIdentity false means the capture failed.
+type clockFileIdentity struct {
+	HasIdentity bool
+	Device      uint64
+	Inode       uint64
+}
+
+// clockOwnedFile is the controller's record of the file it created for one
+// target. ExpectedText is the text the controller last wrote. Namespace names
+// the mount namespace that Path resolves in, such as the container that holds
+// the file and runs the target; empty is the controller's own. A path alone
+// does not name a file once targets run in separate containers.
+type clockOwnedFile struct {
+	Namespace    string
+	Path         string
+	Identity     clockFileIdentity
+	ExpectedText string
+}
+
+// clockTargetEnvironment is the environment of the target process itself, read
+// from the target and not from the launcher's intent. Known false means it
+// could not be read.
+type clockTargetEnvironment struct {
+	Known         bool
+	Faketime      *string
+	TimestampFile *string
+}
+
+// clockObservedFile is the owned path as observed now. KnownPresence false and
+// KnownContent false keep an unreadable observation out of the evidence.
+type clockObservedFile struct {
+	KnownPresence bool
+	Present       bool
+	Identity      clockFileIdentity
+	KnownContent  bool
+	Text          string
+}
+
+type clockProvenanceVerdict string
+
+const (
+	clockProvenanceValid        clockProvenanceVerdict = "valid"
+	clockProvenanceInvalid      clockProvenanceVerdict = "invalid"
+	clockProvenanceInconclusive clockProvenanceVerdict = "inconclusive"
+)
+
+// clockProvenanceResult is a configuration-provenance verdict. It carries no
+// claim about the clock: even a valid result at "+0" says only that the target
+// reads the owned file and that file holds the text the controller wrote.
+type clockProvenanceResult struct {
+	Verdict clockProvenanceVerdict
+	Reason  string
+	// FallbackInEffect is set when the owned file is gone and the target's
+	// next read would use a non-owned source.
+	FallbackInEffect bool
+}
+
+func provenanceResult(v clockProvenanceVerdict, format string, args ...any) clockProvenanceResult {
+	return clockProvenanceResult{Verdict: v, Reason: fmt.Sprintf(format, args...)}
+}
+
+// admitClockLiveFileMode decides whether a target may be used as a live-file
+// clock fixture. The target environment must be read from the target, must not
+// contain FAKETIME (even empty), must name exactly the owned file, and the
+// owned file must start with exactly "+0" and a captured identity.
+func admitClockLiveFileMode(env clockTargetEnvironment, owned clockOwnedFile, initial clockObservedFile) clockProvenanceResult {
+	if owned.Path == "" || !owned.Identity.HasIdentity {
+		return provenanceResult(clockProvenanceInconclusive, "owned file path or identity was not captured")
+	}
+	if !env.Known {
+		return provenanceResult(clockProvenanceInconclusive, "target environment was not read")
+	}
+	if env.Faketime != nil {
+		return provenanceResult(clockProvenanceInvalid, "FAKETIME is present in the target environment, which disables file parsing")
+	}
+	if env.TimestampFile == nil {
+		return provenanceResult(clockProvenanceInvalid, "FAKETIME_TIMESTAMP_FILE is absent from the target environment")
+	}
+	if *env.TimestampFile != owned.Path {
+		return provenanceResult(clockProvenanceInvalid, "FAKETIME_TIMESTAMP_FILE does not name the owned file")
+	}
+	if owned.ExpectedText != "+0" {
+		return provenanceResult(clockProvenanceInvalid, "controller ledger does not start at +0")
+	}
+	if r, done := checkOwnedFileState(owned, initial); done {
+		return r
+	}
+	return provenanceResult(clockProvenanceValid, "target reads the owned file, which holds %q", owned.ExpectedText)
+}
+
+// verifyClockLiveFileMode re-checks a previously admitted target. The expected
+// text comes from the controller's ledger, so a legitimate update is not
+// reported as drift. An unlinked or replaced file invalidates the fixture and
+// is never described as restoration.
+func verifyClockLiveFileMode(owned clockOwnedFile, now clockObservedFile) clockProvenanceResult {
+	if owned.Path == "" || !owned.Identity.HasIdentity {
+		return provenanceResult(clockProvenanceInconclusive, "owned file path or identity was not captured")
+	}
+	if r, done := checkOwnedFileState(owned, now); done {
+		return r
+	}
+	return provenanceResult(clockProvenanceValid, "owned file is present with the ledger text %q", owned.ExpectedText)
+}
+
+// checkOwnedFileState returns a terminal result when the observation is
+// missing, shows removal, replacement or drift.
+func checkOwnedFileState(owned clockOwnedFile, o clockObservedFile) (clockProvenanceResult, bool) {
+	if !o.KnownPresence {
+		return provenanceResult(clockProvenanceInconclusive, "owned file presence was not observed"), true
+	}
+	if !o.Present {
+		r := provenanceResult(clockProvenanceInvalid, "owned file is gone; unlinking is not restoration and the target may read a non-owned source")
+		r.FallbackInEffect = true
+		return r, true
+	}
+	if !o.Identity.HasIdentity {
+		return provenanceResult(clockProvenanceInconclusive, "owned file identity was not observed"), true
+	}
+	if o.Identity != owned.Identity {
+		return provenanceResult(clockProvenanceInvalid, "owned file was replaced (device or inode changed)"), true
+	}
+	if !o.KnownContent {
+		return provenanceResult(clockProvenanceInconclusive, "owned file content was not read"), true
+	}
+	if strings.TrimSuffix(o.Text, "\n") != owned.ExpectedText {
+		return provenanceResult(clockProvenanceInvalid, "owned file text %q differs from ledger text %q", o.Text, owned.ExpectedText), true
+	}
+	return clockProvenanceResult{}, false
+}
+
+// The offset ledger judges, without a clock, a process or Docker, what a clock
+// offset lease recorded: the admission, the write and measurement of its
+// offset, the restore and the disposal of the owned resources. The lease
+// builds the ledger from its observations and acts on the verdicts; the
+// functions only classify.
 //
 // Source facts the judgement follows (src/libfaketime.c at the pinned commit):
 //
@@ -27,8 +172,8 @@ import (
 //     applied offset. The earliest guaranteed refetch after an acknowledged
 //     write is cache_duration+1 whole seconds after it, and only for a clock
 //     call made by the target.
-//   - An unavailable owned file falls back to a non-owned source (see the
-//     config-source provenance model), so a measurement that looks like zero
+//   - An unavailable owned file falls back to a non-owned source
+//     ($HOME/.faketimerc, then /etc/faketimerc), so a measurement that looks like zero
 //     after the owned file was removed is not a restoration.
 //
 // The ledger distinguishes five facts that must not be merged:
@@ -443,68 +588,4 @@ func (j clockLedgerJudgement) String() string {
 		fmt.Fprintf(&b, " first_failure=%q", j.FirstFailure)
 	}
 	return b.String()
-}
-
-// clockFleetEntry names a ledger supplied to the fleet judge. A nil pointer is
-// rejected rather than read.
-type clockFleetEntry struct {
-	Name   string
-	Ledger *clockOffsetLedger
-}
-
-// clockOwnedPathKey is the owned file's path within its mount namespace.
-type clockOwnedPathKey struct{ Namespace, Path string }
-
-// judgeClockFleet judges targets independently and rejects sharing: one owned
-// file or one target instance in two ledgers means that one target's evidence
-// could be counted for another. A file is shared when two ledgers name the same
-// path in the same mount namespace, or when their captured device and inode
-// are equal, whatever the paths say. The same path in two namespaces with
-// distinct identities is two files.
-func judgeClockFleet(entries []clockFleetEntry) map[string]clockLedgerJudgement {
-	out := map[string]clockLedgerJudgement{}
-	paths := map[clockOwnedPathKey][]string{}
-	idents := map[clockFileIdentity][]string{}
-	insts := map[clockOffsetTarget][]string{}
-	for _, e := range entries {
-		if e.Ledger == nil {
-			continue
-		}
-		key := clockOwnedPathKey{e.Ledger.Owned.Namespace, e.Ledger.Owned.Path}
-		paths[key] = append(paths[key], e.Name)
-		if id := e.Ledger.Owned.Identity; id.HasIdentity {
-			idents[id] = append(idents[id], e.Name)
-		}
-		insts[e.Ledger.Target] = append(insts[e.Ledger.Target], e.Name)
-	}
-	for _, e := range entries {
-		if e.Ledger == nil {
-			j := clockLedgerJudgement{Restore: clockRestoreUnknown, CleanupVerdict: clockProvenanceInconclusive}
-			j.Admission = provenanceResult(clockProvenanceInconclusive, "ledger is nil")
-			j.fail("admission inconclusive: ledger is nil")
-			out[e.Name] = j
-			continue
-		}
-		j := judgeClockOffsetLedger(*e.Ledger)
-		shared := len(paths[clockOwnedPathKey{e.Ledger.Owned.Namespace, e.Ledger.Owned.Path}]) > 1 || len(insts[e.Ledger.Target]) > 1
-		if id := e.Ledger.Owned.Identity; id.HasIdentity && len(idents[id]) > 1 {
-			shared = true
-		}
-		if shared {
-			j.Admission = provenanceResult(clockProvenanceInvalid, "owned file or target instance is shared between ledgers")
-			j.fail("admission invalid: %s", j.Admission.Reason)
-			for i := range j.Steps {
-				if j.Steps[i].State == clockStepAdmitted {
-					j.Steps[i].State, j.Steps[i].Reason = clockStepInconclusive, "ledger shares an owned resource"
-				}
-			}
-			if j.Restore == clockRestoreVerified {
-				j.Restore, j.RestoreReason = clockRestoreUnknown, "ledger shares an owned resource"
-			}
-			// Live cleanup depends on a verified restore; rejudge it.
-			j.CleanupVerdict, j.CleanupReason = judgeClockCleanup(e.Ledger.Cleanup, j.Restore == clockRestoreVerified)
-		}
-		out[e.Name] = j
-	}
-	return out
 }

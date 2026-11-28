@@ -620,8 +620,8 @@ still requires trusting the code it will execute.
   arm64 runs on a native ARM64 runner (see
   [Native ARM64 cohort](ci.md#native-arm64-cohort)). Keep the cohort small:
   startup, helper and tool execution, native observation and cleanup. A batch
-  whose host prerequisites (cgroup controllers, device-mapper, clock
-  interposition) are not established on that runner stays out of it.
+  whose host prerequisites (cgroup controllers, device-mapper) are not
+  established on that runner stays out of it.
 - When a batch approaches its budget, move a long independent test into its
   own batch instead of raising the limit. Keep short related tests together.
 - A batch is one CI job, and each job pays about two minutes before and after

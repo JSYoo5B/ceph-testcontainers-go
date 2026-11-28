@@ -23,6 +23,7 @@ import (
 type DaemonOptions struct {
 	image    string
 	imageSet bool
+	clock    bool
 }
 
 // WithImage starts the one new daemon from image instead of the cluster's
@@ -62,7 +63,14 @@ func (o DaemonOptions) WithImage(image string) DaemonOptions {
 // cluster state.
 func resolveDaemonOptions(configs []DaemonOptions) (DaemonOptions, error) {
 	var resolved DaemonOptions
+	clock := false
 	for i, config := range configs {
+		if config.clock {
+			if clock {
+				return DaemonOptions{}, invalidRequest("clock instrumentation set by more than one DaemonOptions")
+			}
+			clock = true
+		}
 		if !config.imageSet {
 			continue
 		}
@@ -74,6 +82,7 @@ func resolveDaemonOptions(configs []DaemonOptions) (DaemonOptions, error) {
 		}
 		resolved = config
 	}
+	resolved.clock = clock
 	return resolved, nil
 }
 

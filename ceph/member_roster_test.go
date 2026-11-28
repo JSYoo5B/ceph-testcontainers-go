@@ -294,6 +294,8 @@ var memberRosterCallers = map[string]stateCaller{
 	"monitorsLocked":                   {"holds", []string{"eachMonitor", "monitorCount"}},
 	"monitorConfigTargets":             {"holds", []string{"eachManager", "eachMonitor", "eachService", "initialManager", "manager"}},
 	"Owns":                             {"hook", nil},
+	"ClockTarget":                      {"hook", nil},
+	"clockTarget":                      {"holds", nil},
 	"refreshMonitorConfig":             {"holds", nil},
 	"refreshMonitorConfigAfterRemoval": {"holds", nil},
 	"ownsNativeTarget":                 {"holds", []string{"eachManager", "eachMonitor", "eachService", "initialManager"}},

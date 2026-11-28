@@ -1,13 +1,99 @@
-//go:build all || (integration && (!ci || (ci_code && (!ci_batch || ci_batch_pure))))
-
-//ci: timeout=20m job-timeout=30
-
-package integration_test
+package fault
 
 import (
 	"strings"
 	"testing"
 )
+
+func strPtr(s string) *string { return &s }
+
+const cfgSelected = "owned-faketime.txt"
+
+func cfgOwned() clockOwnedFile {
+	return clockOwnedFile{Path: cfgSelected, Identity: clockFileIdentity{HasIdentity: true, Device: 7, Inode: 42}, ExpectedText: "+0"}
+}
+
+func cfgObserved(text string) clockObservedFile {
+	return clockObservedFile{KnownPresence: true, Present: true, Identity: cfgOwned().Identity, KnownContent: true, Text: text}
+}
+
+func cfgEnv() clockTargetEnvironment {
+	return clockTargetEnvironment{Known: true, TimestampFile: strPtr(cfgSelected)}
+}
+
+func wantVerdict(t *testing.T, name string, got clockProvenanceResult, want clockProvenanceVerdict) {
+	t.Helper()
+	if got.Verdict != want {
+		t.Errorf("%s: verdict %q (%s), want %q", name, got.Verdict, got.Reason, want)
+	}
+}
+
+func TestClockLiveFileAdmission(t *testing.T) {
+	wantVerdict(t, "baseline", admitClockLiveFileMode(cfgEnv(), cfgOwned(), cfgObserved("+0")), clockProvenanceValid)
+	wantVerdict(t, "trailing newline", admitClockLiveFileMode(cfgEnv(), cfgOwned(), cfgObserved("+0\n")), clockProvenanceValid)
+
+	// Environment mode, including the empty value, is invalid.
+	for _, v := range []string{"+0", ""} {
+		env := cfgEnv()
+		env.Faketime = strPtr(v)
+		wantVerdict(t, "FAKETIME="+v, admitClockLiveFileMode(env, cfgOwned(), cfgObserved("+0")), clockProvenanceInvalid)
+	}
+
+	env := cfgEnv()
+	env.TimestampFile = nil
+	wantVerdict(t, "selector absent", admitClockLiveFileMode(env, cfgOwned(), cfgObserved("+0")), clockProvenanceInvalid)
+	env.TimestampFile = strPtr("other-file.txt")
+	wantVerdict(t, "selector names another file", admitClockLiveFileMode(env, cfgOwned(), cfgObserved("+0")), clockProvenanceInvalid)
+
+	// Initial text must be exactly +0: empty, nonzero and wrong ledger fail.
+	wantVerdict(t, "empty initial", admitClockLiveFileMode(cfgEnv(), cfgOwned(), cfgObserved("")), clockProvenanceInvalid)
+	wantVerdict(t, "nonzero initial", admitClockLiveFileMode(cfgEnv(), cfgOwned(), cfgObserved("+30")), clockProvenanceInvalid)
+	nz := cfgOwned()
+	nz.ExpectedText = "+30"
+	wantVerdict(t, "ledger not at zero", admitClockLiveFileMode(cfgEnv(), nz, cfgObserved("+30")), clockProvenanceInvalid)
+
+	// Missing evidence is inconclusive and never decodes into a pass.
+	wantVerdict(t, "environment unread", admitClockLiveFileMode(clockTargetEnvironment{}, cfgOwned(), cfgObserved("+0")), clockProvenanceInconclusive)
+	wantVerdict(t, "ledger without identity", admitClockLiveFileMode(cfgEnv(), clockOwnedFile{Path: cfgSelected, ExpectedText: "+0"}, cfgObserved("+0")), clockProvenanceInconclusive)
+	wantVerdict(t, "ledger without path", admitClockLiveFileMode(cfgEnv(), clockOwnedFile{Identity: cfgOwned().Identity, ExpectedText: "+0"}, cfgObserved("+0")), clockProvenanceInconclusive)
+	wantVerdict(t, "presence unobserved", admitClockLiveFileMode(cfgEnv(), cfgOwned(), clockObservedFile{}), clockProvenanceInconclusive)
+	noContent := cfgObserved("")
+	noContent.KnownContent = false
+	wantVerdict(t, "content unread", admitClockLiveFileMode(cfgEnv(), cfgOwned(), noContent), clockProvenanceInconclusive)
+	noID := cfgObserved("+0")
+	noID.Identity = clockFileIdentity{}
+	wantVerdict(t, "identity unobserved", admitClockLiveFileMode(cfgEnv(), cfgOwned(), noID), clockProvenanceInconclusive)
+}
+
+func TestClockLiveFileVerification(t *testing.T) {
+	wantVerdict(t, "unchanged", verifyClockLiveFileMode(cfgOwned(), cfgObserved("+0")), clockProvenanceValid)
+
+	// A controller update moves the ledger with the file and stays valid.
+	upd := cfgOwned()
+	upd.ExpectedText = "+30"
+	wantVerdict(t, "ledger updated", verifyClockLiveFileMode(upd, cfgObserved("+30")), clockProvenanceValid)
+	// A file that did not take the update is drift, not success.
+	wantVerdict(t, "update not applied", verifyClockLiveFileMode(upd, cfgObserved("+0")), clockProvenanceInvalid)
+
+	gone := verifyClockLiveFileMode(cfgOwned(), clockObservedFile{KnownPresence: true, Present: false})
+	wantVerdict(t, "unlinked", gone, clockProvenanceInvalid)
+	if !gone.FallbackInEffect {
+		t.Error("unlinked file must report that a non-owned source may apply")
+	}
+	if r := verifyClockLiveFileMode(cfgOwned(), cfgObserved("+0")); r.FallbackInEffect {
+		t.Error("present owned file must not report a fallback")
+	}
+
+	swapped := cfgObserved("+0")
+	swapped.Identity = clockFileIdentity{HasIdentity: true, Device: 7, Inode: 43}
+	wantVerdict(t, "replaced with same text", verifyClockLiveFileMode(cfgOwned(), swapped), clockProvenanceInvalid)
+
+	wantVerdict(t, "presence unobserved", verifyClockLiveFileMode(cfgOwned(), clockObservedFile{}), clockProvenanceInconclusive)
+	noContent := cfgObserved("")
+	noContent.KnownContent = false
+	wantVerdict(t, "content unread", verifyClockLiveFileMode(cfgOwned(), noContent), clockProvenanceInconclusive)
+	wantVerdict(t, "ledger without identity", verifyClockLiveFileMode(clockOwnedFile{Path: cfgSelected, ExpectedText: "+0"}, cfgObserved("+0")), clockProvenanceInconclusive)
+}
 
 const (
 	clockLedOff = int64(30e9)
@@ -34,19 +120,6 @@ func clockLedStep(label string, off int64, ack int64) clockOffsetStep {
 		File: clockLedFile(text), Target: clockLedTarget, Measured: clockLedMeasured(off),
 		SampleKnown: true, SampleLoMono: ack + 12*clockLedSec, TargetSampleOK: true,
 	}
-}
-
-// clockLedSeparateFile gives l its own owned file: another path and another
-// inode, in the owned record and in every observation of it.
-func clockLedSeparateFile(l *clockOffsetLedger, path string, inode uint64) {
-	l.Owned.Path, l.Env.TimestampFile = path, strPtr(path)
-	l.Owned.Identity.Inode, l.Initial.Identity.Inode = inode, inode
-	for i := range l.Steps {
-		l.Steps[i].File.Identity.Inode = inode
-	}
-	r := *l.Restore
-	r.File.Identity.Inode = inode
-	l.Restore = &r
 }
 
 func clockLedgerOK() clockOffsetLedger {
@@ -317,57 +390,6 @@ func TestClockOffsetLedgerKeepsFirstFailureAndCleanupSeparate(t *testing.T) {
 	}
 }
 
-func TestClockOffsetLedgerFleet(t *testing.T) {
-	a, b := clockLedgerOK(), clockLedgerOK()
-	b.Target = clockOffsetTarget{ID: "target-b", PID: 77, StartTicks: 5}
-	b.BaselineTarget = b.Target
-	for i := range b.Steps {
-		b.Steps[i].Target = b.Target
-	}
-	b.Restore.Target = b.Target
-	clockLedSeparateFile(&b, "owned-b.txt", 12)
-
-	res := judgeClockFleet([]clockFleetEntry{{"a", &a}, {"b", &b}})
-	for n, j := range res {
-		if j.Restore != clockRestoreVerified || j.FirstFailure != "" {
-			t.Fatalf("%s: %s", n, j)
-		}
-	}
-
-	// Restore evidence of one target never counts for another.
-	b2 := b
-	r := *b.Restore
-	r.Target = a.Target
-	b2.Restore = &r
-	res = judgeClockFleet([]clockFleetEntry{{"a", &a}, {"b", &b2}})
-	if res["b"].Restore != clockRestoreNotRestored || res["a"].Restore != clockRestoreVerified {
-		t.Fatalf("cross-target restore counted: %s / %s", res["a"], res["b"])
-	}
-
-	// A shared owned path or instance invalidates both ledgers.
-	c := b
-	c.Owned.Path = a.Owned.Path
-	c.Env.TimestampFile = strPtr(a.Owned.Path)
-	res = judgeClockFleet([]clockFleetEntry{{"a", &a}, {"c", &c}})
-	for n, j := range res {
-		if j.Admission.Verdict != clockProvenanceInvalid || j.Restore == clockRestoreVerified {
-			t.Fatalf("%s shares a path: %s", n, j)
-		}
-	}
-	d := b
-	d.Target = a.Target
-	res = judgeClockFleet([]clockFleetEntry{{"a", &a}, {"d", &d}})
-	if res["a"].Admission.Verdict != clockProvenanceInvalid || res["d"].Admission.Verdict != clockProvenanceInvalid {
-		t.Fatalf("shared instance not rejected")
-	}
-
-	// A typed-nil ledger is inconclusive, not read.
-	res = judgeClockFleet([]clockFleetEntry{{"n", nil}})
-	if res["n"].Admission.Verdict != clockProvenanceInconclusive || res["n"].Restore == clockRestoreVerified {
-		t.Fatalf("nil ledger: %s", res["n"])
-	}
-}
-
 func TestClockOffsetLedgerRestoreChronology(t *testing.T) {
 	cases := []struct {
 		name string
@@ -403,58 +425,6 @@ func TestClockOffsetLedgerRestoreChronology(t *testing.T) {
 	}
 }
 
-func TestClockOffsetLedgerFleetRejudgesLiveCleanup(t *testing.T) {
-	live := clockOffsetCleanup{Process: clockProcessRunning, File: clockFilePresent}
-	a, b := clockLedgerOK(), clockLedgerOK()
-	b.Target = clockOffsetTarget{ID: "target-b", PID: 77, StartTicks: 5}
-	b.BaselineTarget = b.Target
-	for i := range b.Steps {
-		b.Steps[i].Target = b.Target
-	}
-	b.Restore.Target = b.Target
-	a.Cleanup, b.Cleanup = live, live
-
-	// Positive control: separate resources keep the live cleanup valid.
-	clockLedSeparateFile(&b, "owned-b.txt", 12)
-	res := judgeClockFleet([]clockFleetEntry{{"a", &a}, {"b", &b}})
-	for n, j := range res {
-		if j.Restore != clockRestoreVerified || j.CleanupVerdict != clockProvenanceValid {
-			t.Fatalf("%s: %s", n, j)
-		}
-	}
-
-	// Shared path: restore is demoted, so live cleanup must not stay valid.
-	b.Owned.Path = a.Owned.Path
-	b.Env.TimestampFile = strPtr(a.Owned.Path)
-	res = judgeClockFleet([]clockFleetEntry{{"a", &a}, {"b", &b}})
-	for n, j := range res {
-		if j.Restore != clockRestoreUnknown || j.CleanupVerdict != clockProvenanceInvalid {
-			t.Errorf("%s shared path: %s", n, j)
-		}
-	}
-
-	// Shared instance, same expectation.
-	clockLedSeparateFile(&b, "owned-b.txt", 12)
-	b.Target = a.Target
-	res = judgeClockFleet([]clockFleetEntry{{"a", &a}, {"b", &b}})
-	for n, j := range res {
-		if j.CleanupVerdict != clockProvenanceInvalid {
-			t.Errorf("%s shared instance: %s", n, j)
-		}
-	}
-
-	// Disposal that was proven separately is preserved.
-	a.Cleanup, b.Cleanup = clockLedgerOK().Cleanup, clockLedgerOK().Cleanup
-	b.Owned.Path = a.Owned.Path
-	b.Env.TimestampFile = strPtr(a.Owned.Path)
-	res = judgeClockFleet([]clockFleetEntry{{"a", &a}, {"b", &b}})
-	for n, j := range res {
-		if j.CleanupVerdict != clockProvenanceValid {
-			t.Errorf("%s exited-then-removed lost: %s", n, j)
-		}
-	}
-}
-
 func TestClockRestoreNeedsAnObservedShift(t *testing.T) {
 	ackOnly := clockLedStep("plus", clockLedOff, 100*clockLedSec)
 	ackOnly.SampleKnown = false
@@ -475,55 +445,5 @@ func TestClockRestoreNeedsAnObservedShift(t *testing.T) {
 				t.Fatalf("unwitnessed restore: %s", j)
 			}
 		})
-	}
-}
-
-// Three MON containers each own a file at the same path, as the native amd64
-// MON run of issue 1048 recorded: one path, three mount namespaces and three
-// device and inode pairs. That is three files, not one shared file. The same
-// path in one namespace, or one identity under two namespaces (a bind mount),
-// is still sharing.
-func TestClockOffsetLedgerFleetSamePathInSeparateNamespaces(t *testing.T) {
-	const path = "/var/lib/ctg-clock/faketime"
-	ledger := func(ns string, pid int, dev uint64) clockOffsetLedger {
-		l := clockLedgerOK()
-		l.Target = clockOffsetTarget{ID: "mon." + ns, PID: pid, StartTicks: 9001}
-		l.BaselineTarget = l.Target
-		for i := range l.Steps {
-			l.Steps[i].Target = l.Target
-			l.Steps[i].File.Identity.Device = dev
-		}
-		r := *l.Restore
-		r.Target, r.File.Identity.Device = l.Target, dev
-		l.Restore = &r
-		l.Owned.Namespace, l.Owned.Path, l.Env.TimestampFile = "container:mon."+ns, path, strPtr(path)
-		l.Owned.Identity.Device, l.Initial.Identity.Device = dev, dev
-		return l
-	}
-	a, b, c := ledger("a", 1, 50), ledger("b", 1, 54), ledger("c", 1, 67)
-	res := judgeClockFleet([]clockFleetEntry{{"a", &a}, {"b", &b}, {"c", &c}})
-	for n, j := range res {
-		if j.Admission.Verdict != clockProvenanceValid || j.Restore != clockRestoreVerified || j.FirstFailure != "" {
-			t.Errorf("%s: separate namespaces judged shared: %s", n, j)
-		}
-	}
-
-	// Without the namespace the path alone collides, as before.
-	a2, b2 := a, b
-	a2.Owned.Namespace, b2.Owned.Namespace = "", ""
-	res = judgeClockFleet([]clockFleetEntry{{"a", &a2}, {"b", &b2}})
-	for n, j := range res {
-		if j.Admission.Verdict != clockProvenanceInvalid || j.Restore == clockRestoreVerified {
-			t.Errorf("%s: same path without a namespace not rejected: %s", n, j)
-		}
-	}
-
-	// One file seen from two namespaces shares its device and inode.
-	b3 := ledger("b", 1, 50)
-	res = judgeClockFleet([]clockFleetEntry{{"a", &a}, {"b", &b3}})
-	for n, j := range res {
-		if j.Admission.Verdict != clockProvenanceInvalid || j.Restore == clockRestoreVerified {
-			t.Errorf("%s: shared identity under two namespaces not rejected: %s", n, j)
-		}
 	}
 }

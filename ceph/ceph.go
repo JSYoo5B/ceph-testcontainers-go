@@ -61,6 +61,9 @@ type Container struct {
 	//testdouble:nil-default-hook
 	startup  startupIdentity
 	settings options
+	// clock is the admitted clock interposer, recorded before any daemon
+	// starts, and the armed MON names under mu.
+	clock clockState
 	// ledger is the auth records and the daemon exec seam, owned by
 	// authLedger; see authLedgerState.
 	ledger authLedgerState
@@ -193,6 +196,9 @@ func resolveOptions(img string, opts []testcontainers.ContainerCustomizer) (opti
 	if err := validateZones(settings); err != nil {
 		return options{}, classify(ErrInvalidRequest, fmt.Errorf("configure ceph zones: %w", err))
 	}
+	if err := validateClock(settings); err != nil {
+		return options{}, classify(ErrInvalidRequest, fmt.Errorf("configure ceph clock instrumentation: %w", err))
+	}
 	if !settings.poolDefaultsSet {
 		settings.poolReplicas, settings.poolMinSize = min(2, settings.osds), 1
 	}
@@ -259,7 +265,14 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	}
 	ctx, cancel := context.WithTimeout(ctx, settings.startupTimeout)
 	defer cancel()
+	clock, err := loadClockInterposer(ctx, settings)
+	if err != nil {
+		return nil, err
+	}
 	c, err := newCluster(ctx, settings)
+	if c != nil {
+		c.clock = clock
+	}
 	if err != nil {
 		return c, err
 	}
@@ -372,7 +385,7 @@ func (c *Container) bootstrapFirstMonitor(ctx context.Context, opts []testcontai
 // A failure leaves what started owned for Terminate.
 func (c *Container) startInitialTopology(ctx context.Context) error {
 	for i := 1; i < c.settings.monitors; i++ {
-		if _, err := c.AddMonitor(ctx, daemonName(i)); err != nil {
+		if _, err := c.AddMonitor(ctx, daemonName(i), c.settings.clockDaemonOption(daemonName(i))...); err != nil {
 			return err
 		}
 	}
@@ -543,6 +556,7 @@ func (c *Container) firstMonitorOptions(fsid string, ports []int, opts []testcon
 	if len(c.settings.userConfig) > 0 {
 		moduleOpts = append(moduleOpts, testcontainers.WithFiles(textFile(userConfigPath, renderUserConfig(c.settings.userConfig), 0o644)))
 	}
+	moduleOpts = append(moduleOpts, c.clockFiles("a", false)...)
 	if ports != nil {
 		moduleOpts = append(moduleOpts, hostContainerCustomizer(c.settings.publicAddress), testcontainers.WithNoStart())
 	}

@@ -2,7 +2,7 @@ package ceph
 
 import "errors"
 
-// ClusterFacts is an independent snapshot of the nine static cluster facts. It
+// ClusterFacts is an independent snapshot of the ten static cluster facts. It
 // holds only values: no Container, Docker handle, context, lock, pointer, func
 // or channel, so nothing in it can control the cluster or reactivate it, and it
 // owns no resource or cleanup lifetime. Later changes to the cluster do not
@@ -24,6 +24,9 @@ type ClusterFacts struct {
 	ClusterNetworkName        string
 	HasSeparateClusterNetwork bool
 	CephVersion               string
+	// ClockInterposer is the identity of the clock interposer that
+	// ClockConfig.WithHelperImage admitted, zero without one.
+	ClockInterposer ClockInterposer
 }
 
 // errNilClusterFacts reports a capture request without a cluster. The capture
@@ -65,5 +68,6 @@ func (c *Container) staticFacts() ClusterFacts {
 		ClusterNetworkName:        c.settings.clusterNetworkName(c.nets.public, c.nets.cluster),
 		HasSeparateClusterNetwork: c.nets.cluster != nil,
 		CephVersion:               c.bootstrap.rawVersion(),
+		ClockInterposer:           c.clock.identity,
 	}
 }

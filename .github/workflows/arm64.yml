@@ -7,7 +7,9 @@ name: ARM64
 # role images. It never runs the ordinary category matrix on ARM64, and the
 # amd64 workflows do not depend on it. A pull request runs it only when it
 # changes the planner, image or storage preparation, the runtime template,
-# the bootstrap scripts or the cohort's helper; Periodic does not.
+# the bootstrap scripts or the cohort's helpers; Periodic does not. Scheduled
+# and pull request runs use the default release; a dispatch may select
+# another supported release, never another cohort.
 on:
   schedule:
     - cron: '37 5 * * 3'
@@ -31,6 +33,8 @@ on:
       - 'ceph/service_bootstrap.go'
       - 'ceph/startup_identity.go'
       - 'fault/network*.go'
+      - 'fault/clock*.go'
+      - 'ceph/clock.go'
       - 'go.mod'
       - 'go.sum'
   workflow_dispatch:
@@ -39,6 +43,11 @@ on:
         description: Exact commit to qualify; empty uses the dispatched branch
         type: string
         default: ''
+      release:
+        description: Ceph release of the arm64 role images
+        type: choice
+        options: ['20.2.4', '21.2.0', '19.2.5']
+        default: '20.2.4'
 
 permissions:
   contents: read
@@ -55,5 +64,6 @@ jobs:
       category: architecture
       goarch: arm64
       check_name: ARM64
+      release: ${{ inputs.release || '20.2.4' }}
       ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || '' }}
       save_caches: ${{ inputs.ref == '' || inputs.ref == github.sha }}
