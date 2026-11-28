@@ -11,8 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
@@ -111,7 +109,7 @@ func normalizeConfig(config Config) (Config, error) {
 		return config, err
 	}
 	for _, value := range []string{config.Name, config.Email} {
-		if !utf8.ValidString(value) || strings.TrimSpace(value) != value || strings.IndexFunc(value, unicode.IsControl) != -1 {
+		if !gwbase.ValidText(value, true) {
 			return config, servicehook.Invalid(errors.New("RGW account name and email must be valid UTF-8 without control characters or surrounding whitespace"))
 		}
 	}
@@ -265,8 +263,8 @@ func (a *Account) SetBucketQuota(ctx context.Context, quota rgw.Quota) error {
 }
 
 func setQuota(ctx context.Context, a *gwbase.Account, scope string, quota gwbase.Quota) error {
-	if quota.MaxObjects < -1 || quota.MaxSizeBytes < -1 || (quota.MaxSizeBytes > 0 && quota.MaxSizeBytes%1024 != 0) {
-		return servicehook.Invalid(errors.New("RGW account quota limits must be -1, zero or positive; byte limits must be multiples of 1024"))
+	if err := gwbase.CheckQuotaLimits(quota, "RGW account"); err != nil {
+		return err
 	}
 	if !a.Owned() {
 		return servicehook.Invalid(errors.New("RGW account is not owned by a Ceph cluster"))

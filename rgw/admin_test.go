@@ -527,3 +527,22 @@ func TestRGWRemovalRejectsIncompleteListingAfterMutation(t *testing.T) {
 		t.Fatalf("incomplete listing was accepted as absence: %v", err)
 	}
 }
+
+// TestRGWUserTextAndQuotaRulesKeepTheirVerdicts runs the shared text-field
+// and quota inputs through the user path: invalid UTF-8 stays accepted for a
+// user, as it always was, while an account refuses it.
+func TestRGWUserTextAndQuotaRulesKeepTheirVerdicts(t *testing.T) {
+	for value, valid := range map[string]bool{"Fixture": true, "a b": true, "\xff": true, " a": false, "a ": false, "a\tb": false, "a\x00": false} {
+		for _, config := range []UserConfig{{DisplayName: value}, {Email: value}} {
+			if _, err := normalizeRGWUserConfig(config); (err == nil) != valid || err != nil && !errors.Is(err, ceph.ErrInvalidRequest) {
+				t.Errorf("user text %q: %v, want valid %v", value, err, valid)
+			}
+		}
+	}
+	for quota, valid := range map[Quota]bool{{MaxSizeBytes: -1, MaxObjects: -1}: true, {MaxSizeBytes: 2048}: true, {}: true,
+		{MaxSizeBytes: -2}: false, {MaxObjects: -2}: false, {MaxSizeBytes: 1025}: false} {
+		if err := gwbase.CheckQuotaLimits(gwbase.Quota(quota), "RGW user"); (err == nil) != valid || err != nil && !errors.Is(err, ceph.ErrInvalidRequest) {
+			t.Errorf("user quota %+v: %v, want valid %v", quota, err, valid)
+		}
+	}
+}

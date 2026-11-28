@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
@@ -219,7 +218,7 @@ func normalizeRGWUserConfig(config UserConfig) (UserConfig, error) {
 		config.DisplayName = "Testcontainers"
 	}
 	for _, value := range []string{config.DisplayName, config.Email, config.AdminCaps} {
-		if strings.TrimSpace(value) != value || strings.IndexFunc(value, unicode.IsControl) != -1 {
+		if !gwbase.ValidText(value, false) {
 			return config, servicehook.Invalid(errors.New("RGW user display name, email and capabilities must not contain control characters or surrounding whitespace"))
 		}
 	}
@@ -357,11 +356,8 @@ func (u *User) SetBucketQuota(ctx context.Context, quota Quota) error {
 }
 
 func (u *User) setQuota(ctx context.Context, scope string, quota Quota) error {
-	if quota.MaxSizeBytes < -1 || quota.MaxObjects < -1 {
-		return servicehook.Invalid(errors.New("RGW quota limits must be -1, zero or positive"))
-	}
-	if quota.MaxSizeBytes > 0 && quota.MaxSizeBytes%1024 != 0 {
-		return servicehook.Invalid(errors.New("positive RGW quota byte limits must be multiples of 1024"))
+	if err := gwbase.CheckQuotaLimits(gwbase.Quota(quota), "RGW user"); err != nil {
+		return err
 	}
 	return u.withGateway(ctx, func(ctx context.Context, g *gwbase.Core, user *gwbase.User, native *gwbase.NativeUser) error {
 		if native.Info.AccountID != "" {

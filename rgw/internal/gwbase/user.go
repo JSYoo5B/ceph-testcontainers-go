@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/mutation"
@@ -537,4 +539,23 @@ func (g *Core) MutateUser(ctx context.Context, u *User, args ...string) error {
 		var failure *ceph.NativeFailure
 		return err == nil || (errors.As(err, &failure) && slices.Contains([]string{"EINVAL", "EPERM", "EACCES", "ENOENT"}, failure.Errno)), err
 	})
+}
+
+// ValidText reports whether value, a free text field of a user or an account
+// (a display name, an email, a capability list, an account name), has no
+// surrounding whitespace and no control character, and, with requireUTF8,
+// is valid UTF-8. Accounts require UTF-8; users never have.
+func ValidText(value string, requireUTF8 bool) bool {
+	return (!requireUTF8 || utf8.ValidString(value)) && strings.TrimSpace(value) == value && strings.IndexFunc(value, unicode.IsControl) == -1
+}
+
+// CheckQuotaLimits refuses, with ceph.ErrInvalidRequest, a quota of a user,
+// an account or their buckets whose limits are below -1 or whose positive
+// byte limit is not a multiple of 1024: native quota sizes are KiB, so
+// another byte limit would be rounded.
+func CheckQuotaLimits(quota Quota, subject string) error {
+	if quota.MaxSizeBytes < -1 || quota.MaxObjects < -1 || quota.MaxSizeBytes > 0 && quota.MaxSizeBytes%1024 != 0 {
+		return servicehook.Invalid(fmt.Errorf("%s quota limits must be -1, zero or positive; positive byte limits must be multiples of 1024", subject))
+	}
+	return nil
 }

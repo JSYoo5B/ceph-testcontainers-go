@@ -232,3 +232,15 @@ func TestAccountRequiresAnOwnedGatewayAndHandle(t *testing.T) {
 	// Only *Account satisfies the sealed root account of package rgw.
 	var _ rgw.RootAccount = (*Account)(nil)
 }
+
+// TestAccountTextRulesKeepTheirVerdicts runs the text-field inputs of the
+// user path through an account, which also refuses invalid UTF-8.
+func TestAccountTextRulesKeepTheirVerdicts(t *testing.T) {
+	for value, valid := range map[string]bool{"Fixture": true, "a b": true, "\xff": false, " a": false, "a ": false, "a\tb": false, "a\x00": false} {
+		for _, config := range []Config{{Name: value}, {Email: value}} {
+			if _, err := normalizeConfig(config); (err == nil) != valid || err != nil && !errors.Is(err, ceph.ErrInvalidRequest) {
+				t.Errorf("account text %q: %v, want valid %v", value, err, valid)
+			}
+		}
+	}
+}
