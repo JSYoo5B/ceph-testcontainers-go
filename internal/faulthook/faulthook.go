@@ -6,8 +6,8 @@
 // The registry is the only way to make a fault known to Terminate. Each kind
 // has a phase that package ceph fixes: network delays are undone first and
 // block I/O tables second, both with the cluster mutex released, then
-// interruptions under it (a failure keeps the network), then pauses and CPU
-// limits last under it. Callers cannot add a phase, change the order or register another
+// interruptions under it (a failure keeps the network), then pauses, clock
+// offsets and CPU limits last under it. Callers cannot add a phase, change the order or register another
 // cleanup.
 //
 // Lock rules: Reserve, Settle, Release, Closed, Owns, OwnedOSD,
@@ -47,6 +47,10 @@ const (
 	// CPULimit holds a CPU bandwidth limit per container ID; Terminate
 	// restores it under the mutex after pauses are resumed.
 	CPULimit Kind = "CPULimit"
+	// ClockOffset holds a wall-clock offset per daemon container ID;
+	// Terminate restores it under the mutex after pauses are resumed and
+	// before CPU limits are restored and daemons stop.
+	ClockOffset Kind = "ClockOffset"
 )
 
 // Token identifies one reservation. Only the token that a key still maps to
@@ -76,6 +80,8 @@ type hooks interface {
 	WithTopologyNoContext(c *ceph.Container, fn func())
 	Closed(c *ceph.Container) bool
 	Owns(c *ceph.Container, id string) bool
+	ClockTarget(c *ceph.Container, id string) (string, bool, bool)
+	ClockFiles() (string, string)
 	OwnedLabel(c *ceph.Container) testcontainers.CustomizeRequestOption
 	Control(ctx context.Context, c *ceph.Container) (testcontainers.Container, error)
 	CLI(ctx context.Context, c *ceph.Container, args ...string) ([]byte, error)
@@ -143,6 +149,17 @@ func Closed(c *ceph.Container) bool { return get().Closed(c) }
 // Owns reports a container of the cluster's own daemons. The caller holds
 // the mutex.
 func Owns(c *ceph.Container, id string) bool { return get().Owns(c, id) }
+
+// ClockTarget resolves a container ID to an owned MON: its daemon name
+// (mon.<name>), whether it is armed for clock offsets and whether the cluster
+// owns it. The caller holds the mutex.
+func ClockTarget(c *ceph.Container, id string) (daemon string, armed, owned bool) {
+	return get().ClockTarget(c, id)
+}
+
+// ClockFiles returns the container paths of an armed daemon's interposer and
+// of its owned timestamp file.
+func ClockFiles() (interposer, offset string) { return get().ClockFiles() }
 
 // ZoneRouter returns the router that forwards what leaves zone and the
 // bridge of plane, after checking that the bridges of all configured planes contain

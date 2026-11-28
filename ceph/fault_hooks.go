@@ -27,6 +27,7 @@ var faultKindNames = map[string]faultKind{
 	"NetworkInterruption": faultNetworkInterruption,
 	"ContainerPause":      faultContainerPause,
 	"CPULimit":            faultCPULimit,
+	"ClockOffset":         faultClockOffset,
 }
 
 var errFaultToken = errors.New("fault registry token is not one that a cluster issued")
@@ -91,6 +92,18 @@ func (faultHooks) Closed(c *Container) bool { return c.closed }
 func (faultHooks) Owns(c *Container, id string) bool {
 	owned, _ := c.monitorTopology().ownsNativeTarget(context.Background(), id)
 	return owned
+}
+
+// ClockTarget resolves a container ID to an owned MON and reports whether
+// it is armed for clock offsets. The caller holds the mutex.
+func (faultHooks) ClockTarget(c *Container, id string) (daemon string, armed, owned bool) {
+	return c.clockTarget(id)
+}
+
+// ClockFiles are the container paths of an armed daemon's interposer and of
+// its owned timestamp file.
+func (faultHooks) ClockFiles() (interposer, offset string) {
+	return clockInterposerPath, clockOffsetPath
 }
 
 // OwnedLabel labels a helper container as owned by the cluster, so that

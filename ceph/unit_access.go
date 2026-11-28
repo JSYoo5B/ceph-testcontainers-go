@@ -230,3 +230,12 @@ func (unitAccess) UnitHeld(c *Container, kind string) map[string]any {
 	}
 	return c.faults.handles(k)
 }
+
+// UnitArmClock arms the named MONs with a placeholder interposer. The caller
+// holds Mutex or the cluster value is not shared.
+func (unitAccess) UnitArmClock(c *Container, names ...string) {
+	c.clock = clockState{interposer: []byte("unit interposer"), armed: map[string]bool{}}
+	for _, name := range names {
+		c.clock.armed[name] = true
+	}
+}

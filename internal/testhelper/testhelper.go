@@ -52,6 +52,7 @@ type unitHooks interface {
 	UnitPrepare(osds int, noInitialOSDs bool, pools []ceph.PoolConfig, opts ...ceph.Option) ([]ceph.PoolConfig, []servicehook.Bootstrap, error)
 	UnitFaults(c *ceph.Container, kind string) map[string]any
 	UnitHeld(c *ceph.Container, kind string) map[string]any
+	UnitArmClock(c *ceph.Container, names ...string)
 }
 
 func get() unitHooks {
@@ -265,3 +266,10 @@ func TestFaults(c *ceph.Container, kind faulthook.Kind) map[string]any {
 func TestHeld(c *ceph.Container, kind overridehook.Kind) map[string]any {
 	return get().UnitHeld(c, string(kind))
 }
+
+// TestArmClock arms the named MONs of a unit-test cluster for clock offsets,
+// with a placeholder interposer. It takes no lock: use it on a cluster no other
+// goroutine uses.
+//
+//testdouble:unit-seam-client
+func TestArmClock(c *ceph.Container, names ...string) { get().UnitArmClock(c, names...) }
