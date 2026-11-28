@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
 	"sync"
@@ -91,6 +92,24 @@ type Fixture struct {
 	closed      bool
 	syncWrites  mutation.Fence
 }
+
+// String names the fixture by its realm, without the system credentials or
+// the S3 test keys.
+func (f *Fixture) String() string {
+	if f == nil {
+		return "RGW multisite fixture <nil>"
+	}
+	return "RGW multisite fixture " + f.realm.config.Realm
+}
+
+// GoString formats the fixture like String, so %#v does not print the
+// system credentials.
+func (f *Fixture) GoString() string { return f.String() }
+
+// Format prints String for every verb and flag, so no verb, such as %d or %t,
+// walks the fields. The methods have pointer receivers because a Fixture
+// holds a mutex and is only handed out as *Fixture.
+func (f *Fixture) Format(state fmt.State, _ rune) { _, _ = io.WriteString(state, f.String()) }
 
 // rgwRealmAccess runs radosgw-admin in the realm. The configuration, the
 // pair's clients and URLs and the system credentials are fixed once setup has

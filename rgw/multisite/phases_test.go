@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"reflect"
 	"slices"
@@ -747,3 +748,15 @@ func TestRGWBucketInstanceMatchesOnlyItsExactNativeIdentity(t *testing.T) {
 	}
 }
 
+func TestRGWFixtureFormatsOnlyItsRealm(t *testing.T) {
+	f := newPhaseFixture(&rgwScriptCLI{}, &rgwScriptCLI{})
+	f.realm.systemAccess, f.realm.systemSecret = "SYSTEMACCESSKEY", "SYSTEMSECRETKEY"
+	text := fmt.Sprintf("%v %+v %#v %s %d", f, f, f, f, f)
+	if strings.Contains(text, "SYSTEMACCESSKEY") || strings.Contains(text, "SYSTEMSECRETKEY") || !strings.Contains(text, "RGW multisite fixture realm") {
+		t.Fatalf("formatted fixture: %s", text)
+	}
+	var none *Fixture
+	if got := fmt.Sprint(none); got != "RGW multisite fixture <nil>" {
+		t.Fatalf("nil fixture: %s", got)
+	}
+}
