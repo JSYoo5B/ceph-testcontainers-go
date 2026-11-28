@@ -104,15 +104,19 @@ const (
 	LogClusterWarning  LogEvent = "cluster-warning"
 )
 
+// verificationLogKind is one log event kind and the pattern that finds it,
+// nil for a kind that only a log envelope's severity gives.
+type verificationLogKind struct {
+	event   LogEvent
+	pattern *regexp.Regexp
+}
+
 // verificationLogEvents lists the log event kinds. Assertion and fatal
 // signatures are found by their own patterns anywhere in a line, since the
 // daemon prints them outside the cluster log. The cluster log kinds are never
 // found by a pattern: they come from the structural severity of a recognized
 // log envelope (see parseVerificationEnvelope).
-var verificationLogEvents = []struct {
-	event   LogEvent
-	pattern *regexp.Regexp
-}{
+var verificationLogEvents = []verificationLogKind{
 	{LogAssertion, regexp.MustCompile(`FAILED (ceph_)?assert|ceph_abort`)},
 	{LogFatalSignal, regexp.MustCompile(`Caught signal`)},
 	{LogClusterError, nil},
@@ -192,8 +196,8 @@ func validCephStamp(s string) bool {
 // guessed from the marker.
 func classifyVerificationLine(line string) (kind LogEvent, envelope verificationEnvelope, hasEnvelope, unclassified bool) {
 	envelope, hasEnvelope = parseVerificationEnvelope(line)
-	for _, known := range verificationLogEvents[:2] {
-		if known.pattern.MatchString(line) {
+	for _, known := range verificationLogEvents {
+		if known.pattern != nil && known.pattern.MatchString(line) {
 			return known.event, envelope, hasEnvelope, false
 		}
 	}
@@ -491,7 +495,7 @@ func verificationDefaults(config VerificationConfig) VerificationConfig {
 // match.
 func checkVerificationBounds(config VerificationConfig) error {
 	switch {
-	case !verificationName(config.Name):
+	case !shortControlFreeLine(config.Name):
 		return errors.New("name must be one line of at most 128 bytes")
 	case config.Timeout < 0 || config.Timeout > 5*time.Minute || config.OperationTimeout < 0 || config.OperationTimeout > time.Minute:
 		return errors.New("timeouts out of range")
@@ -520,10 +524,7 @@ func (set verificationRuleSet) log(expectation LogExpectation) (*verificationRul
 	if expectation.Pattern == "" {
 		return nil, fmt.Errorf("log expectation %q has no pattern", expectation.Name)
 	}
-	if expectation.Event != "" && !slices.ContainsFunc(verificationLogEvents, func(known struct {
-		event   LogEvent
-		pattern *regexp.Regexp
-	}) bool {
+	if expectation.Event != "" && !slices.ContainsFunc(verificationLogEvents, func(known verificationLogKind) bool {
 		return known.event == expectation.Event
 	}) {
 		return nil, fmt.Errorf("log expectation %q has unknown event %q", expectation.Name, expectation.Event)
@@ -539,7 +540,7 @@ func (set verificationRuleSet) crash(expectation CrashExpectation) (*verificatio
 	if err != nil {
 		return nil, err
 	}
-	if !verificationName(expectation.Process) {
+	if !shortControlFreeLine(expectation.Process) {
 		return nil, fmt.Errorf("crash expectation %q has an invalid process", expectation.Name)
 	}
 	if expectation.Daemon == "" && expectation.Process == "" && expectation.Signature == "" {
@@ -553,7 +554,7 @@ func (set verificationRuleSet) crash(expectation CrashExpectation) (*verificatio
 // name.
 func (set verificationRuleSet) rule(kind, name string, required bool, minCount, maxCount int, daemon, pattern string) (*verificationRule, error) {
 	switch {
-	case !verificationName(name) || name == "":
+	case !shortControlFreeLine(name) || name == "":
 		return nil, fmt.Errorf("%s expectation name must be one non-empty line of at most 128 bytes", kind)
 	case set.names[name]:
 		return nil, fmt.Errorf("expectation name %q is used twice", name)
@@ -561,7 +562,7 @@ func (set verificationRuleSet) rule(kind, name string, required bool, minCount, 
 		return nil, fmt.Errorf("expectation %q has a negative count", name)
 	case !required && minCount != 0:
 		return nil, fmt.Errorf("expectation %q sets MinCount without Required", name)
-	case !verificationName(daemon) || len(pattern) > 1024:
+	case !shortControlFreeLine(daemon) || len(pattern) > 1024:
 		return nil, fmt.Errorf("expectation %q has an invalid criterion", name)
 	}
 	set.names[name] = true
@@ -582,8 +583,11 @@ func (set verificationRuleSet) rule(kind, name string, required bool, minCount, 
 	return r, nil
 }
 
-func verificationName(name string) bool {
-	return len(name) <= 128 && !strings.ContainsFunc(name, func(r rune) bool { return r < 0x20 || r == 0x7f })
+// shortControlFreeLine reports whether s is one line of at most 128 bytes
+// without control characters, the bound of every name and criterion that a
+// verification reports.
+func shortControlFreeLine(s string) bool {
+	return len(s) <= 128 && !strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f })
 }
 
 // Verify activates a post-test verification of the cluster and adds a check
