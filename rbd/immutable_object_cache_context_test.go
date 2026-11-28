@@ -65,11 +65,13 @@ type cacheStartupProbe struct {
 }
 
 func (c *cacheStartupProbe) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
-	if args[2] == immutableObjectCacheScript && args[4] == "inspect" && c.inspect != "" {
-		return clustertest.Reply(args, 0, []byte(c.inspect))
-	}
-	if args[2] == immutableObjectCacheScript && args[4] == "start" && c.failedStart {
-		return clustertest.Reply(args, 1, []byte("prelaunch command failed"))
+	if len(args) > 10 && args[2] == supervised.Script && args[8] == immutableObjectCacheScript {
+		if args[10] == "inspect" && c.inspect != "" {
+			return 0, bytes.NewReader(clustertest.QuorumEnvelope([]byte(c.inspect), nil, 0, false, false)), nil
+		}
+		if args[10] == "start" && c.failedStart {
+			return 0, bytes.NewReader(clustertest.QuorumEnvelope([]byte("prelaunch command failed"), nil, 1, false, false)), nil
+		}
 	}
 	if len(args) > 10 && args[2] == supervised.Script && args[10] == "stop" {
 		c.sawStop = true

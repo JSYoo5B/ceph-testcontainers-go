@@ -26,7 +26,10 @@ import (
 // /tmp in the client container and removed afterwards. The backup functions
 // never close the caller's reader or writer, and they check cancellation
 // between reads, so a reader or writer that can block indefinitely must
-// support its own cancellation.
+// support its own cancellation. The rbd command runs under the process
+// supervisor that ceph.Container.RunNativeCommand uses: a call whose ctx ends
+// stops it before returning, and a stop that cannot be confirmed returns a
+// *ceph.NativeCommandUnstoppedError, whose Stop retries it.
 //
 // The export loads no encryption: an encrypted image is archived as its raw
 // LUKS header and ciphertext, and the restored image opens only with that

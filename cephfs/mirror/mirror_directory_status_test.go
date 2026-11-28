@@ -46,6 +46,9 @@ type cephFSObserverDraftControl struct {
 }
 
 func (c *cephFSObserverDraftControl) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if clustertest.Supervised(args) {
+		return clustertest.Supervise(ctx, args, opts, c.Exec)
+	}
 	if err := ctx.Err(); err != nil {
 		return 0, nil, err
 	}
@@ -87,7 +90,10 @@ type cephFSObserverDraftDaemon struct {
 func (d *cephFSObserverDraftDaemon) State(context.Context) (*container.State, error) {
 	return &container.State{Running: d.running, Paused: d.paused, Restarting: d.restarting, Dead: d.dead}, nil
 }
-func (d *cephFSObserverDraftDaemon) Exec(ctx context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+func (d *cephFSObserverDraftDaemon) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if clustertest.Supervised(args) {
+		return clustertest.Supervise(ctx, args, opts, d.Exec)
+	}
 	if err := ctx.Err(); err != nil {
 		return 0, nil, err
 	}

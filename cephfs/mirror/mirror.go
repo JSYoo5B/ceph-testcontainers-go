@@ -620,7 +620,7 @@ func (mirror *Container) registerDaemonContainer(container testcontainers.Contai
 	if mirror.roster.add(daemon) {
 		mirror.Container = daemon
 	}
-	mirror.owned.AddContainer(daemon)
+	mirror.owned.AddOwned(daemon, mirror.source, container)
 	return daemon
 }
 

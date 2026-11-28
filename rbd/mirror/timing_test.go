@@ -25,7 +25,10 @@ type timingDaemon struct {
 	err                error
 }
 
-func (d *timingDaemon) Exec(ctx context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+func (d *timingDaemon) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if clustertest.Supervised(args) {
+		return clustertest.Supervise(ctx, args, opts, d.Exec)
+	}
 	if err := ctx.Err(); err != nil {
 		return 0, nil, err
 	}

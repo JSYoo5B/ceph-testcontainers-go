@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -23,6 +24,9 @@ type cephFSIdentityControl struct {
 }
 
 func (c *cephFSIdentityControl) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if clustertest.Supervised(args) {
+		return clustertest.Supervise(ctx, args, opts, c.Exec)
+	}
 	arguments := args
 	if len(args) >= 3 && args[0] == "ceph" && args[1] == "--connect-timeout" {
 		arguments = args[3:]

@@ -136,7 +136,10 @@ type rbdEnableFixture struct {
 	calls       [][]string
 }
 
-func (c *rbdEnableFixture) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+func (c *rbdEnableFixture) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if clustertest.Supervised(args) {
+		return clustertest.Supervise(ctx, args, opts, c.Exec)
+	}
 	c.calls = append(c.calls, slices.Clone(args))
 	var stream bytes.Buffer
 	data := ""

@@ -38,6 +38,9 @@ type directoryRemovalControlFake struct {
 }
 
 func (f *directoryRemovalControlFake) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if clustertest.Supervised(args) {
+		return clustertest.Supervise(ctx, args, opts, f.Exec)
+	}
 	if err := ctx.Err(); err != nil {
 		return 0, nil, err
 	}
@@ -119,6 +122,9 @@ type directoryRemovalDaemonFake struct {
 func (f *directoryRemovalDaemonFake) IsRunning() bool { return f.state.Running }
 
 func (f *directoryRemovalDaemonFake) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if clustertest.Supervised(args) {
+		return clustertest.Supervise(ctx, args, opts, f.Exec)
+	}
 	if slices.Equal(args, []string{"ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "peer", "status", "source@1", cephFSObserverDraftPeer}) {
 		if err := ctx.Err(); err != nil {
 			return 0, nil, err

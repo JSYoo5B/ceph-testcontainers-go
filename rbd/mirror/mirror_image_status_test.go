@@ -36,6 +36,9 @@ type rbdImageStatusFixture struct {
 }
 
 func (c *rbdImageStatusFixture) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if clustertest.Supervised(args) {
+		return clustertest.Supervise(ctx, args, opts, c.Exec)
+	}
 	if err := ctx.Err(); err != nil {
 		return 0, nil, err
 	}
@@ -109,7 +112,10 @@ func (d *rbdImageStatusDaemon) State(context.Context) (*container.State, error) 
 	return &container.State{Running: d.running, Status: container.StateRunning, Pid: 42, StartedAt: "2026-10-07T09:00:00Z"}, nil
 }
 
-func (d *rbdImageStatusDaemon) Exec(context.Context, []string, ...tcexec.ProcessOption) (int, io.Reader, error) {
+func (d *rbdImageStatusDaemon) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if clustertest.Supervised(args) {
+		return clustertest.Supervise(ctx, args, opts, d.Exec)
+	}
 	return 0, rbdImageStatusStream(d.status), d.statusErr
 }
 

@@ -7,11 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/google/uuid"
@@ -398,7 +400,10 @@ func newRBDNamespacePolicyFixture() *rbdNamespacePolicyFixture {
 	return &rbdNamespacePolicyFixture{policies: make(map[string]nativeRBDMirrorPolicy), infoCounts: make(map[string]int), poolID: 42}
 }
 
-func (c *rbdNamespacePolicyFixture) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+func (c *rbdNamespacePolicyFixture) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if clustertest.Supervised(args) {
+		return clustertest.Supervise(ctx, args, opts, c.Exec)
+	}
 	var data []byte
 	switch {
 	case c.fsid != "" && slices.Equal(args, []string{"ceph", "--connect-timeout", "5", "fsid"}):

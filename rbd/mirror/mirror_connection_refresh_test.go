@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -26,7 +27,10 @@ type rbdConnectionRefreshArchive struct {
 
 func (c *rbdConnectionRefreshArchive) GetContainerID() string { return c.name }
 
-func (c *rbdConnectionRefreshArchive) Exec(context.Context, []string, ...tcexec.ProcessOption) (int, io.Reader, error) {
+func (c *rbdConnectionRefreshArchive) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if clustertest.Supervised(args) {
+		return clustertest.Supervise(ctx, args, opts, c.Exec)
+	}
 	c.cliCalls++
 	return 0, nil, errors.New("old bootstrap monitors are unavailable")
 }

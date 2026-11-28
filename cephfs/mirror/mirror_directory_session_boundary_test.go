@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
@@ -22,6 +23,9 @@ type directoryBoundaryDaemon struct {
 }
 
 func (d *directoryBoundaryDaemon) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if clustertest.Supervised(args) {
+		return clustertest.Supervise(ctx, args, opts, d.Exec)
+	}
 	if slices.Contains(args, "peer") && d.beforeReplay != nil {
 		d.beforeReplay()
 	}
@@ -36,6 +40,9 @@ type directoryBoundaryControl struct {
 }
 
 func (c *directoryBoundaryControl) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if clustertest.Supervised(args) {
+		return clustertest.Supervise(ctx, args, opts, c.Exec)
+	}
 	if slices.Contains(args, "listwatchers") && c.watchers != "" {
 		return 0, cephFSObserverDraftStream(c.watchers), nil
 	}
