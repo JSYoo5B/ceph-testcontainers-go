@@ -209,14 +209,14 @@ func TestOverrideTimeoutsKeepsOneOverridePerFilesystem(t *testing.T) {
 		t.Fatal("a second override of the same filesystem was accepted")
 	}
 	other := fsbase.NewCore(fsbase.Params{Cluster: fs.Cluster(), Name: "other"})
-	if overridesOf(other).byCore[other] != nil || overridesOf(fs.Core).byCore[fs.Core] != change.state {
+	if overridesOf(other).timeouts[other] != nil || overridesOf(fs.Core).timeouts[fs.Core] != change.state {
 		t.Fatal("the override is not kept per filesystem")
 	}
 	copied := *change
 	if err := copied.Restore(t.Context()); err != nil || ctr.timeout != 60 || ctr.autoclose != 300 {
 		t.Fatalf("a copy did not restore the shared override: %v", err)
 	}
-	if overridesOf(fs.Core).byCore[fs.Core] != nil {
+	if overridesOf(fs.Core).timeouts[fs.Core] != nil {
 		t.Fatal("a restored override is still tracked")
 	}
 	testhelper.TestSetClosed(fs.Cluster(), true)

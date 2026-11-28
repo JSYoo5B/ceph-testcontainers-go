@@ -77,7 +77,7 @@ func TestCephFSMaxFileSizeAppliesReadsBackAndRestores(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ctr.size != MinMaxFileSize || change.state.previous != 1<<40 || change.state.fsID != 41 {
+	if ctr.size != MinMaxFileSize || change.state.previous != 1<<40 || change.state.FSID != 41 {
 		t.Fatalf("applied size=%d state=%+v", ctr.size, *change.state)
 	}
 	if second, err := fs.OverrideMaxFileSize(t.Context(), 1<<20); second != nil || err == nil {
@@ -152,7 +152,7 @@ func TestCephFSMaxFileSizeRestoreRefusesARecreatedFilesystem(t *testing.T) {
 	replacement := newFilesystem(fs.base().Cluster(), fs.config, nil)
 	replacement.base().ReplaceNative(&fsbase.NativeIdentity{ID: 42, Attachments: make(map[string]*fsbase.PoolAttachment)})
 	filesystems(fs.base().Cluster()).byName["fixture"] = replacement
-	if err := change.Restore(t.Context()); err == nil || !strings.Contains(err.Error(), "original registered filesystem") {
+	if err := change.Restore(t.Context()); err == nil || !strings.Contains(err.Error(), fsbase.ActiveRefusal) {
 		t.Fatalf("Restore through a replaced descriptor: %v", err)
 	}
 	if fresh, err := replacement.OverrideMaxFileSize(t.Context(), 1<<20); err != nil || fresh.state == change.state {

@@ -2,7 +2,6 @@ package session
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -20,17 +19,16 @@ type RefusalOverrideHandle struct {
 }
 
 type refusalState struct {
-	fsID     int64
-	restored bool
+	fsbase.OverrideRecord
 }
 
+// refusalSubject names the new-session refusal in its refusals.
+const refusalSubject = "new-session refusal"
+
 type nativeRefusal struct {
-	ID     int64 `json:"id"`
-	MDSMap struct {
-		Flags struct {
-			RefuseClientSession *bool `json:"refuse_client_session"`
-		} `json:"flags_state"`
-	} `json:"mdsmap"`
+	Flags struct {
+		RefuseClientSession *bool `json:"refuse_client_session"`
+	} `json:"flags_state"`
 }
 
 // OverrideRefusal sets the MDSMap flag refuse_client_session of fs, so that
@@ -61,8 +59,8 @@ func overrideRefusal(ctx context.Context, fs *fsbase.Core) (*RefusalOverrideHand
 	}
 	defer done()
 	overrides := overridesOf(fs)
-	if active := overrides.refusals[fs]; active != nil && !active.restored {
-		return nil, errors.New("restore the existing CephFS new-session refusal first")
+	if active := overrides.refusals[fs]; active != nil && !active.Restored {
+		return nil, fsbase.OverrideActive(refusalSubject)
 	}
 	refused, err := readRefusal(ctx, fs.Volumes(), fsID)
 	if err != nil {
@@ -71,7 +69,7 @@ func overrideRefusal(ctx context.Context, fs *fsbase.Core) (*RefusalOverrideHand
 	if refused {
 		return nil, fmt.Errorf("CephFS %q already refuses new client sessions; the override would own no change", fs.Name())
 	}
-	state := &refusalState{fsID: fsID}
+	state := &refusalState{OverrideRecord: fsbase.OverrideRecord{FSID: fsID}}
 	overrides.refusals[fs] = state
 	change := &RefusalOverrideHandle{filesystem: fs, state: state}
 	return change, writeRefusal(ctx, fs.Volumes(), fsID, true)
@@ -85,48 +83,31 @@ func overrideRefusal(ctx context.Context, fs *fsbase.Core) (*RefusalOverrideHand
 //purpose:condition,lifetime
 func (change *RefusalOverrideHandle) Restore(ctx context.Context) error {
 	if change == nil || change.filesystem == nil || change.state == nil {
-		return errors.New("CephFS new-session refusal is unavailable")
+		return fsbase.OverrideUnavailable(refusalSubject)
 	}
-	fs := change.filesystem
-	state := change.state
-	if restored, err := confirmedRestore(ctx, fs, func() bool { return state.restored }); err != nil || restored {
-		return err
-	}
-	ctx, fsID, done, err := begin(ctx, fs)
-	if err != nil {
-		return err
-	}
-	defer done()
-	if state.restored {
-		return nil
-	}
-	overrides := overridesOf(fs)
-	if overrides.refusals[fs] != state {
-		return errors.New("CephFS new-session refusal is not tracked by this filesystem")
-	}
-	if fsID != state.fsID {
-		return errors.New("CephFS filesystem identity changed since the new-session refusal")
-	}
-	refused, err := readRefusal(ctx, fs.Volumes(), fsID)
-	if err != nil {
-		return err
-	}
-	if refused {
-		if err := writeRefusal(ctx, fs.Volumes(), fsID, false); err != nil {
-			return err
-		}
-	}
-	state.restored = true
-	delete(overrides.refusals, fs)
-	return nil
+	fs, state := change.filesystem, change.state
+	return fs.RestoreOverride(ctx, fsbase.Override{
+		Subject: refusalSubject,
+		Record:  &state.OverrideRecord,
+		Tracked: func() bool { return overridesOf(fs).refusals[fs] == state },
+		Restore: func(ctx context.Context, fsID int64) error {
+			refused, err := readRefusal(ctx, fs.Volumes(), fsID)
+			if err != nil || !refused {
+				return err
+			}
+			return writeRefusal(ctx, fs.Volumes(), fsID, false)
+		},
+		Forget: func() { delete(overridesOf(fs).refusals, fs) },
+	})
 }
 
 func readRefusal(ctx context.Context, v fsbase.VolumeCommands, fsID int64) (bool, error) {
-	data, err := v.Cluster().Ceph(ctx, "fs", "get", v.Name(), "--format", "json")
-	if err != nil {
-		return false, fmt.Errorf("read CephFS %q refuse_client_session: %w", v.Name(), err)
+	var native nativeRefusal
+	err := v.ReadMDSMap(ctx, fsID, "refuse_client_session", &native)
+	refused := false
+	if err == nil {
+		refused, err = checkRefusal(native)
 	}
-	refused, err := parseRefusal(data, fsID)
 	if errors.Is(err, errNoRefusalFlag) {
 		return false, unsupported(v.Cluster(), "fs set refuse_client_session", err)
 	}
@@ -137,16 +118,17 @@ var errNoRefusalFlag = errors.New("the MDSMap reports no refuse_client_session f
 
 func parseRefusal(data []byte, fsID int64) (bool, error) {
 	var native nativeRefusal
-	if err := json.Unmarshal(data, &native); err != nil {
-		return false, errors.New("decode CephFS refuse_client_session")
+	if err := fsbase.DecodeMDSMap(data, fsID, "refuse_client_session", &native); err != nil {
+		return false, err
 	}
-	if native.ID != fsID {
-		return false, fmt.Errorf("CephFS filesystem ID is %d, want %d", native.ID, fsID)
-	}
-	if native.MDSMap.Flags.RefuseClientSession == nil {
+	return checkRefusal(native)
+}
+
+func checkRefusal(native nativeRefusal) (bool, error) {
+	if native.Flags.RefuseClientSession == nil {
 		return false, errNoRefusalFlag
 	}
-	return *native.MDSMap.Flags.RefuseClientSession, nil
+	return *native.Flags.RefuseClientSession, nil
 }
 
 // unsupported reports that the cluster's release lacks capability.

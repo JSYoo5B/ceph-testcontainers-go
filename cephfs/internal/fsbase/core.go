@@ -181,10 +181,11 @@ func (c *Core) Native() *NativeIdentity { return c.native }
 func (c *Core) ReplaceNative(native *NativeIdentity) { c.native = native }
 
 // ActiveRanks reads the active ranks through the reader package cephfs
-// injected. Its errors are passed through as is.
+// injected. Its errors are passed through as is; a Core without the reader is
+// ceph.ErrInvalidRequest.
 func (c *Core) ActiveRanks(ctx context.Context) (*ActiveRanks, error) {
 	if c == nil || c.activeRanks == nil {
-		return nil, errors.New("cephfs cluster is unavailable")
+		return nil, servicehook.Invalid(errors.New("cephfs cluster is unavailable"))
 	}
 	return c.activeRanks(ctx)
 }

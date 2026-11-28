@@ -100,7 +100,7 @@ func TestFilesystemIdentityIsReadOnlyFromImmutableName(t *testing.T) {
 	// OverrideTiming, beginMaxFileSizeOperation and beginMDSReadOnlyOperation
 	// read the descriptor only through DescriptorIntact to refuse an edited handle before any write.
 	// Native targets still use immutable owned identities.
-	allowedExported := []string{"OverrideTiming", "beginMaxFileSizeOperation", "beginMDSReadOnlyOperation", "checkStoppedMDSOwner", "scaleColdMDS"}
+	allowedExported := []string{"OverrideTiming", "beginMDSReadOnlyOperation", "checkStoppedMDSOwner", "scaleColdMDS"}
 	fset := token.NewFileSet()
 	files, err := filepath.Glob("*.go")
 	if err != nil {

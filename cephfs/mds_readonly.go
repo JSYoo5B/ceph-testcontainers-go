@@ -210,10 +210,10 @@ func (f mdsFleet) beginMDSReadOnlyOperation(ctx context.Context) (context.Contex
 	var native fsbase.NativeIdentity
 	ctx, done, err := core.Admit(ctx, fsbase.AdmissionSpec{
 		RecheckCanceled: true,
-		Refusal:         "CephFS MDS read-only fault requires the original registered filesystem and confirmed native identity",
+		Refusal:         "CephFS MDS read-only fault requires an open cluster and the original registered filesystem with its confirmed native identity",
 		Check: func(context.Context) (bool, error) {
 			if !core.Registered() || !core.DescriptorIntact() || core.Native() == nil {
-				return false, mdsReadOnlyInvalid("CephFS MDS read-only fault requires an open cluster and the original registered filesystem with its confirmed native identity")
+				return false, nil
 			}
 			native = fsbase.NativeIdentity{ID: core.Native().ID, MetadataPool: core.Native().MetadataPool, DefaultPool: core.Native().DefaultPool}
 			return true, nil

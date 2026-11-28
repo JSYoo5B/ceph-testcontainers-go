@@ -15,12 +15,15 @@ type AdmissionSpec struct {
 	// RecheckCanceled makes Admit test ctx.Err() after setupMu is acquired.
 	// Subvolume and data-pool admission do; session admission does not.
 	RecheckCanceled bool
-	// Refusal is returned when Check reports the handle invalid.
+	// Refusal is returned, as ceph.ErrInvalidRequest, when Check reports the
+	// handle invalid.
 	Refusal string
 	// Check is the operation's own predicate. It runs with setupMu and the
 	// cluster mutex held, before the timeout context exists, and must not take
-	// either lock. A returned error is passed through as is; valid == false is
-	// reported as Refusal. It may capture values read under the locks.
+	// either lock. A returned IdentityRefusal is classified as
+	// ceph.ErrInvalidRequest and keeps its IdentityChanged marker; any other
+	// returned error is passed through as is; valid == false is reported as
+	// Refusal. It may capture values read under the locks.
 	Check func(ctx context.Context) (valid bool, err error)
 }
 
@@ -37,14 +40,15 @@ type AdmissionSpec struct {
 // MDSStatus takes no admission. Merging them would change which edits of an
 // exported field are refused.
 //
-// On any error the returned done is a no-op and no lock is held. On success the
-// caller must call done once: it cancels the timeout and releases setupMu.
+// A nil core and a refused handle are ceph.ErrInvalidRequest. On any error the
+// returned done is a no-op and no lock is held. On success the caller must
+// call done once: it cancels the timeout and releases setupMu.
 func (c *Core) Admit(ctx context.Context, spec AdmissionSpec) (context.Context, func(), error) {
 	if err := ctx.Err(); err != nil {
 		return ctx, func() {}, err
 	}
 	if c == nil || c.cluster == nil {
-		return ctx, func() {}, errors.New("CephFS filesystem is unavailable")
+		return ctx, func() {}, servicehook.Invalid(errors.New("CephFS filesystem is unavailable"))
 	}
 	cluster := c.cluster
 	if err := clusterutil.LockMutex(ctx, c.setupMu); err != nil {
@@ -65,11 +69,14 @@ func (c *Core) Admit(ctx context.Context, spec AdmissionSpec) (context.Context, 
 	servicehook.Unlock(cluster)
 	if err != nil {
 		c.setupMu.Unlock()
+		if IdentityChanged(err) {
+			err = servicehook.Invalid(err)
+		}
 		return ctx, func() {}, err
 	}
 	if !valid {
 		c.setupMu.Unlock()
-		return ctx, func() {}, errors.New(spec.Refusal)
+		return ctx, func() {}, servicehook.Invalid(errors.New(spec.Refusal))
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	return ctx, func() { cancel(); c.setupMu.Unlock() }, nil
@@ -87,4 +94,70 @@ func (c *Core) WithSetupGate(ctx context.Context, read func()) error {
 	defer c.setupMu.Unlock()
 	read()
 	return nil
+}
+
+// ActiveRefusal is the refusal of an operation that needs the active
+// filesystem this cluster created: registered to an open cluster, with an
+// unedited descriptor and a captured native identity.
+const ActiveRefusal = "CephFS filesystem must be an active filesystem created by this cluster"
+
+// AdmitOwned admits an operation on the registered filesystem with an
+// unedited descriptor and a captured native identity, rechecking
+// cancellation after the setup gate, and returns the captured FSMap ID. A
+// filesystem that fails the predicate, such as one of a terminated cluster,
+// is ActiveRefusal as ceph.ErrInvalidRequest. The per-filesystem overrides
+// use it.
+func (c *Core) AdmitOwned(ctx context.Context) (context.Context, int64, func(), error) {
+	var fsID int64
+	ctx, done, err := c.Admit(ctx, AdmissionSpec{
+		RecheckCanceled: true,
+		Refusal:         ActiveRefusal,
+		Check: func(context.Context) (bool, error) {
+			if !c.Registered() || !c.DescriptorIntact() || c.Native() == nil {
+				return false, nil
+			}
+			fsID = c.Native().ID
+			return true, nil
+		},
+	})
+	return ctx, fsID, done, err
+}
+
+// AdmitActive admits an operation on the active filesystem and reads its
+// native pool identity, which refuses a replaced filesystem or original pool,
+// and returns its native FSMap ID. A filesystem that is no longer registered
+// to an open cluster is an IdentityChanged refusal, because no later
+// admission of the same core can succeed; an edited descriptor or a missing
+// native identity is ActiveRefusal. With control, an open cluster without a
+// control container is refused too. Both refusals are ceph.ErrInvalidRequest.
+func (c *Core) AdmitActive(ctx context.Context, control bool) (context.Context, int64, func(), error) {
+	ctx, done, err := c.Admit(ctx, AdmissionSpec{
+		RecheckCanceled: true,
+		Refusal:         ActiveRefusal,
+		Check: func(ctx context.Context) (bool, error) {
+			if !c.Registered() {
+				return false, IdentityRefusal(ActiveRefusal)
+			}
+			if !c.DescriptorIntact() || c.Native() == nil {
+				return false, nil
+			}
+			if !control {
+				return true, nil
+			}
+			selected, err := c.cluster.ControlContainer(ctx)
+			if err != nil {
+				return false, err
+			}
+			return selected != nil, nil
+		},
+	})
+	if err != nil {
+		return ctx, 0, func() {}, err
+	}
+	state, err := c.ReadNativePools(ctx)
+	if err != nil {
+		done()
+		return ctx, 0, func() {}, err
+	}
+	return ctx, state.ID, done, nil
 }

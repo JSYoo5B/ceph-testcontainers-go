@@ -52,10 +52,13 @@ type RequiredFeaturesOverrideHandle struct {
 // featuresState is the restoration state of one override: the bits it added,
 // in the order it added them. The setup gate guards it.
 type featuresState struct {
-	fsID     int64
-	owned    []*ownedFeature
-	restored bool
+	fsbase.OverrideRecord
+	owned []*ownedFeature
 }
+
+// featuresSubject names the required client features override in its
+// refusals.
+const featuresSubject = "required client features override"
 
 // ownedFeature is one bit that the override sent an add for. confirmed means
 // a readback showed it required afterwards; removalSent means Restore sent its
@@ -67,10 +70,7 @@ type ownedFeature struct {
 }
 
 type nativeRequired struct {
-	ID     int64 `json:"id"`
-	MDSMap struct {
-		Required *map[string]string `json:"required_client_features"`
-	} `json:"mdsmap"`
+	Required *map[string]string `json:"required_client_features"`
 }
 
 type nativeFeature struct {
@@ -140,8 +140,8 @@ func overrideRequiredFeatures(ctx context.Context, fs *fsbase.Core, names []stri
 	}
 	defer done()
 	overrides := overridesOf(fs)
-	if active := overrides.features[fs]; active != nil && !active.restored {
-		return nil, servicehook.Invalid(errors.New("restore the existing CephFS required client features override first"))
+	if active := overrides.features[fs]; active != nil && !active.Restored {
+		return nil, fsbase.OverrideActive(featuresSubject)
 	}
 	v := fs.Volumes()
 	supported, err := readSupported(ctx, v)
@@ -160,7 +160,7 @@ func overrideRequiredFeatures(ctx context.Context, fs *fsbase.Core, names []stri
 	if err != nil {
 		return nil, err
 	}
-	state := &featuresState{fsID: fsID}
+	state := &featuresState{OverrideRecord: fsbase.OverrideRecord{FSID: fsID}}
 	overrides.features[fs] = state
 	change := &RequiredFeaturesOverrideHandle{filesystem: fs, state: state}
 	steps := make([]RequirementStep, 0, len(requested))
@@ -219,29 +219,24 @@ func (change *RequiredFeaturesOverrideHandle) Steps() []RequirementStep {
 //purpose:condition,lifetime
 func (change *RequiredFeaturesOverrideHandle) Restore(ctx context.Context) error {
 	if change == nil || change.filesystem == nil || change.state == nil {
-		return servicehook.Invalid(errors.New("CephFS required client features override is unavailable"))
+		return fsbase.OverrideUnavailable(featuresSubject)
 	}
-	fs := change.filesystem
-	state := change.state
-	if restored, err := confirmedRestore(ctx, fs, func() bool { return state.restored }); err != nil || restored {
-		return err
-	}
-	ctx, fsID, done, err := begin(ctx, fs)
-	if err != nil {
-		return err
-	}
-	defer done()
-	if state.restored {
-		return nil
-	}
-	overrides := overridesOf(fs)
-	if overrides.features[fs] != state {
-		return servicehook.Invalid(errors.New("CephFS required client features override is not tracked by this filesystem"))
-	}
-	if fsID != state.fsID {
-		return servicehook.Invalid(errors.New("CephFS filesystem identity changed since the required client features override"))
-	}
-	v := fs.Volumes()
+	fs, state := change.filesystem, change.state
+	return fs.RestoreOverride(ctx, fsbase.Override{
+		Subject: featuresSubject,
+		Record:  &state.OverrideRecord,
+		Tracked: func() bool { return overridesOf(fs).features[fs] == state },
+		Restore: func(ctx context.Context, fsID int64) error {
+			return removeOwnedFeatures(ctx, fs.Volumes(), fsID, state)
+		},
+		Forget: func() { delete(overridesOf(fs).features, fs) },
+	})
+}
+
+// removeOwnedFeatures refuses an owned feature that was removed outside the
+// override and then removes the features the override added, in reverse
+// order.
+func removeOwnedFeatures(ctx context.Context, v fsbase.VolumeCommands, fsID int64, state *featuresState) error {
 	current, err := readRequired(ctx, v, fsID)
 	if err != nil {
 		return err
@@ -265,8 +260,6 @@ func (change *RequiredFeaturesOverrideHandle) Restore(ctx context.Context) error
 			return err
 		}
 	}
-	state.restored = true
-	delete(overrides.features, fs)
 	return nil
 }
 
@@ -340,11 +333,12 @@ func parseSupported(data []byte) (map[string]int, error) {
 }
 
 func readRequired(ctx context.Context, v fsbase.VolumeCommands, fsID int64) (map[int]string, error) {
-	data, err := v.Cluster().Ceph(ctx, "fs", "get", v.Name(), "--format", "json")
-	if err != nil {
-		return nil, fmt.Errorf("read CephFS %q required client features: %w", v.Name(), err)
+	var native nativeRequired
+	err := v.ReadMDSMap(ctx, fsID, "required client features", &native)
+	var required map[int]string
+	if err == nil {
+		required, err = checkRequired(native)
 	}
-	required, err := parseRequired(data, fsID)
 	if errors.Is(err, errNoRequiredFeatures) {
 		return nil, unsupported(v.Cluster(), "fs required_client_features", err)
 	}
@@ -357,17 +351,18 @@ var errNoRequiredFeatures = errors.New("the MDSMap reports no required_client_fe
 // each set bit as "feature_<bit>" with its name, into names by bit.
 func parseRequired(data []byte, fsID int64) (map[int]string, error) {
 	var native nativeRequired
-	if err := json.Unmarshal(data, &native); err != nil {
-		return nil, errors.New("decode CephFS required client features")
+	if err := fsbase.DecodeMDSMap(data, fsID, "required client features", &native); err != nil {
+		return nil, err
 	}
-	if native.ID != fsID {
-		return nil, fmt.Errorf("CephFS filesystem ID is %d, want %d", native.ID, fsID)
-	}
-	if native.MDSMap.Required == nil {
+	return checkRequired(native)
+}
+
+func checkRequired(native nativeRequired) (map[int]string, error) {
+	if native.Required == nil {
 		return nil, errNoRequiredFeatures
 	}
-	required := make(map[int]string, len(*native.MDSMap.Required))
-	for key, name := range *native.MDSMap.Required {
+	required := make(map[int]string, len(*native.Required))
+	for key, name := range *native.Required {
 		digits, ok := strings.CutPrefix(key, "feature_")
 		bit, err := strconv.Atoi(digits)
 		if !ok || err != nil || bit < 0 || strconv.Itoa(bit) != digits {
