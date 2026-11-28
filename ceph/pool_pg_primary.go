@@ -287,28 +287,35 @@ func (s *pgPrimaryState) join(lease *minCompatLease) {
 // outside the override, a removed pool and a terminated cluster end the wait
 // at once.
 func (h *PGPrimaryOverrideHandle) waitReady(ctx context.Context) error {
-	s := h.state
-	ticker := time.NewTicker(500 * time.Millisecond)
+	return waitPGPrimaryReady(ctx, h.state.pg, h.state.osd, 500*time.Millisecond, h.ready)
+}
+
+// waitPGPrimaryReady polls ready until it reports true. A *pgPrimaryFinal
+// error ends the wait at once; any other error, and a false report without
+// one, is the latest reason and is named when ctx ends the wait.
+func waitPGPrimaryReady(ctx context.Context, pg PGID, osd int, interval time.Duration, ready func(context.Context) (bool, error)) error {
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	var last error
+	last := errors.New("no readiness observation completed")
 	for {
-		ready, err := h.ready(ctx)
+		ok, err := ready(ctx)
 		if err != nil {
 			var final *pgPrimaryFinal
 			if errors.As(err, &final) {
 				return final.err
 			}
 			last = err
+		} else if ok {
+			return nil
+		} else {
+			last = errors.New("the readiness observation did not match")
 		}
 		if ctx.Err() != nil {
-			return errors.Join(ctx.Err(), fmt.Errorf("PG %s did not report osd.%d as its serving acting primary: %w", s.pg, s.osd, last))
-		}
-		if ready && err == nil {
-			return nil
+			return errors.Join(ctx.Err(), fmt.Errorf("PG %s did not report osd.%d as its serving acting primary: %w", pg, osd, last))
 		}
 		select {
 		case <-ctx.Done():
-			return errors.Join(ctx.Err(), fmt.Errorf("PG %s did not report osd.%d as its serving acting primary: %w", s.pg, s.osd, last))
+			return errors.Join(ctx.Err(), fmt.Errorf("PG %s did not report osd.%d as its serving acting primary: %w", pg, osd, last))
 		case <-ticker.C:
 		}
 	}
@@ -320,7 +327,8 @@ type pgPrimaryFinal struct{ err error }
 func (e *pgPrimaryFinal) Error() string { return e.err.Error() }
 func (e *pgPrimaryFinal) Unwrap() error { return e.err }
 
-// ready is one readiness observation.
+// ready is one readiness observation. While the PG is not ready yet it
+// returns false with an error that names the part that does not match.
 func (h *PGPrimaryOverrideHandle) ready(ctx context.Context) (bool, error) {
 	c, s := h.owner, h.state
 	snapshot, err := s.pool.observePGs(ctx, c)
@@ -330,10 +338,18 @@ func (h *PGPrimaryOverrideHandle) ready(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	reported := false
+	reported := errors.New("the MGR report has no row for the PG")
 	for _, pg := range snapshot.PGs {
-		if pg.PGID == s.pg {
-			reported = pg.ActingPrimary == s.osd && pgActiveClean(pg.State)
+		if pg.PGID != s.pg {
+			continue
+		}
+		switch {
+		case pg.ActingPrimary != s.osd:
+			reported = fmt.Errorf("the MGR report names osd.%d as the acting primary", pg.ActingPrimary)
+		case !pgActiveClean(pg.State):
+			reported = fmt.Errorf("the MGR report has the PG in state %q", pg.State)
+		default:
+			reported = nil
 		}
 	}
 	if err := c.lockTopology(ctx); err != nil {
@@ -358,14 +374,29 @@ func (h *PGPrimaryOverrideHandle) ready(ctx context.Context) (bool, error) {
 		return false, &pgPrimaryFinal{err: invalid(fmt.Errorf("the pg-upmap-primary entry of PG %s changed outside this override", s.pg))}
 	}
 	acting, err := c.pgMapActing(ctx, s.pg)
-	if err != nil || len(acting) == 0 || acting[0] != s.osd {
+	if err != nil {
 		return false, err
+	}
+	if len(acting) == 0 {
+		return false, errors.New("the OSDMap has no acting set for the PG")
+	}
+	if acting[0] != s.osd {
+		return false, fmt.Errorf("the OSDMap names osd.%d as the acting primary", acting[0])
 	}
 	serving, state, err := c.pgServingPrimary(ctx, s.pg)
 	if err != nil {
 		return false, err
 	}
-	return reported && serving == s.osd && pgActiveClean(state), nil
+	if serving != s.osd {
+		return false, fmt.Errorf("the PG query names osd.%d as the serving primary", serving)
+	}
+	if !pgActiveClean(state) {
+		return false, fmt.Errorf("the PG query reports state %q", state)
+	}
+	if reported != nil {
+		return false, reported
+	}
+	return true, nil
 }
 
 // Restore puts back the PG's prior pg-upmap-primary entry: it removes an

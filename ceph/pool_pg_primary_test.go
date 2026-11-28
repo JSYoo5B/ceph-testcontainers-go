@@ -657,3 +657,28 @@ func TestPGPrimaryWaitsForEntryAndCompatibilityMutations(t *testing.T) {
 		}
 	}
 }
+
+func TestPGPrimaryWaitNamesAReasonWhenReadyNeverMatches(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		ready func(context.Context) (bool, error)
+		want  string
+	}{
+		{"false without a reason", func(context.Context) (bool, error) { return false, nil }, "did not match"},
+		{"false with a reason", func(context.Context) (bool, error) {
+			return false, errors.New("the OSDMap names osd.2 as the acting primary")
+		}, "osd.2 as the acting primary"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+			defer cancel()
+			err := waitPGPrimaryReady(ctx, "1.0", 1, time.Millisecond, tc.ready)
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("err = %v, want the deadline", err)
+			}
+			if msg := err.Error(); strings.Contains(msg, "%!") || !strings.Contains(msg, tc.want) {
+				t.Fatalf("err = %q, want a reason containing %q and no format error", msg, tc.want)
+			}
+		})
+	}
+}
