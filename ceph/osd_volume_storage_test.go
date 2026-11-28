@@ -3,7 +3,6 @@ package ceph
 import (
 	"context"
 	"errors"
-	"io"
 	"maps"
 	"testing"
 
@@ -11,7 +10,6 @@ import (
 	"github.com/moby/moby/api/types/volume"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
-	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
 type osdVolumeDockerFake struct{ osdMemoryDockerFake }
@@ -25,27 +23,12 @@ func (d *osdVolumeDockerFake) VolumeCreate(ctx context.Context, opts mobycl.Volu
 
 type osdVolumeHelperFake struct {
 	osdMemoryContainerFake
-	links map[string]bool
 }
 
-func (h *osdVolumeHelperFake) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
-	if len(args) == 4 && args[0] == "test" && args[2] == "-L" {
-		h.commands = append(h.commands, args)
-		if h.execErr != nil {
-			return 0, nil, h.execErr
-		}
-		code := 0
-		if h.links[args[3]] {
-			code = 1
-		}
-		return code, noInitialOSDStream(""), nil
-	}
-	return h.osdMemoryContainerFake.Exec(ctx, args, opts...)
-}
 func osdVolumeFixture() (*osdVolumeStorage, *osdVolumeDockerFake, *osdVolumeHelperFake) {
 	d := &osdVolumeDockerFake{osdMemoryDockerFake: osdMemoryDockerFake{stored: volume.Volume{Name: "synthetic-owned-volume", Driver: "local", CreatedAt: "synthetic-created-identity", Labels: map[string]string{osdVolumeOwnerLabel: "synthetic-owner"}}}}
-	h := &osdVolumeHelperFake{osdMemoryContainerFake: osdMemoryContainerFake{running: true, startedAt: "synthetic-start", directories: map[string]bool{}}, links: map[string]bool{}}
-	s := &osdVolumeStorage{name: d.stored.Name, owner: "synthetic-owner", createdAt: d.stored.CreatedAt, helper: h, helperStarted: h.startedAt, ready: true, newClient: func(context.Context) (osdMemoryVolumeClient, error) { return d, nil }}
+	h := &osdVolumeHelperFake{osdMemoryContainerFake: osdMemoryContainerFake{running: true, startedAt: "synthetic-start", directories: map[string]bool{}, links: map[string]bool{}}}
+	s := &osdVolumeStorage{name: d.stored.Name, owner: "synthetic-owner", createdAt: d.stored.CreatedAt, helper: h, helperStarted: h.startedAt, ready: true, newClient: func(context.Context) (dockerVolumeClient, error) { return d, nil }}
 	return s, d, h
 }
 
@@ -70,7 +53,7 @@ func TestOSDVolumeLazyAllocationAndUncertainCreateOwnership(t *testing.T) {
 	d := &osdVolumeDockerFake{}
 	lost := errors.New("synthetic lost create reply")
 	d.createErr = lost
-	c.fleet.stores.volumeDocker = func(context.Context) (osdMemoryVolumeClient, error) { return d, nil }
+	c.fleet.stores.volumeDocker = func(context.Context) (dockerVolumeClient, error) { return d, nil }
 	if err := c.startInitialOSDs(t.Context()); err != nil || c.fleet.stores.volume != nil || d.creates != 0 {
 		t.Fatal("zero-OSD bootstrap allocated storage")
 	}
@@ -220,7 +203,7 @@ func TestOSDVolumePartialHelperRemainsOwnedUntilCleanup(t *testing.T) {
 	d := &osdVolumeDockerFake{}
 	h := &osdVolumeHelperFake{}
 	failed := errors.New("synthetic helper start reply lost")
-	c.fleet.stores.volumeDocker = func(context.Context) (osdMemoryVolumeClient, error) { return d, nil }
+	c.fleet.stores.volumeDocker = func(context.Context) (dockerVolumeClient, error) { return d, nil }
 	calls := 0
 	c.fleet.stores.volumeRunner = func(_ context.Context, _ string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 		calls++

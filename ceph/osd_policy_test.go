@@ -186,3 +186,34 @@ func (ctr *osdPolicyFixture) Exec(_ context.Context, args []string, _ ...tcexec.
 	stream.WriteString(output)
 	return code, &stream, nil
 }
+
+// TestWaitForCleanAndWaitForPGCleanJudgeOnePGReportAlike runs one status
+// through both waits; with every OSD up and in they differ only in the OSD
+// condition, so each report gets the same verdict from both.
+func TestWaitForCleanAndWaitForPGCleanJudgeOnePGReportAlike(t *testing.T) {
+	for _, tc := range []struct {
+		name, pgmap string
+		clean       bool
+	}{
+		{"clean", `{"num_pgs":8,"pgs_by_state":[{"state_name":"active+clean","count":8}]}`, true},
+		{"zero-count row", `{"num_pgs":8,"pgs_by_state":[{"state_name":"active+clean","count":8},{"state_name":"active+clean","count":0}]}`, false},
+		{"negative-count row", `{"num_pgs":8,"pgs_by_state":[{"state_name":"active+clean","count":9},{"state_name":"active+clean","count":-1}]}`, false},
+		{"short count", `{"num_pgs":8,"pgs_by_state":[{"state_name":"active+clean","count":7}]}`, false},
+		{"no PGs", `{"num_pgs":0}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctr := &osdPolicyFixture{status: `{"mgrmap":{"available":true},"osdmap":{"num_osds":1,"num_up_osds":1,"num_in_osds":1},"pgmap":` + tc.pgmap + `}`}
+			c := osdPolicyCluster(ctr)
+			for name, wait := range map[string]func(context.Context) error{
+				"WaitForClean": observeWaitCluster(c).WaitForClean, "WaitForPGClean": observeWaitCluster(c).WaitForPGClean,
+			} {
+				ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+				err := wait(ctx)
+				cancel()
+				if (err == nil) != tc.clean {
+					t.Errorf("%s: err = %v, want clean=%t", name, err, tc.clean)
+				}
+			}
+		})
+	}
+}

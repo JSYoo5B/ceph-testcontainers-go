@@ -17,7 +17,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -49,8 +48,6 @@ type ManagerContainer struct {
 	terminated  bool
 	image       string
 }
-
-var daemonNamePattern = naming.DaemonName
 
 func daemonName(index int) string {
 	if index < 26 {
@@ -125,6 +122,10 @@ func (c *Container) waitForQuorum(ctx context.Context) error {
 
 // AddMonitor joins a new named MON from the live quorum's map and shared key.
 // Existing daemon data is retained; a partial new member remains owned on error.
+// A name starts with a letter or digit, contains only letters, digits, '_',
+// '.' and '-', and is at most 79 bytes long, the longest name whose admin
+// socket path Ceph can bind. Another name is refused with ErrInvalidRequest
+// before anything is created.
 // DaemonOptions.WithImage starts this one MON from another image; the default is the
 // essential image. Options are validated before the topology lock is taken or
 // anything is created.
@@ -139,8 +140,8 @@ func (c *Container) waitForQuorum(ctx context.Context) error {
 //
 //purpose:construction,condition
 func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonOptions) (*MonitorContainer, error) {
-	if !daemonNamePattern.MatchString(name) {
-		return nil, errors.New("invalid monitor name")
+	if err := validateDaemonName("monitor", name); err != nil {
+		return nil, err
 	}
 	daemon, err := resolveDaemonOptions(opts)
 	if err != nil {
@@ -817,6 +818,10 @@ func monitorConfigComment(line string) (int, error) {
 // AddManager creates a named active/standby candidate and waits for its mgrmap
 // registration. Existing daemon identities are rejected; it does not force
 // active ownership away from an existing MGR.
+// A name starts with a letter or digit, contains only letters, digits, '_',
+// '.' and '-', and is at most 79 bytes long, the longest name whose admin
+// socket path Ceph can bind. Another name is refused with ErrInvalidRequest
+// before anything is created.
 // With AddressDualStack it then checks the active MGR's advertised addresses
 // and fails with ErrUnsupported when one family has no concrete address.
 // The MGR starts from the cluster's MGR image, ClusterFacts.Images.MGR
@@ -840,8 +845,8 @@ func monitorConfigComment(line string) (int, error) {
 //
 //purpose:construction,condition
 func (c *Container) AddManager(ctx context.Context, name string, opts ...DaemonOptions) (*ManagerContainer, error) {
-	if !daemonNamePattern.MatchString(name) {
-		return nil, errors.New("invalid manager name")
+	if err := validateDaemonName("manager", name); err != nil {
+		return nil, err
 	}
 	daemon, err := resolveDaemonOptions(opts)
 	if err != nil {
@@ -1034,8 +1039,8 @@ func (dm daemonMaps) waitManagerRegistered(ctx context.Context, name string) err
 // checks the handle under the topology lock.
 func (c *Container) removeManager(ctx context.Context, handle *ManagerContainer) error {
 	name := handle.DaemonName
-	if !daemonNamePattern.MatchString(name) {
-		return errors.New("invalid manager name")
+	if err := validateDaemonName("manager", name); err != nil {
+		return err
 	}
 	if err := c.lockTopology(ctx); err != nil {
 		return err

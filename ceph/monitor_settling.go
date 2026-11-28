@@ -2,7 +2,6 @@ package ceph
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -32,7 +31,7 @@ func (l authLedger) monitorSettling() monitorSettling {
 
 // monitorView is the quorum and monmap that settling relies on.
 type monitorView struct {
-	election, epoch int
+	election, epoch uint64
 	mons            []monitorRoute
 }
 
@@ -48,27 +47,19 @@ func (m monitorSettling) view(ctx context.Context) (monitorView, error) {
 	if err != nil {
 		return monitorView{}, fmt.Errorf("read the MON quorum: %w", err)
 	}
-	var status QuorumStatus
-	var view struct {
-		Election *int `json:"election_epoch"`
-		MonMap   struct {
-			Epoch *int `json:"epoch"`
-			Mons  []struct {
-				PublicAddrs struct {
-					Addrvec []struct {
-						Type  string `json:"type"`
-						Addr  string `json:"addr"`
-						Nonce uint64 `json:"nonce"`
-					} `json:"addrvec"`
-				} `json:"public_addrs"`
-			} `json:"mons"`
-		} `json:"monmap"`
+	status, report, err := decodeMonitorQuorumSample(ctx, out)
+	if err != nil {
+		return monitorView{}, fmt.Errorf("read the MON quorum: %w", err)
 	}
-	if json.Unmarshal(out, &status) != nil || json.Unmarshal(out, &view) != nil || view.Election == nil || view.MonMap.Epoch == nil || len(view.MonMap.Mons) != len(status.MonMap.Mons) || len(status.MonMap.Mons) == 0 {
-		return monitorView{}, errors.New("read the MON quorum: unexpected quorum_status")
+	if len(status.MonMap.Mons) == 0 {
+		return monitorView{}, errors.New("read the MON quorum: the monmap has no member")
 	}
-	result := monitorView{election: *view.Election, epoch: *view.MonMap.Epoch}
-	for i, member := range status.MonMap.Mons {
+	addrs := make(map[string][]EntityAddress, len(report.sample.monmap))
+	for _, member := range report.sample.monmap {
+		addrs[member.Name] = member.Addrs
+	}
+	result := monitorView{election: report.sample.electionEpoch, epoch: report.sample.monMapEpoch}
+	for _, member := range status.MonMap.Mons {
 		single := status
 		single.QuorumNames = []string{member.Name}
 		single.MonMap.Mons = append(single.MonMap.Mons[:0:0], member)
@@ -77,8 +68,8 @@ func (m monitorSettling) view(ctx context.Context) (monitorView, error) {
 			return monitorView{}, fmt.Errorf("read the MON quorum: %w", err)
 		}
 		route := monitorRoute{name: member.Name, override: override}
-		for _, addr := range view.MonMap.Mons[i].PublicAddrs.Addrvec {
-			route.logged = append(route.logged, addr.Type+":"+addr.Addr+"/"+strconv.FormatUint(addr.Nonce, 10))
+		for _, addr := range addrs[member.Name] {
+			route.logged = append(route.logged, addr.Type+":"+addr.Addr+"/"+strconv.FormatUint(uint64(addr.Nonce), 10))
 		}
 		result.mons = append(result.mons, route)
 	}

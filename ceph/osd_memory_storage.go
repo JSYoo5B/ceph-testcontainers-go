@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/moby/moby/api/types/container"
@@ -19,7 +18,9 @@ import (
 const osdMemoryOwnerLabel = "org.testcontainers.ceph.osd-memory-owner"
 const osdMemoryKeeperPath = "/tc/osd-memory"
 
-type osdMemoryVolumeClient interface {
+// dockerVolumeClient is the part of the Docker client that the owned OSD
+// store volumes and the shared run volume use.
+type dockerVolumeClient interface {
 	VolumeCreate(context.Context, mobycl.VolumeCreateOptions) (mobycl.VolumeCreateResult, error)
 	VolumeInspect(context.Context, string, mobycl.VolumeInspectOptions) (mobycl.VolumeInspectResult, error)
 	VolumeRemove(context.Context, string, mobycl.VolumeRemoveOptions) (mobycl.VolumeRemoveResult, error)
@@ -38,7 +39,7 @@ type osdMemoryStorage struct {
 	ready         bool
 	volumeRemoved bool
 	discard       osdStoreDiscard
-	newClient     func(context.Context) (osdMemoryVolumeClient, error)
+	newClient     func(context.Context) (dockerVolumeClient, error)
 }
 
 func newOSDMemoryStorage(size int64) *osdMemoryStorage {
@@ -46,7 +47,7 @@ func newOSDMemoryStorage(size int64) *osdMemoryStorage {
 	return &osdMemoryStorage{name: "tc-ceph-osd-memory-" + owner, owner: owner, size: size}
 }
 
-func (s *osdMemoryStorage) client(ctx context.Context) (osdMemoryVolumeClient, error) {
+func (s *osdMemoryStorage) client(ctx context.Context) (dockerVolumeClient, error) {
 	if s.newClient != nil {
 		return s.newClient(ctx)
 	}
@@ -155,36 +156,17 @@ func (s *osdMemoryStorage) checkKeeper(ctx context.Context) error {
 	return ctx.Err()
 }
 
+var osdMemoryDirectories = osdStoreDirectories{root: osdMemoryKeeperPath, backend: "memory"}
+
 func (s *osdMemoryStorage) requireFreshOSD(ctx context.Context, id int) error {
-	if s.discard.marker != "" {
-		return errors.New("an earlier OSD store discard is unconfirmed; retry removal before reusing storage")
-	}
-	if id < 0 {
-		return errors.New("OSD memory directory ID must be nonnegative")
-	}
-	if err := s.checkKeeper(ctx); err != nil {
-		return err
-	}
-	_, err := command(ctx, s.keeper, "test", "!", "-e", osdMemoryKeeperPath+"/ceph-"+strconv.Itoa(id))
-	if err != nil {
-		return fmt.Errorf("OSD memory directory for osd.%d is not fresh: %w", id, err)
-	}
-	return nil
+	return osdMemoryDirectories.requireFresh(ctx, &s.discard, s.checkKeeper, s.keeperContainer, id)
 }
 
 func (s *osdMemoryStorage) discardOSD(ctx context.Context, id int) error {
-	if id < 0 {
-		return errors.New("OSD memory directory ID must be nonnegative")
-	}
-	if err := s.checkKeeper(ctx); err != nil {
-		return err
-	}
-	err := s.discard.run(ctx, s.keeper, osdMemoryKeeperPath+"/ceph-"+strconv.Itoa(id))
-	if err != nil {
-		return fmt.Errorf("discard purged osd.%d memory storage: %w", id, err)
-	}
-	return nil
+	return osdMemoryDirectories.discard(ctx, &s.discard, s.checkKeeper, s.keeperContainer, id)
 }
+
+func (s *osdMemoryStorage) keeperContainer() testcontainers.Container { return s.keeper }
 
 // Called only after all owned OSD containers have been removed. Failed keeper
 // or volume removal remains retryable; never force-delete a referenced volume.

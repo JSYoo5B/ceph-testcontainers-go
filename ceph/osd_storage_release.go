@@ -35,7 +35,7 @@ type ownedStorageRelease struct {
 	// name is the owned volume.
 	name string
 	// client opens the Docker client used for the volume calls.
-	client func(context.Context) (osdMemoryVolumeClient, error)
+	client func(context.Context) (dockerVolumeClient, error)
 	// validate rejects a volume that is not the one this cluster created.
 	validate func(volume.Volume) error
 }

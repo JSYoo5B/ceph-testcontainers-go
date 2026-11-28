@@ -3,7 +3,6 @@ package ceph
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -129,21 +128,15 @@ func (c *Container) configureDefaultCRUSHRoot(ctx context.Context) error {
 	if _, err := c.conn().ceph(ctx, replicatedCRUSHRuleCommand(config, ruleName)...); err != nil {
 		return err
 	}
-	data, err := c.conn().ceph(ctx, "osd", "crush", "rule", "dump", ruleName, "--format", "json")
+	rules, err := poolCatalog{c.conn()}.crushRules(ctx)
 	if err != nil {
 		return err
 	}
-	var rule struct {
-		ID   *int   `json:"rule_id"`
-		Name string `json:"rule_name"`
+	rule, ok := crushRuleByName(rules, ruleName)
+	if !ok {
+		return fmt.Errorf("default CRUSH rule %s is missing from the CRUSH rule dump", ruleName)
 	}
-	if err := json.Unmarshal(data, &rule); err != nil {
-		return fmt.Errorf("decode default CRUSH rule: %w", err)
-	}
-	if rule.ID == nil || *rule.ID < 0 || rule.Name != ruleName {
-		return fmt.Errorf("default CRUSH rule response is incomplete")
-	}
-	value := strconv.Itoa(*rule.ID)
+	value := strconv.Itoa(rule.id)
 	if _, err := c.conn().ceph(ctx, "config", "set", "global", "osd_pool_default_crush_rule", value); err != nil {
 		return err
 	}

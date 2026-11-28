@@ -2,8 +2,6 @@ package ceph
 
 import (
 	"errors"
-	"strconv"
-	"strings"
 )
 
 // PoolPGSnapshot contains one pool's reported PGs, bracketed by two native
@@ -104,10 +102,8 @@ func decodePoolPGOSDMap(data []byte, fsid, name string) (PoolState, uint32, erro
 		if pool.Type == nil || pool.Size == nil || *pool.Size == 0 || pool.MinSize == nil || *pool.MinSize == 0 || pool.PGNum == nil || int(*pool.PGNum) < 1 || pool.CRUSHRule == nil || pool.AutoscaleMode == nil || pool.ErasureCodeProfile == nil || pool.Flags == nil || pool.MaxBytes == nil || pool.MaxObjects == nil {
 			return failure()
 		}
-		kind := "replicated"
-		if *pool.Type == 3 {
-			kind = "erasure"
-		} else if *pool.Type != 1 {
+		kind, err := poolKind(int(*pool.Type))
+		if err != nil {
 			return failure()
 		}
 		result = PoolState{ID: *pool.ID, Name: *pool.Name, Type: kind, Size: int(*pool.Size), MinSize: int(*pool.MinSize), PGNum: int(*pool.PGNum),
@@ -196,11 +192,9 @@ func decodePoolPGReports(data []byte, poolID int64) (bool, []PGState, error) {
 	return *native.Ready, result, nil
 }
 
+// poolPGIdentity reports whether value is a PG of poolID in the canonical
+// form that Ceph reports.
 func poolPGIdentity(value string, poolID int64) bool {
-	pool, seed, found := strings.Cut(value, ".")
-	if !found || poolID < 0 || pool != strconv.FormatInt(poolID, 10) {
-		return false
-	}
-	ps, err := strconv.ParseUint(seed, 16, 32)
-	return err == nil && seed == strconv.FormatUint(ps, 16)
+	pool, _, canonical, err := parsePGID(value)
+	return err == nil && poolID >= 0 && pool == poolID && string(canonical) == value
 }

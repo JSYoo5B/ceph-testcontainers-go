@@ -24,7 +24,7 @@ func TestRunDirStateWithoutAVolumeIsInert(t *testing.T) {
 func TestRunDirStateReleaseMarksRemovedOnlyAfterSuccess(t *testing.T) {
 	docker := &runVolumeClient{volumes: map[string]volume.Volume{}}
 	v := newRunVolume()
-	v.newClient = func(context.Context) (osdMemoryVolumeClient, error) { return docker, nil }
+	v.newClient = func(context.Context) (dockerVolumeClient, error) { return docker, nil }
 	if err := v.create(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -36,12 +36,12 @@ func TestRunDirStateReleaseMarksRemovedOnlyAfterSuccess(t *testing.T) {
 	// A failed release keeps the volume shared and published, so Terminate
 	// can retry it and an admin socket call is not refused early.
 	boom := errors.New("synthetic client failure")
-	v.newClient = func(context.Context) (osdMemoryVolumeClient, error) { return nil, boom }
+	v.newClient = func(context.Context) (dockerVolumeClient, error) { return nil, boom }
 	if err := d.release(t.Context()); !errors.Is(err, boom) || !d.shared() || !d.published() {
 		t.Fatalf("failed release = %v, shared %v", err, d.shared())
 	}
 
-	v.newClient = func(context.Context) (osdMemoryVolumeClient, error) { return docker, nil }
+	v.newClient = func(context.Context) (dockerVolumeClient, error) { return docker, nil }
 	if err := d.release(t.Context()); err != nil || d.shared() || len(docker.volumes) != 0 {
 		t.Fatalf("release = %v, shared %v", err, d.shared())
 	}
@@ -51,7 +51,7 @@ func TestRunDirStateReleaseMarksRemovedOnlyAfterSuccess(t *testing.T) {
 	if !d.published() || d.volumeName() != v.name {
 		t.Fatal("a removed volume was forgotten")
 	}
-	v.newClient = func(context.Context) (osdMemoryVolumeClient, error) { return nil, boom }
+	v.newClient = func(context.Context) (dockerVolumeClient, error) { return nil, boom }
 	if err := d.release(t.Context()); err != nil {
 		t.Fatalf("second release reached Docker: %v", err)
 	}

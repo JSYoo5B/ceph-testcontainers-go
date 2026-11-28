@@ -234,20 +234,13 @@ func (pc poolCatalog) refuseInUse(ctx context.Context, name string) error {
 }
 
 func (pc poolCatalog) crushRuleNames(ctx context.Context) (map[int]string, error) {
-	data, err := pc.conn.ceph(ctx, "osd", "crush", "rule", "dump", "--format", "json")
+	rules, err := pc.crushRules(ctx)
 	if err != nil {
 		return nil, err
 	}
-	var rules []struct {
-		ID   int    `json:"rule_id"`
-		Name string `json:"rule_name"`
-	}
-	if err := json.Unmarshal(data, &rules); err != nil {
-		return nil, fmt.Errorf("decode CRUSH rules: %w", err)
-	}
 	names := make(map[int]string, len(rules))
 	for _, rule := range rules {
-		names[rule.ID] = rule.Name
+		names[rule.id] = rule.name
 	}
 	return names, nil
 }

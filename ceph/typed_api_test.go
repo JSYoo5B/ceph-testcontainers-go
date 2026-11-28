@@ -33,34 +33,29 @@ func TestOSDFlagsReportsFlagsOutsideTheConstantSet(t *testing.T) {
 	}
 }
 
-func TestParsePGIDAcceptsExactlyWhatValidatePGIDAccepts(t *testing.T) {
-	for _, s := range []string{
-		"1.0", "7.0", "3.1f", "12.ab", "0.0", "10.ffff", "1.00",
-		"", "1", "1.", ".1", "a.1", "1.G", "1.1F", "1.0\n", " 1.0", "1.0 ", "1.0; rm", "-1.0", "1.0.1", "1..0", "1.-1", "１.0",
+// TestParsePGIDKeepsTheV102GrammarAndReturnsTheCanonicalForm runs inputs of
+// the v1.0.2 grammar ^[0-9]+\.[0-9a-f]+$ and inputs outside it. Every
+// grammar input naming a pool ID and 32-bit PG number Ceph can have is
+// accepted and returned in the canonical form Ceph reports.
+func TestParsePGIDKeepsTheV102GrammarAndReturnsTheCanonicalForm(t *testing.T) {
+	for s, want := range map[string]PGID{
+		"1.0": "1.0", "7.0": "7.0", "3.1f": "3.1f", "12.ab": "12.ab", "0.0": "0.0", "10.ffff": "10.ffff",
+		"1.00": "1.0", "01.0": "1.0", "007.001f": "7.1f", "1.ffffffff": "1.ffffffff",
 	} {
-		want := validatePGID(s)
 		got, err := ParsePGID(s)
-		if (err == nil) != (want == nil) {
-			t.Fatalf("%q: ParsePGID err %v, validatePGID err %v", s, err, want)
-		}
-		if err != nil {
-			if got != "" || !errors.Is(err, ErrInvalidRequest) {
-				t.Fatalf("%q: rejected with %q and %v", s, got, err)
-			}
-			continue
-		}
-		if string(got) != s || got.String() != s {
-			t.Fatalf("%q parsed as %q", s, got)
+		if err != nil || got != want || got.String() != string(want) {
+			t.Errorf("ParsePGID(%q) = %q, %v; want %q", s, got, err, want)
 		}
 	}
-	for _, s := range []string{"1.0", "3.1f"} {
-		if _, err := ParsePGID(s); err != nil {
-			t.Fatalf("grammar example %q refused: %v", s, err)
-		}
-	}
-	for _, s := range []string{"", "1.", "1.1F", "1.0\n"} {
-		if _, err := ParsePGID(s); err == nil {
-			t.Fatalf("invalid example %q accepted", s)
+	for _, s := range []string{
+		"", "1", "1.", ".1", "a.1", "1.G", "1.1F", "1.0\n", " 1.0", "1.0 ", "1.0; rm", "-1.0", "1.0.1", "1..0", "1.-1", "１.0",
+		// The grammar admits these, but no PG has them: a pool ID beyond
+		// int64 and a PG number beyond 32 bits.
+		"9223372036854775808.0", "1.100000000",
+	} {
+		got, err := ParsePGID(s)
+		if err == nil || got != "" || !errors.Is(err, ErrInvalidRequest) {
+			t.Errorf("ParsePGID(%q) = %q, %v; want a refusal matching ErrInvalidRequest", s, got, err)
 		}
 	}
 }

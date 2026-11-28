@@ -1235,18 +1235,28 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 	return errors.Join(errs...)
 }
 
-// waitUp waits until every OSD of ids is up and in. Its error names the
-// OSDs that were not.
+// waitUp waits until every OSD of ids is up and in. A failed osd dump is
+// retried; a dump that the policy decoder refuses ends the wait at once. Its
+// error names the OSDs that were not up and in.
 func (om osdMap) waitUp(ctx context.Context, ids []int) error {
 	pending := slices.Clone(ids)
-	err := clusterutil.Poll(ctx, func() (bool, error) {
-		flags, err := om.upIn(ctx)
+	pollCtx, stop := context.WithCancel(ctx)
+	defer stop()
+	var malformed error
+	err := clusterutil.Poll(pollCtx, func() (bool, error) {
+		data, err := om.conn.ceph(pollCtx, "osd", "dump", "--format", "json")
 		if err != nil {
+			return false, err
+		}
+		dump, err := decodeOSDPolicyDump(data)
+		if err != nil {
+			malformed = err
+			stop()
 			return false, err
 		}
 		pending = pending[:0]
 		for _, id := range ids {
-			if state := flags[id]; !state.up || !state.in {
+			if state, ok := dump.osds[id]; !ok || !state.Up || !state.In {
 				pending = append(pending, id)
 			}
 		}
@@ -1259,32 +1269,10 @@ func (om osdMap) waitUp(ctx context.Context, ids []int) error {
 	for i, id := range pending {
 		names[i] = fmt.Sprintf("osd.%d", id)
 	}
+	if malformed != nil && ctx.Err() == nil {
+		err = malformed
+	}
 	return fmt.Errorf("wait for %s up/in: %w", strings.Join(names, ", "), err)
-}
-
-type osdFlags struct{ up, in bool }
-
-// upIn returns the up and in flags of every OSD in the OSDMap.
-func (om osdMap) upIn(ctx context.Context) (map[int]osdFlags, error) {
-	result, err := om.conn.ceph(ctx, "osd", "dump", "--format", "json")
-	if err != nil {
-		return nil, err
-	}
-	var dump struct {
-		OSDs []struct {
-			ID int `json:"osd"`
-			Up int `json:"up"`
-			In int `json:"in"`
-		} `json:"osds"`
-	}
-	if err := json.Unmarshal(result, &dump); err != nil {
-		return nil, err
-	}
-	flags := make(map[int]osdFlags, len(dump.OSDs))
-	for _, osd := range dump.OSDs {
-		flags[osd.ID] = osdFlags{up: osd.Up == 1, in: osd.In == 1}
-	}
-	return flags, nil
 }
 
 // A gracefully stopping MDS otherwise waits about five seconds; data in a

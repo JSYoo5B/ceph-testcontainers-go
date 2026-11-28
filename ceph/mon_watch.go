@@ -107,6 +107,7 @@ func (w *MonitorWatch) Stop() error {
 // quorum loss shows: a gap is not an empty quorum or proof that a majority is
 // lost. These end the watch instead: ctx ending, Stop, a terminated cluster, a
 // monmap of another cluster, and a full buffer (ErrWatchOverflow).
+// The stop cause of a foreign FSID matches ErrInvalidRequest.
 //
 // The watch is read-only. Quorum is the MONs' own report, not proof that a
 // daemon process runs, and an advertised address does not prove that clients
@@ -152,31 +153,14 @@ type monitorQuorumRead func(context.Context) (monitorQuorumReport, error)
 type originalFSIDRead func(context.Context) (string, error)
 
 func startMonitorWatch(ctx context.Context, settings watch.Settings, original originalFSIDRead, read monitorQuorumRead) (*MonitorWatch, error) {
-	var fsid string
+	const operation = "watch monitors"
 	stream, err := watch.Start(ctx, watch.Spec[monitorSample, MonitorWatchEvent]{
-		Name:     "watch monitors",
+		Name:     operation,
 		Settings: settings,
-		Read: func(ctx context.Context) (monitorSample, error) {
-			pinned := fsid
-			if pinned == "" {
-				var err error
-				if pinned, err = original(ctx); err != nil {
-					return monitorSample{}, err
-				}
-			}
+		Read: pinnedClusterRead(operation, "monmap", original, func(ctx context.Context) (monitorSample, []string, error) {
 			report, err := read(ctx)
-			if err != nil {
-				if errors.Is(err, errClusterTerminated) {
-					return monitorSample{}, watch.Fatal(err)
-				}
-				return monitorSample{}, err
-			}
-			if err := checkWatchFSID("watch monitors", "monmap", report.fsid, pinned); err != nil {
-				return monitorSample{}, err
-			}
-			fsid = pinned
-			return report.sample, nil
-		},
+			return report.sample, []string{report.fsid}, err
+		}),
 		Equal: func(a, b monitorSample) bool {
 			return a.leader == b.leader && slices.Equal(a.quorum, b.quorum) && slices.EqualFunc(a.monmap, b.monmap, sameDaemonAddress)
 		},
@@ -213,17 +197,9 @@ func cloneDaemonAddresses(in []DaemonAddress) []DaemonAddress {
 
 // monitorQuorumReport reads the quorum status for one watch read. It takes no
 // topology lock, as Observer.QuorumStatus, and selects the control container
-// under ctx. A cluster whose Terminate has started is errClusterTerminated,
-// also when it made the query fail.
+// under ctx; see watchQuery.
 func (c *Container) monitorQuorumReport(ctx context.Context) (monitorQuorumReport, error) {
-	if c.native.calls.isClosed() {
-		return monitorQuorumReport{}, errClusterTerminated
-	}
-	report, err := c.queryMonitorQuorumReport(ctx)
-	if err != nil && c.native.calls.isClosed() {
-		return monitorQuorumReport{}, errClusterTerminated
-	}
-	return report, err
+	return watchQuery(c, ctx, c.queryMonitorQuorumReport)
 }
 
 func (c *Container) queryMonitorQuorumReport(ctx context.Context) (monitorQuorumReport, error) {
@@ -235,11 +211,24 @@ func (c *Container) queryMonitorQuorumReport(ctx context.Context) (monitorQuorum
 	if err != nil {
 		return monitorQuorumReport{}, err
 	}
+	_, report, err := decodeMonitorQuorumSample(ctx, data)
+	return report, err
+}
+
+// decodeMonitorQuorumSample decodes one quorum_status output through the
+// validating decoder, decodeMonitorQuorum, and then the fields it does not
+// carry. The quorum watch and the MON settling barrier read quorum_status
+// through it.
+func decodeMonitorQuorumSample(ctx context.Context, data []byte) (QuorumStatus, monitorQuorumReport, error) {
 	status, err := decodeMonitorQuorum(ctx, data)
 	if err != nil {
-		return monitorQuorumReport{}, err
+		return QuorumStatus{}, monitorQuorumReport{}, err
 	}
-	return decodeMonitorQuorumReport(data, status)
+	report, err := decodeMonitorQuorumReport(data, status)
+	if err != nil {
+		return QuorumStatus{}, monitorQuorumReport{}, err
+	}
+	return status, report, nil
 }
 
 // decodeMonitorQuorumReport decodes the fields of a validated quorum_status
