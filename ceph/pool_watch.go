@@ -101,6 +101,7 @@ func (w *PoolPGWatch) Stop() error {
 // Stop, a terminated cluster, a native FSID of another cluster, a pool that
 // this handle removed, that no longer has this name, or whose name now
 // belongs to another native pool ID, and a full buffer (ErrWatchOverflow).
+// The stop cause of a foreign FSID matches ErrInvalidRequest.
 // The watch never follows a recreated pool by name and makes no change.
 //
 // The reads of one sample are not atomic: the two OSDMap brackets can carry
@@ -139,11 +140,8 @@ func startPoolPGWatch(ctx context.Context, settings watch.Settings, name string,
 		Settings: settings,
 		Read: func(ctx context.Context) (PoolPGSnapshot, error) {
 			snapshot, err := read(ctx)
-			if cause := observationEndCause(err); cause != nil {
-				return PoolPGSnapshot{}, watch.Fatal(fmt.Errorf("%s: %w", operation, cause))
-			}
 			if err != nil {
-				return PoolPGSnapshot{}, err
+				return PoolPGSnapshot{}, watchEnd(operation, err)
 			}
 			if !pinned {
 				pinned, fsid, poolID = true, snapshot.FSID, snapshot.PoolBefore.ID

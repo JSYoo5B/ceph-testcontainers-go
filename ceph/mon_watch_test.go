@@ -315,7 +315,7 @@ func TestMonitorWatchAnotherClusterEndsTheWatch(t *testing.T) {
 	source.update(func(s *monWatchSource) { s.fsid = daemonWatchOtherFSID })
 	daemonWatchEnded(t, w.stream.Done())
 	err := w.Stop()
-	if err == nil || !strings.Contains(err.Error(), "monmap FSID differs from the original cluster") || strings.Contains(err.Error(), daemonWatchOtherFSID) {
+	if !errors.Is(err, ErrInvalidRequest) || !errors.Is(err, errForeignFSID) || !strings.Contains(err.Error(), "watch monitors") || strings.Contains(err.Error(), daemonWatchOtherFSID) {
 		t.Fatalf("Stop = %v", err)
 	}
 	if rest := daemonWatchDrain(t, w); len(rest) != 1 || rest[0].Kind != WatchBaseline {
