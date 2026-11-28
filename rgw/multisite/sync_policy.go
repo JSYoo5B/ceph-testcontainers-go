@@ -1,12 +1,10 @@
 package multisite
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"reflect"
 	"regexp"
 	"slices"
@@ -15,14 +13,16 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
+
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/mutation"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/placement"
 
 	"github.com/google/uuid"
-	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -648,10 +648,8 @@ func (f *Fixture) syncPolicyAdmin(ctx context.Context, zone *rgwZoneState, group
 	if err := f.settleSyncWrite(ctx); err != nil {
 		return nil, err
 	}
-	argv := []string{"radosgw-admin", "--conf", "/etc/ceph/ceph.conf", "--keyring", "/etc/ceph/ceph.client.admin.keyring", "--realm-id", f.RealmID, "--zonegroup-id", f.topology.groupIDs[group], "--zone-id", zone.ID, "--format", "json"}
 	status := (len(args) >= 2 && args[0] == "sync" && args[1] == "status") || (len(args) >= 3 && args[0] == "bucket" && args[1] == "sync" && args[2] == "status")
-	data, err := syncNativeExecMode(ctx, zone.client, status, append(argv, args...)...)
-	return data, err
+	return syncNativeExecMode(ctx, zone.client, status, gwbase.CommandArgs(f.zoneScope(zone, group), args...))
 }
 
 // rgwNoSuchBucket is the whole stderr of radosgw-admin for a bucket the zone
@@ -674,42 +672,40 @@ type noSuchBucketError struct{ error }
 
 func (e noSuchBucketError) Unwrap() error { return e.error }
 
-func syncNativeExecMode(ctx context.Context, ctr testcontainers.Container, status bool, args ...string) ([]byte, error) {
+// syncNativeExecMode runs the scoped radosgw-admin command line argv in ctr,
+// a zone's CLI client, as gwbase.RunAdmin does, and returns its standard
+// output. A nonzero exit keeps its *ceph.NativeFailure but not its output in
+// the text; a status comparison that reported an error on standard error
+// fails.
+func syncNativeExecMode(ctx context.Context, ctr testcontainers.Container, status bool, argv []string) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if ctr == nil {
 		return nil, multisiteInvalid(errors.New("RGW native CLI container is unavailable"))
 	}
-	code, reader, err := ctr.Exec(ctx, args)
+	report, limit, err := gwbase.RunAdmin(ctx, nil, ctr, 0, argv)
 	if err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		return nil, clusterutil.Quiet(errors.New("RGW native command failed; output is redacted"), servicehook.ClassifyExec(ctx, err))
-	}
-	var stdout, stderr bytes.Buffer
-	if _, err := stdcopy.StdCopy(&stdout, &stderr, reader); err != nil {
-		return nil, clusterutil.Quiet(errors.New("RGW native command stream failed; output is redacted"), servicehook.ClassifyExec(ctx, err))
-	}
-	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if code != 0 {
+	if report.TimedOut {
+		return nil, gwbase.AdminReportFailure(report, limit)
+	}
+	if code := report.ExitCode; code != 0 {
 		err := clusterutil.Quiet(fmt.Errorf("RGW native command exited %d; output is redacted", code),
-			servicehook.NativeFailure(args[0], code, nil, stderr.Bytes()))
-		if rgwNoSuchBucketAnswer(code, stdout.Bytes(), stderr.Bytes()) {
+			servicehook.NativeFailure(argv[0], code, nil, report.Stderr))
+		if rgwNoSuchBucketAnswer(code, report.Stdout, report.Stderr) {
 			return nil, noSuchBucketError{err}
 		}
 		return nil, err
 	}
 	if status {
-		warnings := strings.ToLower(stderr.String())
+		warnings := strings.ToLower(string(report.Stderr))
 		if strings.Contains(warnings, "error") || strings.Contains(warnings, "failed") {
 			return nil, errors.New("RGW native sync comparison reported an error; output is redacted")
 		}
 	}
-	return stdout.Bytes(), nil
+	return report.Stdout, nil
 }
 
 func (g *SyncGroup) command(ctx context.Context, master *rgwZoneState, args ...string) ([]byte, error) {

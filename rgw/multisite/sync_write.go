@@ -1,7 +1,6 @@
 package multisite
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"time"
@@ -9,7 +8,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/mutation"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
-	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
 )
 
 // settleSyncWrite runs before policy readback: observing the desired value does
@@ -20,30 +19,29 @@ func (f *Fixture) settleSyncWrite(ctx context.Context) error {
 	return f.syncWrites.Wait(ctx)
 }
 
+// syncPolicyWrite runs a radosgw-admin write in zone's CLI client in
+// zonegroup group, as gwbase.RunAdmin does, under its own bound after the
+// caller cancels: only a reply of the supervisor establishes completion.
 func (f *Fixture) syncPolicyWrite(ctx context.Context, zone *rgwZoneState, group string, args ...string) ([]byte, error) {
 	if err := f.settleSyncWrite(ctx); err != nil {
 		return nil, err
 	}
-	argv := []string{"radosgw-admin", "--conf", "/etc/ceph/ceph.conf", "--keyring", "/etc/ceph/ceph.client.admin.keyring", "--realm-id", f.RealmID, "--zonegroup-id", f.topology.groupIDs[group], "--zone-id", zone.ID, "--format", "json"}
-	argv = append(argv, args...)
+	argv := gwbase.CommandArgs(f.zoneScope(zone, group), args...)
 	target := zone.client
 	var output []byte
 	err := mutation.Run(ctx, 2*time.Minute, func(runCtx context.Context) (bool, error) {
-		code, reader, err := target.Exec(runCtx, argv)
+		report, limit, err := gwbase.RunAdmin(runCtx, nil, target, 0, argv)
 		if err != nil {
-			return false, errors.New("RGW sync policy transport response was lost; output is redacted")
+			// The runner's errors carry no native output.
+			return false, err
 		}
-		var stdout, stderr bytes.Buffer
-		if reader == nil {
-			return false, errors.New("RGW sync policy response stream is missing")
+		if report.TimedOut {
+			return false, gwbase.AdminReportFailure(report, limit)
 		}
-		if _, err := stdcopy.StdCopy(&stdout, &stderr, reader); err != nil {
-			return false, errors.New("RGW sync policy stream response was lost; output is redacted")
+		if report.ExitCode != 0 {
+			return true, clusterutil.Quiet(errors.New("RGW sync policy command failed; output is redacted"), servicehook.NativeFailure(argv[0], report.ExitCode, nil, report.Stderr))
 		}
-		if code != 0 {
-			return true, clusterutil.Quiet(errors.New("RGW sync policy command failed; output is redacted"), servicehook.NativeFailure("radosgw-admin", code, nil, stderr.Bytes()))
-		}
-		output = stdout.Bytes()
+		output = report.Stdout
 		return true, nil
 	})
 	if err = f.syncWrites.Record(err); err != nil {

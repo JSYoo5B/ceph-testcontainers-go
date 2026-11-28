@@ -2,7 +2,6 @@ package rgw
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -144,32 +143,24 @@ func startGatewayOn(ctx context.Context, c *ceph.Container, config Config, reser
 	if config.SkipUserCreation {
 		return rgw, nil
 	}
-	args := []string{"radosgw-admin", "--keyring", "/etc/ceph/ceph.client.admin.keyring"}
-	for _, setting := range []struct{ flag, value string }{{"--rgw-realm", config.Realm}, {"--rgw-zonegroup", config.Zonegroup}, {"--rgw-zone", config.Zone}} {
-		if setting.value != "" {
-			args = append(args, setting.flag, setting.value)
-		}
+	if rgw.AccessKey, rgw.SecretKey, err = createGatewayUser(ctx, c, ctr, config); err != nil {
+		return rgw, err
 	}
-	args = append(args, "user", "create", "--uid", "tc-"+uuid.NewString(), "--display-name", "Testcontainers", "--format", "json")
-	user, err := servicehook.Command(ctx, ctr, args...)
-	if err != nil {
-		return rgw, fmt.Errorf("create RGW S3 user for gateway %s failed", config.Name)
-	}
-	var credentials struct {
-		Keys []struct {
-			AccessKey string `json:"access_key"`
-			SecretKey string `json:"secret_key"`
-		} `json:"keys"`
-	}
-	if err := json.Unmarshal(user, &credentials); err != nil {
-		return rgw, fmt.Errorf("decode RGW S3 credentials: %w", err)
-	}
-	if len(credentials.Keys) != 1 || credentials.Keys[0].AccessKey == "" || credentials.Keys[0].SecretKey == "" {
-		return rgw, fmt.Errorf("RGW did not generate one S3 access/secret key pair")
-	}
-	rgw.AccessKey = credentials.Keys[0].AccessKey
-	rgw.SecretKey = credentials.Keys[0].SecretKey
 	return rgw, nil
+}
+
+// createGatewayUser creates the gateway's ordinary S3 test user with
+// radosgw-admin in ctr, the gateway container of c, as gwbase.AdminPrefix
+// runs it, and returns the user's key pair. A failure keeps its cause, ctx's
+// error included, without the native output.
+func createGatewayUser(ctx context.Context, c *ceph.Container, ctr testcontainers.Container, config Config) (accessKey, secretKey string, err error) {
+	argv := gwbase.AdminArgv(gwbase.Scope{Realm: config.Realm, Zonegroup: config.Zonegroup, Zone: config.Zone},
+		"user", "create", "--uid", "tc-"+uuid.NewString(), "--display-name", "Testcontainers", "--format", "json")
+	user, _, err := gwbase.AdminPrefix(ctx, c, ctr, 0, argv)
+	if err != nil {
+		return "", "", fmt.Errorf("create RGW S3 user for gateway %s: %w", config.Name, err)
+	}
+	return gwbase.CreatedKeyPair(user)
 }
 
 func normalizeRGWConfig(config Config) (Config, error) {
