@@ -19,7 +19,7 @@ import (
 // fake's view of which containers exist. Its answers are synthetic: it says
 // nothing about how a daemon creates, starts, stops or removes a container.
 type monStoreGenerationsFake struct {
-	docker      *monStoreDockerFake
+	docker      *dockerFake
 	events      []string
 	launches    []Launch
 	images      []string
@@ -183,7 +183,7 @@ func (g *monStoreGenerationsFake) Remove(_ context.Context, id string) error {
 	return nil
 }
 
-func monStoreGenerationFixture(t *testing.T) (*Volume, *monStoreDockerFake, *monStoreGenerationsFake) {
+func monStoreGenerationFixture(t *testing.T) (*Volume, *dockerFake, *monStoreGenerationsFake) {
 	t.Helper()
 	_, r, d := newMonStoreFixture()
 	if err := r.Create(t.Context()); err != nil {
@@ -194,7 +194,7 @@ func monStoreGenerationFixture(t *testing.T) (*Volume, *monStoreDockerFake, *mon
 
 // monStoreRunningFixture has a first generation, from image "old", that
 // reached its ready check.
-func monStoreRunningFixture(t *testing.T) (*Volume, *monStoreDockerFake, *monStoreGenerationsFake) {
+func monStoreRunningFixture(t *testing.T) (*Volume, *dockerFake, *monStoreGenerationsFake) {
 	t.Helper()
 	r, d, g := monStoreGenerationFixture(t)
 	if _, err := r.StartGeneration(t.Context(), g, "old"); err != nil {
@@ -247,13 +247,13 @@ func TestMonStoreReplaceRemovesTheOldContainerThenStartsTheNewImageOnTheSameVolu
 }
 
 func TestMonStoreReplaceDoesNotStartWhileTheOldContainerMayStillUseTheVolume(t *testing.T) {
-	cases := map[string]func(d *monStoreDockerFake, g *monStoreGenerationsFake){
-		"remove fails": func(_ *monStoreDockerFake, g *monStoreGenerationsFake) {
+	cases := map[string]func(d *dockerFake, g *monStoreGenerationsFake){
+		"remove fails": func(_ *dockerFake, g *monStoreGenerationsFake) {
 			g.removeErr = errors.New("daemon unreachable")
 		},
-		"remove reports success":   func(_ *monStoreDockerFake, g *monStoreGenerationsFake) { g.removeLies = true },
-		"another container mounts": func(d *monStoreDockerFake, _ *monStoreGenerationsFake) { d.users = []string{"stray"} },
-		"list fails":               func(d *monStoreDockerFake, _ *monStoreGenerationsFake) { d.listErr = errors.New("daemon unreachable") },
+		"remove reports success":   func(_ *dockerFake, g *monStoreGenerationsFake) { g.removeLies = true },
+		"another container mounts": func(d *dockerFake, _ *monStoreGenerationsFake) { d.users = []string{"stray"} },
+		"list fails":               func(d *dockerFake, _ *monStoreGenerationsFake) { d.listErr = errors.New("daemon unreachable") },
 	}
 	for name, apply := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -283,10 +283,10 @@ func TestMonStoreReplaceDoesNotStartWhileTheOldContainerMayStillUseTheVolume(t *
 }
 
 func TestMonStoreReplaceChecksTheNextGenerationBeforeItTouchesTheOldOne(t *testing.T) {
-	cases := map[string]func(r *Volume, d *monStoreDockerFake){
-		"volume missing": func(_ *Volume, d *monStoreDockerFake) { d.inspectErr = errdefs.ErrNotFound },
-		"volume foreign": func(_ *Volume, d *monStoreDockerFake) { d.stored.Labels[monStoreOwnerLabel] = "foreign" },
-		"volume changed": func(_ *Volume, d *monStoreDockerFake) { d.stored.CreatedAt = "replaced-volume" },
+	cases := map[string]func(r *Volume, d *dockerFake){
+		"volume missing": func(_ *Volume, d *dockerFake) { d.inspectErr = errdefs.ErrNotFound },
+		"volume foreign": func(_ *Volume, d *dockerFake) { d.stored.Labels[ownerLabel] = "foreign" },
+		"volume changed": func(_ *Volume, d *dockerFake) { d.stored.CreatedAt = "replaced-volume" },
 	}
 	for name, apply := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -415,13 +415,13 @@ func TestMonStoreReadyNeedsAFreshStoreWithAKnownAttachment(t *testing.T) {
 
 func TestMonStoreFirstGenerationRecordsItsAddressAndLaterOnesAreCreatedForIt(t *testing.T) {
 	r, _, g := monStoreRunningFixture(t)
-	if r.Endpoint == nil || !r.Endpoint.Equal(monStoreFakeAddress) || g.launches[0].Endpoint != nil {
+	if r.Endpoint == nil || !r.Endpoint.equal(monStoreFakeAddress) || g.launches[0].Endpoint != nil {
 		t.Fatalf("recorded %+v, first launch %+v", r.Endpoint, g.launches[0].Endpoint)
 	}
 	if _, err := r.ReplaceGeneration(t.Context(), g, "new"); err != nil {
 		t.Fatal(err)
 	}
-	if l := g.launches[1]; l.Endpoint == nil || !l.Endpoint.Equal(monStoreFakeAddress) || l.Endpoint == r.Endpoint {
+	if l := g.launches[1]; l.Endpoint == nil || !l.Endpoint.equal(monStoreFakeAddress) || l.Endpoint == r.Endpoint {
 		t.Fatalf("the replacement was not created for a copy of the recorded address: %+v", l.Endpoint)
 	}
 }
@@ -493,7 +493,7 @@ func TestMonStoreReplacementThatBoundAnotherAddressIsReportedAndNotRecorded(t *t
 	if id, err := r.ReplaceGeneration(t.Context(), g, "new"); err == nil || id != "ctr-2" {
 		t.Fatalf("%q %v", id, err)
 	}
-	if !r.Endpoint.Equal(monStoreFakeAddress) {
+	if !r.Endpoint.equal(monStoreFakeAddress) {
 		t.Fatalf("the recorded address was replaced: %+v", r.Endpoint)
 	}
 }
@@ -577,7 +577,7 @@ func TestMonStorePartialHoldWhoseReleaseFailsIsRetainedForRetry(t *testing.T) {
 
 // monStoreHeldFixture leaves a store whose old generation is removed and whose
 // hold is retained after a failed release, in a state that owns its record.
-func monStoreHeldFixture(t *testing.T) (*State, *Volume, *monStoreDockerFake, *monStoreGenerationsFake) {
+func monStoreHeldFixture(t *testing.T) (*State, *Volume, *dockerFake, *monStoreGenerationsFake) {
 	t.Helper()
 	st, r, d := newMonStoreFixture()
 	if err := r.Create(t.Context()); err != nil {
@@ -700,7 +700,7 @@ func TestMonStoreEndpointValidation(t *testing.T) {
 	a := Endpoint{IP: "192.0.2.10", Ports: []int{3300, 6789}}
 	b := a.clone()
 	b.Ports[0] = 1
-	if a.Ports[0] != 3300 || a.Equal(b) || a.Equal(Endpoint{IP: "192.0.2.10", Ports: []int{6789, 3300}}) {
+	if a.Ports[0] != 3300 || a.equal(b) || a.equal(Endpoint{IP: "192.0.2.10", Ports: []int{6789, 3300}}) {
 		t.Fatal("clone or equal ignore the ports")
 	}
 }
@@ -743,7 +743,7 @@ var monStoreGenerationFiles = []string{monStoreGenerationFile, "address.go"}
 
 // monStoreGenerationSymbols are the names the file adds. Production code
 // outside it mentions them only where monStoreGenerationCallers pins it.
-var monStoreGenerationSymbols = []string{"Generations", "checkMonStoreGenerations", "StartGeneration", "StopGeneration", "ReplaceGeneration",
+var monStoreGenerationSymbols = []string{"Generations", "checkGenerations", "StartGeneration", "StopGeneration", "ReplaceGeneration",
 	"observeAddress", "holdAddress"}
 
 // monStoreGenerationCallers are the production uses of the path: the first
@@ -803,7 +803,7 @@ func TestMonStoreGenerationsHaveOnlyThePinnedProductionCallers(t *testing.T) {
 }
 
 // releaseAddressHold is the one symbol of the path that production cleanup
-// reaches: monStoreVolume.release calls it, before the volume or the attachment
+// reaches: Volume.release calls it, before the volume or the attachment
 // are looked at, and nothing else outside the two files does.
 func TestMonStoreAddressHoldIsReleasedByStoreCleanupBeforeTheVolume(t *testing.T) {
 	var callers []string
@@ -857,7 +857,7 @@ func TestMonStoreGenerationsGuardDetectsACaller(t *testing.T) {
 // TestMonStoreGenerationsAddNoLockAndKeepTheirOrder pins that the files import
 // no sync package, that the container side and the hold are called only from
 // their pinned methods, that replaceGeneration checks, then stops, then starts,
-// and that startGeneration holds, dispatches, creates, releases the hold, starts,
+// and that StartGeneration holds, dispatches, creates, releases the hold, starts,
 // waits and observes, in that order.
 func TestMonStoreGenerationsAddNoLockAndKeepTheirOrder(t *testing.T) {
 	files := parseProductionFiles(t)
@@ -912,7 +912,7 @@ func TestMonStoreGenerationsAddNoLockAndKeepTheirOrder(t *testing.T) {
 	}
 	first := func(name string) token.Pos {
 		if len(start[name]) == 0 {
-			t.Fatalf("startGeneration does not call %s", name)
+			t.Fatalf("StartGeneration does not call %s", name)
 		}
 		return start[name][0]
 	}
@@ -925,7 +925,7 @@ func TestMonStoreGenerationsAddNoLockAndKeepTheirOrder(t *testing.T) {
 	order := []token.Pos{first("holdAddress"), first("dispatch"), first("Create"), releaseAfterCreate, first("Start"), first("WaitReady"), first("observeAddress")}
 	for i := 1; i < len(order); i++ {
 		if !order[i-1].IsValid() || order[i-1] >= order[i] {
-			t.Fatalf("startGeneration must hold, dispatch, create, release, start, wait, observe: %v", order)
+			t.Fatalf("StartGeneration must hold, dispatch, create, release, start, wait, observe: %v", order)
 		}
 	}
 }

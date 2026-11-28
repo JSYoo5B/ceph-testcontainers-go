@@ -231,10 +231,10 @@ the start of the new one.
 
 | Caller | Primitive | Container side |
 | --- | --- | --- |
-| `Run` (`runMonitor`, MON a) | `begin`, `create`, `StartGeneration` (format) | `mon.sh` recipe of `firstMonitorOptions` |
-| `AddMonitor` and the initial MONs (`startJoiningMonitor`) | `begin`, `create`, `StartGeneration` (format) | `mon-join.sh` recipe of `monitorJoinOptions` |
+| `Run` (`runMonitor`, MON a) | `State.Begin`, `Volume.Create`, `StartGeneration` (format) | `mon.sh` recipe of `firstMonitorOptions` |
+| `AddMonitor` and the initial MONs (`startJoiningMonitor`) | `State.Begin`, `Volume.Create`, `StartGeneration` (format) | `mon-join.sh` recipe of `monitorJoinOptions` |
 | `MonitorContainer.Replace` (`replaceMonitor`) | `ReplaceGeneration`: checks, `StopGeneration`, `StartGeneration` (require) | `mon-join.sh` recipe with fresh join material, for MON a too |
-| `MonitorContainer.Remove` (`retireMonitor`) | `retire`: release once nothing mounts the volume, then forget the record | none |
+| `MonitorContainer.Remove` (`retireMonitor`) | `State.Retire`: release once nothing mounts the volume, then forget the record | none |
 | `Terminate` | `ReleaseStores`, `RetryStores` | none |
 
 `monitorGenerations` (`ceph/mon_store_container.go`, with the host half in

@@ -9,6 +9,17 @@ import (
 	"testing"
 )
 
+// count returns the number of published records.
+func (s *State) count() int { return len(s.records) }
+
+// volumeName returns the volume the MON mounts, or "" without a record.
+func (s *State) volumeName(mon string) string {
+	if r := s.records[mon]; r != nil {
+		return r.name
+	}
+	return ""
+}
+
 func TestMonStoreStateBeginPublishesOneRecordPerMON(t *testing.T) {
 	var s State
 	if _, err := s.Begin(""); err == nil || s.count() != 0 {
@@ -38,7 +49,7 @@ func TestMonStoreStateBeginPublishesOneRecordPerMON(t *testing.T) {
 
 func TestMonStoreStateWiresTheDockerSeamAtBegin(t *testing.T) {
 	s, r, d := newMonStoreFixture()
-	if client, err := r.client(t.Context()); err != nil || client != monStoreDocker(d) {
+	if client, err := r.client(t.Context()); err != nil || client != volumeDocker(d) {
 		t.Fatalf("begin did not wire the Docker seam: %v", err)
 	}
 	_ = s
@@ -75,8 +86,8 @@ func TestMonStoreStateDiscardFreshForgetsOnlyAfterSuccess(t *testing.T) {
 }
 
 func TestMonStoreStateReleaseStagesForgetOnlyAfterSuccessAndKeepTheOthers(t *testing.T) {
-	d := &monStoreDockerFake{existing: map[string]bool{}}
-	s := &State{monDocker: func(context.Context) (monStoreDocker, error) { return d, nil }}
+	d := &dockerFake{existing: map[string]bool{}}
+	s := &State{monDocker: func(context.Context) (volumeDocker, error) { return d, nil }}
 	// Two unrequested records settle without Docker; one record with a live
 	// container does not.
 	for _, mon := range []string{"c", "a", "b"} {
@@ -91,7 +102,7 @@ func TestMonStoreStateReleaseStagesForgetOnlyAfterSuccessAndKeepTheOthers(t *tes
 	live.createRequested = true
 	live.createdAt = "synthetic-created-identity"
 	d.stored.Name, d.stored.Driver, d.stored.CreatedAt = live.name, "local", "synthetic-created-identity"
-	d.stored.Labels = map[string]string{monStoreOwnerLabel: live.owner, monStoreMonLabel: "b"}
+	d.stored.Labels = map[string]string{ownerLabel: live.owner, monLabel: "b"}
 
 	err := s.ReleaseStores(t.Context())
 	if err == nil || s.count() != 1 || s.Store("b") != live || d.removals != 0 {
@@ -111,7 +122,7 @@ func TestMonStoreStateReleaseStagesForgetOnlyAfterSuccessAndKeepTheOthers(t *tes
 	}
 	// An empty state returns previous untouched and opens no client.
 	opened := 0
-	empty := &State{monDocker: func(context.Context) (monStoreDocker, error) { opened++; return d, nil }}
+	empty := &State{monDocker: func(context.Context) (volumeDocker, error) { opened++; return d, nil }}
 	previous := errors.New("earlier failure")
 	if got := empty.RetryStores(t.Context(), previous); got != previous || opened != 0 {
 		t.Fatalf("retry of an empty state: %v", got)
@@ -122,8 +133,8 @@ func TestMonStoreStateReleaseStagesForgetOnlyAfterSuccessAndKeepTheOthers(t *tes
 }
 
 func TestMonStoreStateReleaseOrderIsByMONName(t *testing.T) {
-	d := &monStoreDockerFake{existing: map[string]bool{}}
-	s := &State{monDocker: func(context.Context) (monStoreDocker, error) { return d, nil }}
+	d := &dockerFake{existing: map[string]bool{}}
+	s := &State{monDocker: func(context.Context) (volumeDocker, error) { return d, nil }}
 	for _, mon := range []string{"c", "a", "b"} {
 		r, _ := s.Begin(mon)
 		r.Attachment = &Attachment{ID: "ctr-" + mon}
