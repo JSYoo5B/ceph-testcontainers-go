@@ -325,9 +325,9 @@ func TestFaultRegistryAccessorsReadWhatTheCallersNeed(t *testing.T) {
 		t.Fatalf("handles = %v", h)
 	}
 	// A pause and a delay target a container; a blocklist entry never does.
-	delay, _, _ := r.reserve(ctx, faultNetworkDelay, "public/abc")
+	delay, _, _ := r.reserve(ctx, faultNetworkProfile, "public/abc")
 	r.settle(delay, "", "d", nil, func(context.Context) (bool, error) { return false, nil })
-	if name, found, err := r.openInstanceFault(ctx, "abc"); !found || err != nil || name != "network delay" {
+	if name, found, err := r.openInstanceFault(ctx, "abc"); !found || err != nil || name != "network profile" {
 		t.Fatalf("openInstanceFault = %q %v %v", name, found, err)
 	}
 	if _, found, _ := r.openInstanceFault(ctx, "bc"); found {

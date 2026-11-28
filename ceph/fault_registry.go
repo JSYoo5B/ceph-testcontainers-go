@@ -14,7 +14,7 @@ import (
 type faultKind int
 
 const (
-	faultNetworkDelay faultKind = iota + 1
+	faultNetworkProfile faultKind = iota + 1
 	faultNetworkInterruption
 	faultContainerPause
 	faultBlocklist
@@ -79,7 +79,7 @@ var faultKinds = map[faultKind]faultKindSpec{
 	faultBlockIO: {phase: faultStorage, undone: "restore block I/O fault", refuse: func(bool) error {
 		return invalidRequest("this block backend already belongs to the cluster")
 	}},
-	faultNetworkDelay: {phase: faultShaping, undone: "restore network delay", refuse: func(reserved bool) error {
+	faultNetworkProfile: {phase: faultShaping, undone: "restore network profile", refuse: func(reserved bool) error {
 		if reserved {
 			return invalidRequest("another network delay of this endpoint is being applied")
 		}

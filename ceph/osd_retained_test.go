@@ -287,7 +287,7 @@ func TestDetachRefusesBeforeStoppingTheOSD(t *testing.T) {
 				state.UUID = osdLifecycleForeignUUID
 				f.control.native[3] = state
 			case "network delay":
-				f.cluster.faults.entries = map[faultID]*faultEntry{{kind: faultNetworkDelay, key: "public/osd-lifecycle-3"}: {handle: struct{}{}}}
+				f.cluster.faults.entries = map[faultID]*faultEntry{{kind: faultNetworkProfile, key: "public/osd-lifecycle-3"}: {handle: struct{}{}}}
 			case "container pause":
 				f.cluster.faults.entries = map[faultID]*faultEntry{{kind: faultContainerPause, key: "osd-lifecycle-3"}: {handle: struct{}{}}}
 			case "removal pending":
@@ -309,7 +309,7 @@ func TestDetachRefusesBeforeStoppingTheOSD(t *testing.T) {
 	}
 	// A completed delay lease no longer targets the container.
 	f := newRetainedFixture(t)
-	f.cluster.faults.entries = map[faultID]*faultEntry{{kind: faultNetworkDelay, key: "public/osd-lifecycle-3"}: {handle: struct{}{},
+	f.cluster.faults.entries = map[faultID]*faultEntry{{kind: faultNetworkProfile, key: "public/osd-lifecycle-3"}: {handle: struct{}{},
 		complete: func(context.Context) (bool, error) { return true, nil }}}
 	if _, err := osdHandle(t, t.Context(), f.cluster, 3).Detach(t.Context()); err != nil {
 		t.Fatal("completed delay refused detach:", err)

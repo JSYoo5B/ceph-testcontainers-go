@@ -78,6 +78,9 @@ func validateInjectObjectName(name string) error {
 //
 //purpose:condition,native
 func InjectObjectDataError(ctx context.Context, c *ceph.Container, pool, object string, osdID int) error {
+	if err := requireCluster(c, "InjectObjectDataError"); err != nil {
+		return err
+	}
 	if !faulthook.BlueStore(c) {
 		return nshelper.InvalidRequest("InjectObjectDataError needs BlueStore OSDs")
 	}

@@ -64,6 +64,9 @@ func Pause(ctx context.Context, c *ceph.Container, ctr testcontainers.Container)
 //
 //testdouble:dependency-port
 func pauseContainerInCluster(ctx context.Context, c *ceph.Container, ctr testcontainers.Container, connect func(context.Context) (containerPauseClient, error)) (pause *PauseLease, err error) {
+	if err := requireCluster(c, "container pause"); err != nil {
+		return nil, err
+	}
 	err = faulthook.WithTopology(ctx, c, func() error {
 		if faulthook.Closed(c) {
 			_, terminated := faulthook.Terminated()
@@ -128,11 +131,12 @@ func (pause *PauseLease) isComplete(ctx context.Context) (bool, error) {
 
 // Resume thaws the container. A removed, stopped or already unpaused container
 // needs no further action, so it completes the handle without starting it.
+// A nil lease has nothing to resume.
 //
 //purpose:condition,lifetime
 func (pause *PauseLease) Resume(ctx context.Context) error {
 	if pause == nil {
-		return errors.New("container pause is unavailable")
+		return nil
 	}
 	if err := lockMutex(ctx, &pause.mu); err != nil {
 		return err

@@ -23,7 +23,7 @@ func init() {
 // overlap refusal and Terminate message of each stay fixed in faultKinds.
 var faultKindNames = map[string]faultKind{
 	"BlockIO":             faultBlockIO,
-	"NetworkDelay":        faultNetworkDelay,
+	"NetworkProfile":      faultNetworkProfile,
 	"NetworkInterruption": faultNetworkInterruption,
 	"ContainerPause":      faultContainerPause,
 	"CPULimit":            faultCPULimit,

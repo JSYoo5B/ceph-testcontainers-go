@@ -75,7 +75,7 @@ type hooks interface {
 }
 
 func get() hooks {
-	h, ok := hookreg.Value.(hooks)
+	h, ok := hookreg.Service.(hooks)
 	if !ok {
 		panic("servicehook: package ceph did not register its hooks")
 	}

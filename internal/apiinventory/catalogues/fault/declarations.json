@@ -27,21 +27,21 @@
     {
       "current": "fault.ApplyLinkProfile",
       "kind": "function",
-      "signature": "func(ctx context.Context, ctr testcontainers.Container, network string, delay NetworkProfile) (*NetworkProfileLease, error)",
+      "signature": "func(ctx context.Context, ctr testcontainers.Container, network string, profile NetworkProfile) (*NetworkProfileLease, error)",
       "proposed": "fault.ApplyLinkProfile",
       "decision": "baseline"
     },
     {
       "current": "fault.ApplyNetworkProfile",
       "kind": "function",
-      "signature": "func(ctx context.Context, c *ceph.Container, target testcontainers.Container, delay NetworkProfile) (*NetworkProfileLease, error)",
+      "signature": "func(ctx context.Context, c *ceph.Container, target testcontainers.Container, profile NetworkProfile) (*NetworkProfileLease, error)",
       "proposed": "fault.ApplyNetworkProfile",
       "decision": "baseline"
     },
     {
       "current": "fault.ApplyZoneProfile",
       "kind": "function",
-      "signature": "func(ctx context.Context, c *ceph.Container, zone string, delay NetworkProfile) (*NetworkProfileLease, error)",
+      "signature": "func(ctx context.Context, c *ceph.Container, zone string, profile NetworkProfile) (*NetworkProfileLease, error)",
       "proposed": "fault.ApplyZoneProfile",
       "decision": "baseline"
     },

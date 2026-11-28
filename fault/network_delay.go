@@ -2,7 +2,6 @@ package fault
 
 import (
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/faulthook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/netem"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/nshelper"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/containerd/errdefs"
@@ -63,17 +63,7 @@ const MaxNetworkQueueLimit = 100000
 
 // String formats the rate in bit/s with the largest decimal prefix that
 // divides it.
-func (r NetworkRate) String() string {
-	for _, unit := range []struct {
-		size   NetworkRate
-		suffix string
-	}{{GigabitPerSecond, "Gbit/s"}, {MegabitPerSecond, "Mbit/s"}, {KilobitPerSecond, "Kbit/s"}} {
-		if r >= unit.size && r%unit.size == 0 {
-			return strconv.FormatUint(uint64(r/unit.size), 10) + unit.suffix
-		}
-	}
-	return strconv.FormatUint(uint64(r), 10) + "bit/s"
-}
+func (r NetworkRate) String() string { return netem.FormatRate(uint64(r)) }
 
 // NetworkPacketFault is one of netem's packet faults, for NetworkProfile's
 // Reorder, Duplicate and Corrupt: the percentage of the selected packets
@@ -98,29 +88,17 @@ func (f NetworkPacketFault) IsZero() bool {
 
 // String formats the fault as tc's arguments do: the percentage, and the
 // correlation when it is not zero.
-func (f NetworkPacketFault) String() string {
-	text := strconv.FormatFloat(f.Percent, 'f', -1, 64) + "%"
-	if f.Correlation != 0 {
-		text += " " + strconv.FormatFloat(f.Correlation, 'f', -1, 64) + "%"
-	}
-	return text
-}
-
-// matches reports whether the kernel's fault is the requested one: the
-// kernel keeps each percentage as a 32-bit probability.
-func (f NetworkPacketFault) matches(kernel NetworkPacketFault) bool {
-	return math.Abs(f.Percent-kernel.Percent) <= 1e-4 && math.Abs(f.Correlation-kernel.Correlation) <= 1e-4
-}
+func (f NetworkPacketFault) String() string { return netem.Fault(f).String() }
 
 // validate checks a fault's percentages; name is its NetworkProfile field.
 func (f NetworkPacketFault) validate(name string) error {
 	switch {
 	case math.IsNaN(f.Percent) || f.Percent < 0 || f.Percent > 100:
-		return nshelper.InvalidRequest("network delay %s.Percent must be a percentage from 0 to 100", name)
+		return nshelper.InvalidRequest("network profile %s.Percent must be a percentage from 0 to 100", name)
 	case math.IsNaN(f.Correlation) || f.Correlation < 0 || f.Correlation > 100:
-		return nshelper.InvalidRequest("network delay %s.Correlation must be a percentage from 0 to 100", name)
+		return nshelper.InvalidRequest("network profile %s.Correlation must be a percentage from 0 to 100", name)
 	case f.Percent == 0 && f.Correlation != 0:
-		return nshelper.InvalidRequest("network delay %s.Correlation needs a Percent", name)
+		return nshelper.InvalidRequest("network profile %s.Correlation needs a Percent", name)
 	}
 	return nil
 }
@@ -134,17 +112,17 @@ var (
 	// tc without netem, or, for a Rate, a tc that cannot parse netem's rate,
 	// or for a Reorder, Duplicate or Corrupt, a tc that cannot parse that
 	// fault with a correlation. It belongs to ceph.ErrImageCapability.
-	ErrNetemImageUnsupported error = nshelper.Category("the netem helper image does not meet the netem contract", ceph.ErrImageCapability)
+	ErrNetemImageUnsupported = netem.ErrImageUnsupported
 	// ErrNetemPermissionDenied reports an engine that did not give the helper
 	// NET_ADMIN, or refused a qdisc change for lack of it. It belongs to
 	// ceph.ErrEnvironmentUnavailable.
-	ErrNetemPermissionDenied error = nshelper.Category("the netem helper has no NET_ADMIN", ceph.ErrEnvironmentUnavailable)
+	ErrNetemPermissionDenied = netem.ErrPermissionDenied
 	// ErrNetemKernelUnsupported reports a kernel without the netem qdisc,
-	// for a delay with peers without the prio qdisc or the u32 classifier, or
+	// for a profile with peers without the prio qdisc or the u32 classifier, or
 	// for a Rate a netem qdisc that does not keep the rate, or for a Reorder,
 	// Duplicate or Corrupt one that does not keep that fault, its correlation
 	// or, for a Reorder, a gap of 1. It belongs to ceph.ErrEnvironmentUnavailable.
-	ErrNetemKernelUnsupported error = nshelper.Category("the engine's kernel lacks a qdisc or classifier that the delay needs", ceph.ErrEnvironmentUnavailable)
+	ErrNetemKernelUnsupported = netem.ErrKernelUnsupported
 )
 
 // NetworkProfile configures netem shaping for ApplyNetworkProfile or ApplyLinkProfile.
@@ -152,7 +130,7 @@ type NetworkProfile struct {
 	// HelperImage is the netem helper image: NetemHelperImage, or another image
 	// that meets contract 1 of the netem extension. Required.
 	HelperImage string
-	// Plane selects the bridge whose endpoint of the target is delayed.
+	// Plane selects the bridge whose endpoint of the target is shaped.
 	Plane ceph.NetworkPlane
 	// Delay is added to every packet that leaves the target through that
 	// endpoint: at least 1ms and at most MaxNetworkDelay, in whole
@@ -162,24 +140,26 @@ type NetworkProfile struct {
 	// Jitter varies each packet's delay uniformly within ±Jitter. It is at
 	// most Delay, in whole microseconds.
 	Jitter time.Duration
-	// Peer, when set, limits the delay to the packets that the target sends
+	// Peer, when set, limits the profile to the packets that the target sends
 	// to this address through the endpoint; every other packet leaves
-	// without delay. It is an IPv4 address, or an IPv6 address for an
+	// unshaped. Peer and PeerPort are the one-peer form of Peers: they select
+	// what Peers with the one entry {Peer, PeerPort} selects, and are checked
+	// by the same rules. It is an IPv4 address, or an IPv6 address for an
 	// endpoint that has one, such as a daemon's address from
 	// DaemonAddresses on the same plane. Only packets that leave the target
 	// are selected, unless Direction also shapes the peer's side.
 	Peer netip.Addr
-	// PeerPort, with Peer, limits the delay further to TCP packets to this
+	// PeerPort, with Peer, limits the profile further to TCP packets to this
 	// destination port, such as one of the peer's Messenger ports, and on
-	// the peer's side of an Inbound delay to its packets from that port. Zero
+	// the peer's side of an Inbound profile to its packets from that port. Zero
 	// selects every packet to Peer. An IPv6 packet with extension headers
 	// before its TCP header is not selected.
 	PeerPort uint16
-	// Peers, instead of Peer and PeerPort, limits the delay to the packets
+	// Peers, instead of Peer and PeerPort, limits the profile to the packets
 	// that the target sends to any of these peers, each with its own
 	// optional TCP destination port, such as several OSDs of a daemon.
-	// Every packet that one of them selects gets the same delay and loss;
-	// every other packet leaves without delay. It holds at most
+	// Every packet that one of them selects gets the same shaping; every
+	// other packet leaves unshaped. It holds at most
 	// MaxNetworkPeers distinct entries, of either family.
 	Peers []NetworkPeer
 	// Direction selects which side of the paths to the selected peers is
@@ -191,7 +171,7 @@ type NetworkProfile struct {
 	// (the zero value), or ConnectionSetup, only TCP segments with SYN set.
 	// ConnectionSetup needs a Peer or Peers; see NetworkPhase.
 	Phase NetworkPhase
-	// Loss drops this percentage of the packets that the delay applies to,
+	// Loss drops this percentage of the packets that the profile applies to,
 	// at random and independently, from more than 0 to 100. With 100 every
 	// selected packet is dropped: with a Peer or Peers, the target's packets
 	// to those peers, and only those, never arrive. Zero drops nothing.
@@ -211,9 +191,10 @@ type NetworkProfile struct {
 	// BothDirections apply the same Rate at each peer's endpoint. What an application
 	// achieves through it is less, and is for the caller to measure; the
 	// status's Rate and counters are configuration and counts, not a
-	// throughput. The preflight adds and removes a netem qdisc with a rate on
-	// its loopback and checks what the kernel reports, so a tc or kernel
-	// without netem's rate is refused before the target changes.
+	// throughput. Before it changes the target, ApplyNetworkProfile adds and
+	// removes a netem qdisc with a rate on the loopback of its separate,
+	// network-less helper and checks what the kernel reports, so a tc or
+	// kernel without netem's rate is refused before the target changes.
 	Rate NetworkRate
 	// QueueLimit, with a Rate, is the netem queue in packets, from 1 to
 	// MaxNetworkQueueLimit; zero means DefaultNetworkQueueLimit.
@@ -241,29 +222,6 @@ type NetworkProfile struct {
 	// netem decides per queued packet, for every fault: a percentage of
 	// packets is not a percentage of TCP segments.
 	Corrupt NetworkPacketFault
-}
-
-// namedFault is one of a delay's packet faults with its netem keyword.
-type namedFault struct {
-	name  string
-	fault NetworkPacketFault
-}
-
-// packetFaults are the delay's packet faults, set or not, in tc's order.
-func (d NetworkProfile) packetFaults() []namedFault {
-	return []namedFault{{"reorder", d.Reorder}, {"duplicate", d.Duplicate}, {"corrupt", d.Corrupt}}
-}
-
-// requestedFaults are the netem keywords of the delay's packet faults that
-// are set, in tc's order.
-func (d NetworkProfile) requestedFaults() []string {
-	var names []string
-	for _, fault := range d.packetFaults() {
-		if !fault.fault.IsZero() {
-			names = append(names, fault.name)
-		}
-	}
-	return names
 }
 
 // NetworkDirection is the side of a profile's selected paths that it shapes.
@@ -330,7 +288,7 @@ func (p NetworkPhase) String() string {
 	return fmt.Sprintf("NetworkPhase(%d)", int(p))
 }
 
-// NetworkPeer selects the packets that a delay's target sends to Addr, an
+// NetworkPeer selects the packets that a profile's target sends to Addr, an
 // IPv4 address or, for an endpoint that has one, an IPv6 address. With a
 // Port, only TCP packets to that destination port are selected; an IPv6
 // packet with extension headers before its TCP header is not.
@@ -339,7 +297,7 @@ type NetworkPeer struct {
 	Port uint16
 }
 
-// selection is the delay's peers: Peer and PeerPort as one entry, or Peers.
+// selection is the profile's peers: Peer and PeerPort as one entry, or Peers.
 func (d NetworkProfile) selection() []NetworkPeer {
 	if d.Peer.IsValid() {
 		return []NetworkPeer{{Addr: d.Peer, Port: d.PeerPort}}
@@ -350,16 +308,16 @@ func (d NetworkProfile) selection() []NetworkPeer {
 // NetworkProfileStatus is what the kernel reports for a profile's interface,
 // read through the helper. It is native state, not the requested NetworkProfile.
 type NetworkProfileStatus struct {
-	// Applied means that the delay's own netem qdisc is the root qdisc of the
+	// Applied means that the profile's own netem qdisc is the root qdisc of the
 	// interface it was applied to (with peers, that its own hierarchy is,
 	// with the expected priority map and one filter for each peer), and that
 	// nothing the lease did not add is under that root.
 	Applied bool
-	// Gone means that the delayed interface no longer exists: the target
+	// Gone means that the shaped interface no longer exists: the target
 	// stopped, restarted, was removed or was disconnected from the network,
-	// and the delay ended with it.
+	// and the profile ended with it.
 	Gone bool
-	// Interface is the delayed interface's current name.
+	// Interface is the shaped interface's current name.
 	Interface string
 	// RootKind and RootHandle describe the interface's current root qdisc.
 	RootKind, RootHandle string
@@ -395,30 +353,29 @@ type NetworkProfileStatus struct {
 	// of each u32 filter under "matches".
 	Filters json.RawMessage
 
-	// mismatch says why the lease's own root does not hold exactly the
-	// requested hierarchy, with nothing foreign under it.
-	mismatch error
+	// state is the judgement of internal/netem that the fields report.
+	state netem.State
 }
 
 // NetworkProfileLease owns one netem profile on a container's network endpoint,
 // applied from a helper container in the target's network namespace that
-// alone has NET_ADMIN. Restore removes the delay and the helper. A non-nil
+// alone has NET_ADMIN. Restore removes the profile and the helper. A non-nil
 // lease returned with an error must be restored: the change may have been
 // applied. Restore is retryable. Its exported fields describe the profile.
 // Status and Restore use the endpoint and filter identities captured at apply.
 type NetworkProfileLease struct {
-	// ContainerID and NetworkName identify the delayed endpoint.
+	// ContainerID and NetworkName identify the shaped endpoint.
 	ContainerID, NetworkName string
-	// SandboxID is the Docker network sandbox of the target when the delay
+	// SandboxID is the Docker network sandbox of the target when the profile
 	// was applied, and Namespace the kernel's name of its network namespace.
 	SandboxID, Namespace string
 	// Interface, InterfaceIndex, MACAddress and Address identify the
-	// delayed interface inside that namespace.
+	// shaped interface inside that namespace.
 	Interface      string
 	InterfaceIndex int
 	MACAddress     string
 	Address        netip.Addr
-	// HelperImageID is the image of the helper that applied the delay.
+	// HelperImageID is the image of the helper that applied the profile.
 	HelperImageID string
 	// Delay and Jitter are the requested values.
 	Delay, Jitter time.Duration
@@ -455,25 +412,23 @@ type NetworkProfileLease struct {
 	mu                                           sync.Mutex
 	id, network, sandbox, namespace, helperImage string
 	interfaceIndex                               int
-	peerPolicy                                   []NetworkPeer
-	match                                        peerMatch
 	inboundLeases                                []*NetworkProfileLease
 	// shapes reports that the lease owns a profile on its own endpoint;
 	// an Inbound lease only holds its peers' leases.
 	shapes  bool
 	backend netemBackend
 	helper  testcontainers.Container
-	// handle is the root qdisc that the lease owns: the netem qdisc, or with
-	// peers the prio qdisc whose third band leads to the netem child.
-	handle   string
-	child    string
+	// shape is the hierarchy that the lease owns: its root qdisc, the netem
+	// qdisc or with peers the prio qdisc whose third band leads to the netem
+	// child, and the peer filters. params is the netem qdisc it installs.
+	shape    netem.Shape
+	params   netem.Params
 	pending  string
 	complete bool
 	release  func()
 }
 
-// nshelper.Target is the Docker state of a delay's target.
-// netemBackend runs the Docker and helper operations of a delay; tests
+// netemBackend runs the Docker and helper operations of a profile; tests
 // replace it with a model of namespaces and qdiscs.
 //
 //testdouble:dependency-port
@@ -494,562 +449,103 @@ type netemBackend interface {
 	cancel(ctx context.Context, helper testcontainers.Container, label, marker string) error
 }
 
-// netemScript reports, as one JSON object, what a helper sees. "preflight"
-// checks the contract and netem on the loopback of the helper's own
-// namespace, with "rate" also netem's rate, with "reorder", "duplicate" or
-// "corrupt" those packet faults with a correlation, and with "peers" the prio qdisc
-// and u32 classifier, its filter also with a TCP source port key with
-// "sport", and with a destination port and a SYN key with "setup"; "inspect ADDRESS MAC" finds the interface with that address and
-// MAC in the namespace the helper joined, and "index N" the interface with
-// that index; both read its qdiscs and egress filters. tc prints each u32
-// key as another "match" member of one object, so the script collects them
-// into a "matches" list before they reach a JSON decoder that would keep only
-// the last.
-const netemScript = `import json,os,shutil,subprocess,sys
-def pairs(items):
- d={}
- for k,v in items:
-  if k=="match": d.setdefault("matches",[]).append(v)
-  else: d[k]=v
- return d
-def run(*argv):
- p=subprocess.run(argv,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
- return p.returncode,p.stdout.decode(errors="replace"),p.stderr.decode(errors="replace").strip()[-400:]
-def net_admin():
- with open("/proc/self/status") as f:
-  for line in f:
-   if line.startswith("CapEff:"): return bool(int(line.split()[1],16)>>12&1)
- return False
-out={"namespace":os.readlink("/proc/self/ns/net"),"net_admin":net_admin()}
-if sys.argv[1]=="preflight":
- out["missing"]=[n for n in ("sh","sleep","tc","ip") if shutil.which(n) is None]
- if not out["missing"]:
-  broken=[]
-  for tool in ("tc","ip"):
-   code,o,e=run(tool,"-V")
-   out[tool]=(o+e).strip()[:200]
-   if code or "iproute2" not in o+e: broken.append(tool+" -V")
-  for argv in (("tc","-j","-s","qdisc","show","dev","lo"),("ip","-j","address","show")):
-   code,o,e=run(*argv)
-   try: json.loads(o)
-   except ValueError: broken.append(" ".join(argv))
-  out["broken"]=broken
-  if not broken:
-   out["add"]=run("tc","qdisc","add","dev","lo","root","handle","c7e1:","netem","delay","1ms")[0::2]
-   if out["add"][0]==0:
-    out["shown"]=run("tc","-j","qdisc","show","dev","lo")[1]
-    out["delete"]=run("tc","qdisc","del","dev","lo","root","handle","c7e1:")[0::2]
-    if "rate" in sys.argv[2:] and out["delete"][0]==0:
-     out["rate"]=run("tc","qdisc","add","dev","lo","root","handle","c7e3:","netem","rate","1000000bit","limit","100")[0::2]
-     if out["rate"][0]==0:
-      out["rate_shown"]=run("tc","-j","qdisc","show","dev","lo")[1]
-      out["rate_delete"]=run("tc","qdisc","del","dev","lo","root","handle","c7e3:")[0::2]
-    faults=[f for f in ("reorder","duplicate","corrupt") if f in sys.argv[2:]]
-    if faults and out["delete"][0]==0:
-     argv=["tc","qdisc","add","dev","lo","root","handle","c7e4:","netem"]
-     if "reorder" in faults or "duplicate" in faults: argv+=["delay","1ms" if "reorder" in faults else "0us","0us","0%"]
-     for f,p,c in (("reorder","25%","50%"),("duplicate","3%","10%"),("corrupt","2%","5%")):
-      if f in faults: argv+=[f,p,c]
-     out["faults"]=run(*argv)[0::2]
-     if out["faults"][0]==0:
-      out["faults_shown"]=run("tc","-j","qdisc","show","dev","lo")[1]
-      out["faults_delete"]=run("tc","qdisc","del","dev","lo","root","handle","c7e4:")[0::2]
-    if "peers" in sys.argv[2:] and out["delete"][0]==0:
-     out["prio"]=run("tc","qdisc","add","dev","lo","root","handle","c7e2:","prio","bands","3","priomap",*["0"]*16)[0::2]
-     if out["prio"][0]==0:
-      keys=["match","ip","dst","127.0.0.2/32"]
-      if "sport" in sys.argv[2:] or "setup" in sys.argv[2:]: keys+=["match","ip","protocol","6","0xff","match","ip","sport" if "sport" in sys.argv[2:] else "dport","7000","0xffff"]
-      if "setup" in sys.argv[2:]: keys+=["match","u8","0x02","0x02","at","33"]
-      out["u32"]=run("tc","filter","add","dev","lo","parent","c7e2:","protocol","ip","pref","10","handle","800::1","u32",*keys,"flowid","c7e2:3")[0::2]
-      if out["u32"][0]==0:
-       o=run("tc","-j","filter","show","dev","lo")[1]
-       try: out["u32_shown"]=json.dumps(json.loads(o,object_pairs_hook=pairs))
-       except ValueError: out["u32_shown"]=o
-      out["prio_delete"]=run("tc","qdisc","del","dev","lo","root","handle","c7e2:")[0::2]
-else:
- code,o,e=run("ip","-j","address","show")
- if code: out["error"]="ip: "+e
- else:
-  links=json.loads(o)
-  if sys.argv[1]=="inspect":
-   address,mac=sys.argv[2],sys.argv[3]
-   links=[l for l in links if l.get("address")==mac and any(a.get("local")==address for a in l.get("addr_info",[]))]
-  else:
-   links=[l for l in links if l.get("ifindex")==int(sys.argv[2])]
-  out["interfaces"]=[{"name":l["ifname"],"index":l["ifindex"]} for l in links]
-  if len(links)==1:
-   code,o,e=run("tc","-j","-s","qdisc","show","dev",links[0]["ifname"])
-   if code: out["error"]="tc: "+e
-   else:
-    out["qdiscs"]=json.loads(o)
-    code,o,e=run("tc","-j","filter","show","dev",links[0]["ifname"])
-    if code: out["error"]="tc filter: "+e
-    else: out["filters"]=json.loads(o,object_pairs_hook=pairs) if o.strip() else []
-print(json.dumps(out))
-`
-
-type netemQdisc struct {
-	Kind    string `json:"kind"`
-	Handle  string `json:"handle"`
-	Parent  string `json:"parent"`
-	Root    bool   `json:"root"`
-	Options struct {
-		Bands   json.RawMessage `json:"bands"`
-		Priomap json.RawMessage `json:"priomap"`
-		Delay   struct {
-			Delay  float64 `json:"delay"`
-			Jitter float64 `json:"jitter"`
-		} `json:"delay"`
-		// Loss is a fraction; tc prints no delay member for a zero delay.
-		Loss struct {
-			Loss float64 `json:"loss"`
-		} `json:"loss-random"`
-		// Rate is netem's rate; tc prints no rate member without one.
-		Rate  netemRate `json:"rate"`
-		Limit int       `json:"limit"`
-		// Reorder, Duplicate and Corrupt are netem's packet faults, and Gap
-		// its reorder gap; tc prints no fault member without the fault.
-		Reorder   netemFault  `json:"reorder"`
-		Duplicate netemFault  `json:"duplicate"`
-		Corrupt   netemFault  `json:"corrupt"`
-		Gap       netemNumber `json:"gap"`
-	} `json:"options"`
-	Bytes      uint64 `json:"bytes"`
-	Packets    uint64 `json:"packets"`
-	Drops      uint64 `json:"drops"`
-	Overlimits uint64 `json:"overlimits"`
-	Requeues   uint64 `json:"requeues"`
-	Backlog    uint64 `json:"backlog"`
-	Qlen       uint64 `json:"qlen"`
+// validateNetworkProfile checks a NetworkProfile before anything runs.
+func validateNetworkProfile(profile NetworkProfile) error {
+	return validateProfile(profile, true)
 }
 
-// netemRate is netem's rate member, an object whose rate is in bytes per
-// second. Other qdiscs, such as a foreign tbf, print a plain number under
-// the same key; it is not netem's rate, and reads as zero.
-type netemRate struct {
-	Rate uint64 `json:"rate"`
-}
-
-func (r *netemRate) UnmarshalJSON(data []byte) error {
-	if trimmed := strings.TrimSpace(string(data)); !strings.HasPrefix(trimmed, "{") {
-		*r = netemRate{}
-		return nil
-	}
-	type object netemRate
-	return json.Unmarshal(data, (*object)(r))
-}
-
-// netemFault is one of netem's reorder, duplicate and corrupt members: an
-// object with the probability under the member's own name and its
-// correlation, both fractions. Another qdisc's member of the same name that is
-// not such an object is not netem's, and reads as no fault.
-type netemFault map[string]float64
-
-func (f *netemFault) UnmarshalJSON(data []byte) error {
-	*f = nil
-	var members map[string]any
-	if json.Unmarshal(data, &members) != nil {
-		return nil
-	}
-	*f = netemFault{}
-	for key, value := range members {
-		if number, ok := value.(float64); ok {
-			(*f)[key] = number
-		}
-	}
-	return nil
-}
-
-// fault is the member in percentages; name is its probability's key.
-func (f netemFault) fault(name string) NetworkPacketFault {
-	percent := func(fraction float64) float64 { return math.Round(fraction*100*1e6) / 1e6 }
-	return NetworkPacketFault{Percent: percent(f[name]), Correlation: percent(f["correlation"])}
-}
-
-// netemNumber is netem's gap, a whole number; another qdisc's member of the
-// same name that is not one reads as zero.
-type netemNumber int
-
-func (n *netemNumber) UnmarshalJSON(data []byte) error {
-	var value float64
-	if json.Unmarshal(data, &value) != nil || value != math.Trunc(value) || math.Abs(value) > math.MaxInt32 {
-		*n = 0
-		return nil
-	}
-	*n = netemNumber(value)
-	return nil
-}
-
-type netemReport struct {
-	Namespace string   `json:"namespace"`
-	NetAdmin  bool     `json:"net_admin"`
-	Missing   []string `json:"missing"`
-	Broken    []string `json:"broken"`
-	Add       []any    `json:"add"`
-	Shown     string   `json:"shown"`
-	Delete    []any    `json:"delete"`
-	// Prio, U32, U32Shown and PrioDelete are the preflight of a delay with
-	// peers: a prio root and a u32 filter on the helper's loopback.
-	Prio       []any  `json:"prio"`
-	U32        []any  `json:"u32"`
-	U32Shown   string `json:"u32_shown"`
-	PrioDelete []any  `json:"prio_delete"`
-	// Rate, RateShown and RateDelete are the preflight of a Rate: a netem
-	// qdisc with a rate and a queue limit on the helper's loopback.
-	Rate       []any  `json:"rate"`
-	RateShown  string `json:"rate_shown"`
-	RateDelete []any  `json:"rate_delete"`
-	// Faults, FaultsShown and FaultsDelete are the preflight of a Reorder,
-	// Duplicate or Corrupt: a netem qdisc with the requested faults, each
-	// with a correlation, on the helper's loopback.
-	Faults       []any           `json:"faults"`
-	FaultsShown  string          `json:"faults_shown"`
-	FaultsDelete []any           `json:"faults_delete"`
-	Error        string          `json:"error"`
-	Qdiscs       json.RawMessage `json:"qdiscs"`
-	Filters      json.RawMessage `json:"filters"`
-	Links        []struct {
-		Name  string `json:"name"`
-		Index int    `json:"index"`
-	} `json:"interfaces"`
-}
-
-// root returns the root qdisc of the inspected interface.
-func (r netemReport) root() (netemQdisc, error) {
-	var qdiscs []netemQdisc
-	if err := json.Unmarshal(r.Qdiscs, &qdiscs); err != nil {
-		return netemQdisc{}, fmt.Errorf("parse tc qdisc output: %w", err)
-	}
-	for _, qdisc := range qdiscs {
-		if qdisc.Root {
-			return qdisc, nil
-		}
-	}
-	return netemQdisc{}, errors.New("tc reported no root qdisc")
-}
-
-func seconds(value float64) time.Duration {
-	return time.Duration(math.Round(value*1e6)) * time.Microsecond
-}
-
-// validateNetworkDelay checks a NetworkProfile before anything runs.
-func validateNetworkDelay(delay NetworkProfile) error {
-	return validateDelay(delay, true)
-}
-
-// validateDelay checks a NetworkProfile, with a Ceph network plane or, for
+// validateProfile checks a NetworkProfile, with a Ceph network plane or, for
 // ApplyLinkProfile, without one.
-func validateDelay(delay NetworkProfile, plane bool) error {
-	if strings.TrimSpace(delay.HelperImage) == "" {
+func validateProfile(profile NetworkProfile, plane bool) error {
+	if strings.TrimSpace(profile.HelperImage) == "" {
 		// The extension is not selected.
 		return &ceph.OperationError{Kind: ceph.ErrImageCapability, Capability: "netem extension",
-			Err: errors.New("network delay needs NetworkProfile.HelperImage: the netem helper is never selected implicitly")}
+			Err: errors.New("network profile needs NetworkProfile.HelperImage: the netem helper is never selected implicitly")}
 	}
 	// Every check runs: allowing a zero delay with a Loss must not skip the
-	// selection's checks.
-	noDelay := delay.Delay == 0 && (delay.Loss > 0 || delay.Rate > 0 || !delay.Duplicate.IsZero() || !delay.Corrupt.IsZero())
+	// selection's checks. Peer and PeerPort are the one-peer form of Peers:
+	// past the checks of the form itself, both are checked as the one
+	// selection that every later stage uses.
+	peers := profile.selection()
+	noDelay := profile.Delay == 0 && (profile.Loss > 0 || profile.Rate > 0 || !profile.Duplicate.IsZero() || !profile.Corrupt.IsZero())
 	switch {
-	case plane && delay.Plane != ceph.PublicNetworkPlane && delay.Plane != ceph.ClusterNetworkPlane:
+	case plane && profile.Plane != ceph.PublicNetworkPlane && profile.Plane != ceph.ClusterNetworkPlane:
 		return nshelper.InvalidRequest("invalid Ceph network plane")
-	case !plane && delay.Plane != "":
-		return nshelper.InvalidRequest("a link delay names its network; leave NetworkProfile.Plane empty")
-	case math.IsNaN(delay.Loss) || delay.Loss < 0 || delay.Loss > 100:
-		return nshelper.InvalidRequest("network delay Loss must be a percentage from 0 to 100")
-	case !noDelay && (delay.Delay < time.Millisecond || delay.Delay > MaxNetworkDelay):
-		return nshelper.InvalidRequest("network delay must be between 1ms and %v, or zero with a Loss, a Rate, a Duplicate or a Corrupt", MaxNetworkDelay)
-	case delay.Rate != 0 && (delay.Rate < MinNetworkRate || delay.Rate > MaxNetworkRate):
-		return nshelper.InvalidRequest("network delay Rate must be between %v and %v, or zero", MinNetworkRate, MaxNetworkRate)
-	case delay.Rate%8 != 0:
-		return nshelper.InvalidRequest("network delay Rate must be whole bytes per second, a multiple of 8 bit/s")
-	case delay.QueueLimit != 0 && delay.Rate == 0:
-		return nshelper.InvalidRequest("network delay QueueLimit needs a Rate")
-	case delay.QueueLimit < 0 || delay.QueueLimit > MaxNetworkQueueLimit:
-		return nshelper.InvalidRequest("network delay QueueLimit must be between 1 and %d packets, or zero for %d", MaxNetworkQueueLimit, DefaultNetworkQueueLimit)
-	case delay.Jitter < 0 || delay.Jitter > delay.Delay:
-		return nshelper.InvalidRequest("network delay jitter must be between 0 and the delay")
-	case delay.Delay%time.Microsecond != 0 || delay.Jitter%time.Microsecond != 0:
-		return nshelper.InvalidRequest("network delay and jitter must be whole microseconds")
-	case delay.PeerPort != 0 && !delay.Peer.IsValid():
-		return nshelper.InvalidRequest("network delay PeerPort needs a Peer")
-	case delay.Peer.IsValid() && (delay.Peer.Is4In6() || delay.Peer.Zone() != "" || delay.Peer.IsUnspecified()):
-		return nshelper.InvalidRequest("network delay Peer %s is not a plain IPv4 or IPv6 address", delay.Peer)
-	case delay.Peer.IsValid() && delay.Peers != nil:
-		return nshelper.InvalidRequest("network delay takes either Peer and PeerPort or Peers")
-	case delay.Peers != nil && (len(delay.Peers) == 0 || len(delay.Peers) > MaxNetworkPeers):
-		return nshelper.InvalidRequest("network delay Peers needs 1 to %d peers", MaxNetworkPeers)
-	case delay.Direction < Outbound || delay.Direction > BothDirections:
-		return nshelper.InvalidRequest("network delay Direction %v is not Outbound, Inbound or BothDirections", delay.Direction)
-	case delay.Phase < AllPackets || delay.Phase > ConnectionSetup:
-		return nshelper.InvalidRequest("network delay Phase %v is not AllPackets or ConnectionSetup", delay.Phase)
-	case delay.Direction != Outbound && !delay.Peer.IsValid() && delay.Peers == nil:
-		return nshelper.InvalidRequest("network delay Direction %v needs a Peer or Peers: the other direction is shaped at each peer's endpoint", delay.Direction)
-	case delay.Phase == ConnectionSetup && !delay.Peer.IsValid() && delay.Peers == nil:
-		return nshelper.InvalidRequest("network delay Phase %v needs a Peer or Peers", delay.Phase)
+	case !plane && profile.Plane != "":
+		return nshelper.InvalidRequest("a link profile names its network; leave NetworkProfile.Plane empty")
+	case math.IsNaN(profile.Loss) || profile.Loss < 0 || profile.Loss > 100:
+		return nshelper.InvalidRequest("network profile Loss must be a percentage from 0 to 100")
+	case !noDelay && (profile.Delay < time.Millisecond || profile.Delay > MaxNetworkDelay):
+		return nshelper.InvalidRequest("network profile Delay must be between 1ms and %v, or zero with a Loss, a Rate, a Duplicate or a Corrupt", MaxNetworkDelay)
+	case profile.Rate != 0 && (profile.Rate < MinNetworkRate || profile.Rate > MaxNetworkRate):
+		return nshelper.InvalidRequest("network profile Rate must be between %v and %v, or zero", MinNetworkRate, MaxNetworkRate)
+	case profile.Rate%8 != 0:
+		return nshelper.InvalidRequest("network profile Rate must be whole bytes per second, a multiple of 8 bit/s")
+	case profile.QueueLimit != 0 && profile.Rate == 0:
+		return nshelper.InvalidRequest("network profile QueueLimit needs a Rate")
+	case profile.QueueLimit < 0 || profile.QueueLimit > MaxNetworkQueueLimit:
+		return nshelper.InvalidRequest("network profile QueueLimit must be between 1 and %d packets, or zero for %d", MaxNetworkQueueLimit, DefaultNetworkQueueLimit)
+	case profile.Jitter < 0 || profile.Jitter > profile.Delay:
+		return nshelper.InvalidRequest("network profile Jitter must be between 0 and the Delay")
+	case profile.Delay%time.Microsecond != 0 || profile.Jitter%time.Microsecond != 0:
+		return nshelper.InvalidRequest("network profile Delay and Jitter must be whole microseconds")
+	case profile.PeerPort != 0 && !profile.Peer.IsValid():
+		return nshelper.InvalidRequest("network profile PeerPort needs a Peer")
+	case profile.Peer.IsValid() && profile.Peers != nil:
+		return nshelper.InvalidRequest("network profile takes either Peer and PeerPort or Peers")
+	case profile.Peers != nil && (len(profile.Peers) == 0 || len(profile.Peers) > MaxNetworkPeers):
+		return nshelper.InvalidRequest("network profile Peers needs 1 to %d peers", MaxNetworkPeers)
+	case profile.Direction < Outbound || profile.Direction > BothDirections:
+		return nshelper.InvalidRequest("network profile Direction %v is not Outbound, Inbound or BothDirections", profile.Direction)
+	case profile.Phase < AllPackets || profile.Phase > ConnectionSetup:
+		return nshelper.InvalidRequest("network profile Phase %v is not AllPackets or ConnectionSetup", profile.Phase)
+	case profile.Direction != Outbound && len(peers) == 0:
+		return nshelper.InvalidRequest("network profile Direction %v needs a Peer or Peers: the other direction is shaped at each peer's endpoint", profile.Direction)
+	case profile.Phase == ConnectionSetup && len(peers) == 0:
+		return nshelper.InvalidRequest("network profile Phase %v needs a Peer or Peers", profile.Phase)
 	}
-	for _, fault := range []namedFault{{"Reorder", delay.Reorder}, {"Duplicate", delay.Duplicate}, {"Corrupt", delay.Corrupt}} {
+	for _, fault := range []struct {
+		name  string
+		fault NetworkPacketFault
+	}{{"Reorder", profile.Reorder}, {"Duplicate", profile.Duplicate}, {"Corrupt", profile.Corrupt}} {
 		if err := fault.fault.validate(fault.name); err != nil {
 			return err
 		}
 	}
-	if !delay.Reorder.IsZero() {
+	if !profile.Reorder.IsZero() {
 		switch {
-		case delay.Delay == 0:
-			return nshelper.InvalidRequest("network delay Reorder needs a Delay: netem reorders by sending some packets ahead of the delayed ones")
-		case delay.Jitter != 0:
-			return nshelper.InvalidRequest("network delay Reorder takes no Jitter: a jitter reorders packets by itself, and the two cannot be told apart")
-		case delay.Rate != 0:
-			return nshelper.InvalidRequest("network delay Reorder takes no Rate: netem sends the reordered packets past the rate limit")
+		case profile.Delay == 0:
+			return nshelper.InvalidRequest("network profile Reorder needs a Delay: netem reorders by sending some packets ahead of the delayed ones")
+		case profile.Jitter != 0:
+			return nshelper.InvalidRequest("network profile Reorder takes no Jitter: a jitter reorders packets by itself, and the two cannot be told apart")
+		case profile.Rate != 0:
+			return nshelper.InvalidRequest("network profile Reorder takes no Rate: netem sends the reordered packets past the rate limit")
 		}
 	}
 	seen := map[NetworkPeer]bool{}
-	for _, peer := range delay.Peers {
+	for _, peer := range peers {
 		switch {
 		case !peer.Addr.IsValid() || peer.Addr.Is4In6() || peer.Addr.Zone() != "" || peer.Addr.IsUnspecified():
-			return nshelper.InvalidRequest("network delay peer %v is not a plain IPv4 or IPv6 address", peer.Addr)
+			return nshelper.InvalidRequest("network profile peer %v is not a plain IPv4 or IPv6 address", peer.Addr)
 		case seen[peer]:
-			return nshelper.InvalidRequest("network delay Peers has %v port %d twice", peer.Addr, peer.Port)
+			return nshelper.InvalidRequest("network profile Peers has %v port %d twice", peer.Addr, peer.Port)
 		}
 		seen[peer] = true
 	}
 	return nil
 }
 
-// netemStep is one tc command of a delay's change.
-type netemStep struct {
-	label string
-	argv  []string
-}
-
-// peerBand is the prio band of a selective delay's root that leads to its
-// netem child; the filter sends the selected packets there.
-const peerBand = "3"
-
-// peerLeaf is one u32 filter of a delay with peers: the filter that selects
-// one peer's packets.
-type peerLeaf struct {
-	peer NetworkPeer
-	// protocol is tc's protocol of the filter, ip or ipv6.
-	protocol string
-	// pref is the filter's preference, table the u32 table that the kernel
-	// creates for that preference, and handle the filter's own key node.
-	pref, table, handle string
-}
-
-// planPeerLeaves lays out the filters of a delay with peers: one preference
-// per family, IPv4 first, each with its own u32 table, and one key node per
-// peer in the caller's order. A u32 filter has one protocol, so the families
-// cannot share a preference. The kernel numbers the u32 tables of one qdisc
-// from 800: in the order that their preferences are created; the filters are
-// added in this order, and each names its table, so a table that the kernel
-// numbered otherwise refuses the filter or shows it under another preference,
-// and neither is accepted as applied. One peer of one family gives the
-// single filter pref 10, handle 800::1.
-func planPeerLeaves(peers []NetworkPeer) []peerLeaf {
-	var leaves []peerLeaf
-	group := 0
-	for _, family := range []struct {
-		protocol string
-		match    func(netip.Addr) bool
-	}{{"ip", netip.Addr.Is4}, {"ipv6", netip.Addr.Is6}} {
-		node := 0
-		for _, peer := range peers {
-			if !family.match(peer.Addr) {
-				continue
-			}
-			node++
-			table := fmt.Sprintf("%x:", 0x800+group)
-			leaves = append(leaves, peerLeaf{peer: peer, protocol: family.protocol, pref: strconv.Itoa(10 + group),
-				table: table, handle: fmt.Sprintf("%s:%x", table, node)})
-		}
-		if node > 0 {
-			group++
-		}
-	}
-	return leaves
-}
-
-// u32Key is one 32-bit match of a u32 filter, at a byte offset of the IP
-// header, as tc prints it.
-type u32Key struct {
-	Off   int
-	Value uint32
-	Mask  uint32
-}
-
-// peerMatch is how a lease's filters read their peers: whether each port is
-// a TCP source port rather than a destination port, and whether only
-// segments with SYN set are selected.
-type peerMatch struct {
-	source, setup bool
-}
-
-// tcpFlags is the offset of the TCP flags byte in a TCP header, and tcpSYN
-// its SYN bit.
-const (
-	tcpFlags = 13
-	tcpSYN   = 0x02
-)
-
-// peerFilterKeys are the u32 keys that select packets to peer and, when port
-// is not zero, TCP packets to that destination port, or from that source port
-// with match.source, and with match.setup only TCP segments with SYN set. tc
-// aligns every key to a 32-bit word: the IPv4 protocol is at offset 8, the
-// IPv6 next header at offset 4, the destination port is the low half and the
-// source port the high half of the word at offset 20 (IPv4) or 40 (IPv6), and
-// the SYN bit is in the word at offset 32 (52), right after a header without
-// options or extension headers.
-func peerFilterKeys(peer netip.Addr, port uint16, match peerMatch) []u32Key {
-	var keys []u32Key
-	address := peer.AsSlice()
-	tcp := 20
-	protocol := u32Key{Off: 8, Value: 6 << 16, Mask: 0xff << 16}
-	if peer.Is4() {
-		keys = append(keys, u32Key{Off: 16, Value: binary.BigEndian.Uint32(address), Mask: 0xffffffff})
-	} else {
-		for word := range 4 {
-			keys = append(keys, u32Key{Off: 24 + 4*word, Value: binary.BigEndian.Uint32(address[4*word:]), Mask: 0xffffffff})
-		}
-		tcp, protocol = 40, u32Key{Off: 4, Value: 6 << 8, Mask: 0xff << 8}
-	}
-	if port != 0 || match.setup {
-		keys = append(keys, protocol)
-	}
-	switch {
-	case port != 0 && match.source:
-		keys = append(keys, u32Key{Off: tcp, Value: uint32(port) << 16, Mask: 0xffff << 16})
-	case port != 0:
-		keys = append(keys, u32Key{Off: tcp, Value: uint32(port), Mask: 0xffff})
-	}
-	if match.setup {
-		flags := tcp + tcpFlags
-		shift := 8 * (3 - flags%4)
-		keys = append(keys, u32Key{Off: flags - flags%4, Value: tcpSYN << shift, Mask: tcpSYN << shift})
-	}
-	return keys
-}
-
-// peerFilterArgs is the tc command that adds one filter of a delay with peers.
-func peerFilterArgs(device, root string, leaf peerLeaf, match peerMatch) []string {
-	family, bits, tcp := "ip", "/32", 20
-	if leaf.peer.Addr.Is6() {
-		family, bits, tcp = "ip6", "/128", 40
-	}
-	argv := []string{"tc", "filter", "add", "dev", device, "parent", root, "protocol", leaf.protocol, "pref", leaf.pref,
-		"handle", leaf.handle, "u32", "match", family, "dst", leaf.peer.Addr.String() + bits}
-	if leaf.peer.Port != 0 || match.setup {
-		argv = append(argv, "match", family, "protocol", "6", "0xff")
-	}
-	if leaf.peer.Port != 0 {
-		field := "dport"
-		if match.source {
-			field = "sport"
-		}
-		argv = append(argv, "match", family, field, strconv.Itoa(int(leaf.peer.Port)), "0xffff")
-	}
-	if match.setup {
-		argv = append(argv, "match", "u8", fmt.Sprintf("0x%02x", tcpSYN), fmt.Sprintf("0x%02x", tcpSYN), "at", strconv.Itoa(tcp+tcpFlags))
-	}
-	return append(argv, "flowid", root+peerBand)
-}
-
-// netemFilter is one entry of tc's filter dump, with the u32 keys that
-// netemScript collected under "matches".
-type netemFilter struct {
-	Parent   string `json:"parent"`
-	Protocol string `json:"protocol"`
-	Pref     int    `json:"pref"`
-	Kind     string `json:"kind"`
-	Options  struct {
-		Handle  string `json:"fh"`
-		FlowID  string `json:"flowid"`
-		Matches []struct {
-			Value   string `json:"value"`
-			Mask    string `json:"mask"`
-			OffMask string `json:"offmask"`
-			Off     int    `json:"off"`
-		} `json:"matches"`
-	} `json:"options"`
-}
-
-// checkPeerFilter reports why the egress filters of an interface are not
-// exactly the filters of a delay with these peers under root, or nil. Header
-// entries, which tc prints for each preference's chain and its u32 table, may
-// accompany the filters; any other filter is foreign state.
-func checkPeerFilter(data json.RawMessage, root string, peers []NetworkPeer, match peerMatch) error {
-	return checkPeerFilters(data, root, peers, match, true)
-}
-
-// checkPeerFilters is checkPeerFilter that, unless required, also accepts
-// only some of the filters, or none: the state of an apply that stopped
-// before its last filter.
-func checkPeerFilters(data json.RawMessage, root string, peers []NetworkPeer, match peerMatch, required bool) error {
-	var filters []netemFilter
-	if err := json.Unmarshal(data, &filters); err != nil {
-		return fmt.Errorf("parse tc filter output: %w", err)
-	}
-	leaves := planPeerLeaves(peers)
-	seen := map[string]bool{}
-	for _, filter := range filters {
-		pref := strconv.Itoa(filter.Pref)
-		group := slices.IndexFunc(leaves, func(leaf peerLeaf) bool { return leaf.protocol == filter.Protocol && leaf.pref == pref })
-		if filter.Parent != root || group < 0 || filter.Kind != "u32" {
-			return fmt.Errorf("a filter with parent %s, protocol %s, preference %d and kind %s is not the delay's", filter.Parent, filter.Protocol, filter.Pref, filter.Kind)
-		}
-		if len(filter.Options.Matches) == 0 && filter.Options.FlowID == "" {
-			// The preference's chain, or its u32 table.
-			if filter.Options.Handle != "" && filter.Options.Handle != leaves[group].table {
-				return fmt.Errorf("preference %d has the u32 table %s, not the delay's %s", filter.Pref, filter.Options.Handle, leaves[group].table)
-			}
-			continue
-		}
-		i := slices.IndexFunc(leaves, func(leaf peerLeaf) bool {
-			return leaf.protocol == filter.Protocol && leaf.pref == pref && leaf.handle == filter.Options.Handle
-		})
-		if i < 0 {
-			return fmt.Errorf("the filter %s of preference %d is not one of the delay's", filter.Options.Handle, filter.Pref)
-		}
-		leaf := leaves[i]
-		if seen[leaf.handle] {
-			return fmt.Errorf("the interface has the filter %s twice", leaf.handle)
-		}
-		seen[leaf.handle] = true
-		if filter.Options.FlowID != root+peerBand {
-			return fmt.Errorf("the filter %s leads to %s, not %s", leaf.handle, filter.Options.FlowID, root+peerBand)
-		}
-		var got []u32Key
-		for _, match := range filter.Options.Matches {
-			value, err1 := strconv.ParseUint(match.Value, 16, 32)
-			mask, err2 := strconv.ParseUint(match.Mask, 16, 32)
-			if err1 != nil || err2 != nil || match.OffMask != "" {
-				return fmt.Errorf("the filter %s has a key tc printed as %+v", leaf.handle, match)
-			}
-			got = append(got, u32Key{Off: match.Off, Value: uint32(value), Mask: uint32(mask)})
-		}
-		if want := peerFilterKeys(leaf.peer.Addr, leaf.peer.Port, match); !slices.Equal(got, want) {
-			return fmt.Errorf("the filter %s has the keys %v, not %v", leaf.handle, got, want)
-		}
-	}
-	if required {
-		for _, leaf := range leaves {
-			if !seen[leaf.handle] {
-				return fmt.Errorf("the filter %s for %v port %d is missing", leaf.handle, leaf.peer.Addr, leaf.peer.Port)
-			}
-		}
-	}
-	return nil
-}
-
 // ApplyNetworkProfile applies netem shaping to the packets that target sends
 // through its endpoint on the plane's bridge, below Ceph.
-// It is an opt-in extension: delay.HelperImage names the netem helper, which
+// It is an opt-in extension: profile.HelperImage names the netem helper, which
 // runs in the target's network namespace with NET_ADMIN, while the target
 // keeps its own image and capabilities. The target is an owned daemon or a
 // caller-owned container attached to that bridge; host-network clusters,
 // stopped or paused targets and targets that share another container's
 // network namespace are refused. With a Peer or Peers, only the packets to
-// those peers are delayed, through one prio root, one netem child and one u32
+// those peers are shaped, through one prio root, one netem child and one u32
 // filter per peer, all owned by the one lease: to cut a daemon's paths to
-// several peers at once, list them in one delay. A Rate limits the bandwidth
+// several peers at once, list them in one profile. A Rate limits the bandwidth
 // of the same packets in the same netem qdisc, alone or with a Delay and a
 // Loss. Reorder, Duplicate and Corrupt add netem's packet faults to the same
 // qdisc: a Reorder with a Delay and without Jitter or a Rate, a Duplicate or
@@ -1062,23 +558,23 @@ func checkPeerFilters(data json.RawMessage, root string, peers []NetworkPeer, ma
 // separate helper without a network, and returns ErrNetemImageUnsupported,
 // ErrNetemPermissionDenied or
 // ErrNetemKernelUnsupported. It refuses an interface whose root qdisc is not
-// the kernel's default and a target that already has a delay on that bridge.
+// the kernel's default and a target that already has a profile on that bridge.
 // A missing HelperImage is ceph.ErrImageCapability, the refusals are
 // ceph.ErrInvalidRequest, and a tc command that fails otherwise is a
 // *ceph.NativeFailure.
 //
-// The delay lasts until Restore, or until the target stops or leaves the
-// bridge, which removes its interface. Terminate restores delays that are
-// still held; restore a caller-owned target's delay before removing it.
+// The profile lasts until Restore, or until the target stops or leaves the
+// bridge, which removes its interface. Terminate restores profiles that are
+// still held; restore a caller-owned target's profile before removing it.
 //
 // With a Peer or Peers the lease owns a prio root qdisc whose third band
 // leads to the netem child, and one u32 filter per peer that sends its
 // packets there; every priority maps to the first band, so nothing else is
-// delayed. IPv4 peers' filters are in preference 10 and u32 table 800:, with
+// shaped. IPv4 peers' filters are in preference 10 and u32 table 800:, with
 // handles 800::1, 800::2 and so on in the given order; IPv6 peers' are in
 // the next preference and table (11 and 801: after IPv4 peers, otherwise 10
 // and 800:). They are added root first and filters last, so no packet is
-// delayed before the hierarchy is complete.
+// shaped before the hierarchy is complete.
 //
 // Direction Inbound or BothDirections also shapes what each selected peer
 // sends to the target: every peer address is resolved to the running
@@ -1098,41 +594,50 @@ func checkPeerFilters(data json.RawMessage, root string, peers []NetworkPeer, ma
 // effect.
 //
 //purpose:condition
-func ApplyNetworkProfile(ctx context.Context, c *ceph.Container, target testcontainers.Container, delay NetworkProfile) (*NetworkProfileLease, error) {
-	return temporaryNetworkDelay(ctx, c, target, delay, nil)
+func ApplyNetworkProfile(ctx context.Context, c *ceph.Container, target testcontainers.Container, profile NetworkProfile) (*NetworkProfileLease, error) {
+	return temporaryNetworkProfile(ctx, c, target, profile, nil)
 }
 
-func temporaryNetworkDelay(ctx context.Context, c *ceph.Container, target testcontainers.Container, delay NetworkProfile, backend netemBackend) (*NetworkProfileLease, error) {
+func temporaryNetworkProfile(ctx context.Context, c *ceph.Container, target testcontainers.Container, profile NetworkProfile, backend netemBackend) (*NetworkProfileLease, error) {
+	if err := requireCluster(c, "a network profile"); err != nil {
+		return nil, err
+	}
 	if backend == nil {
 		backend = dockerNetemBackend{label: faulthook.OwnedLabel(c)}
 	}
-	if err := validateNetworkDelay(delay); err != nil {
+	if err := validateNetworkProfile(profile); err != nil {
 		return nil, err
 	}
 	if target == nil || target.GetContainerID() == "" {
-		return nil, nshelper.InvalidRequest("network delay requires a container")
+		return nil, nshelper.InvalidRequest("network profile requires a container")
 	}
-	name, err := admitNetworkDelayTarget(ctx, c, target, delay.Plane)
+	name, err := admitNetworkProfileTarget(ctx, c, target, profile.Plane)
 	if err != nil {
 		return nil, err
 	}
 	// Each endpoint's lease is reserved and held for Terminate on its own,
-	// so a delay on a peer's endpoint is restored even when the lease that
+	// so a profile on a peer's endpoint is restored even when the lease that
 	// lists it is lost.
 	hold := func(id string, apply func() (*NetworkProfileLease, error)) (*NetworkProfileLease, error) {
-		token, err := reserveNetworkDelay(ctx, c, name, id)
-		if err != nil {
-			return nil, err
-		}
-		lease, err := apply()
-		if closed := settleNetworkDelay(c, token, lease); closed && lease != nil {
-			// Terminate ran meanwhile and did not see this delay.
-			native, _ := faulthook.Terminated()
-			return lease, errors.Join(err, native, lease.Restore(ctx))
-		}
-		return lease, err
+		return holdEndpoint(ctx, c, name, id, apply)
 	}
-	return applyDirectedDelay(ctx, backend, target.GetContainerID(), name, delay, hold)
+	return applyDirectedProfile(ctx, backend, target.GetContainerID(), name, profile, hold)
+}
+
+// holdEndpoint reserves the endpoint of container id on the cluster's bridge
+// name, applies its lease and keeps the lease for Terminate. When Terminate
+// overtook the apply, it did not see the lease, which is restored here.
+func holdEndpoint(ctx context.Context, c *ceph.Container, name, id string, apply func() (*NetworkProfileLease, error)) (*NetworkProfileLease, error) {
+	token, err := reserveNetworkProfile(ctx, c, name, id)
+	if err != nil {
+		return nil, err
+	}
+	lease, err := apply()
+	if closed := settleNetworkProfile(c, token, lease); closed && lease != nil {
+		native, _ := faulthook.Terminated()
+		return lease, errors.Join(err, native, lease.Restore(ctx))
+	}
+	return lease, err
 }
 
 // endpointHold applies one endpoint's lease: for a cluster's planes it
@@ -1148,39 +653,39 @@ type inboundPeer struct {
 	peers []NetworkPeer
 }
 
-// applyDirectedDelay applies delay in its Direction: on the target's
+// applyDirectedProfile applies profile in its Direction: on the target's
 // endpoint for Outbound, on each selected peer's endpoint for Inbound, and
 // on both for BothDirections. Every peer is resolved before anything is
 // applied, so a peer that is not a container on the network changes
 // nothing. A non-nil lease returned with an error must be restored.
-func applyDirectedDelay(ctx context.Context, backend netemBackend, id, network string, delay NetworkProfile, hold endpointHold) (*NetworkProfileLease, error) {
+func applyDirectedProfile(ctx context.Context, backend netemBackend, id, network string, profile NetworkProfile, hold endpointHold) (*NetworkProfileLease, error) {
 	var inbound []inboundPeer
 	var state nshelper.Target
-	if delay.Direction.inbound() {
+	if profile.Direction.inbound() {
 		var err error
-		if state, inbound, err = planInbound(ctx, backend, id, network, delay); err != nil {
+		if state, inbound, err = planInbound(ctx, backend, id, network, profile); err != nil {
 			return nil, err
 		}
 	}
 	var top *NetworkProfileLease
-	if delay.Direction.outbound() {
+	if profile.Direction.outbound() {
 		lease, err := hold(id, func() (*NetworkProfileLease, error) {
-			return applyNetworkDelay(ctx, backend, id, network, delay, false)
+			return applyEndpointProfile(ctx, backend, id, network, profile, false)
 		})
 		if lease == nil || err != nil {
 			return lease, err
 		}
 		top = lease
 	} else {
-		top = newNetworkProfileLease(backend, nil, id, network, state, "", delay.selection(), delay)
+		top = newNetworkProfileLease(backend, nil, id, network, state, "", profile.selection(), profile)
 		top.shapes = false
 	}
-	top.Direction = delay.Direction
+	top.Direction = profile.Direction
 	for _, peer := range inbound {
-		profile := delay
-		profile.Direction, profile.Peer, profile.PeerPort, profile.Peers = Outbound, netip.Addr{}, 0, peer.peers
+		peerProfile := profile
+		peerProfile.Direction, peerProfile.Peer, peerProfile.PeerPort, peerProfile.Peers = Outbound, netip.Addr{}, 0, peer.peers
 		lease, err := hold(peer.id, func() (*NetworkProfileLease, error) {
-			return applyNetworkDelay(ctx, backend, peer.id, network, profile, true)
+			return applyEndpointProfile(ctx, backend, peer.id, network, peerProfile, true)
 		})
 		if lease != nil {
 			top.addPeerLease(lease)
@@ -1218,10 +723,10 @@ func (l *NetworkProfileLease) peerLeases() []*NetworkProfileLease {
 // A peer address that no running container on the network has, or that is
 // the target's own, is refused, as is an IPv6 peer of a target without an
 // IPv6 address.
-func planInbound(ctx context.Context, backend netemBackend, id, network string, delay NetworkProfile) (nshelper.Target, []inboundPeer, error) {
+func planInbound(ctx context.Context, backend netemBackend, id, network string, profile NetworkProfile) (nshelper.Target, []inboundPeer, error) {
 	state, err := backend.target(ctx, id, network)
 	if err != nil {
-		return nshelper.Target{}, nil, faulthook.ClassifyDocker(ctx, fmt.Errorf("inspect the network delay target: %w", err))
+		return nshelper.Target{}, nil, faulthook.ClassifyDocker(ctx, fmt.Errorf("inspect the network profile target: %w", err))
 	}
 	if err := admitNetemTarget(state); err != nil {
 		return nshelper.Target{}, nil, err
@@ -1231,18 +736,18 @@ func planInbound(ctx context.Context, backend netemBackend, id, network string, 
 		return nshelper.Target{}, nil, faulthook.ClassifyDocker(ctx, fmt.Errorf("inspect the endpoints of %s: %w", network, err))
 	}
 	var plan []inboundPeer
-	for _, peer := range delay.selection() {
+	for _, peer := range profile.selection() {
 		owner, ok := endpoints[peer.Addr]
 		switch {
 		case !ok:
-			return nshelper.Target{}, nil, nshelper.InvalidRequest("network delay peer %s is not the address of a running container on %s: %v is shaped at the peer's endpoint", peer.Addr, network, delay.Direction)
+			return nshelper.Target{}, nil, nshelper.InvalidRequest("network profile peer %s is not the address of a running container on %s: %v is shaped at the peer's endpoint", peer.Addr, network, profile.Direction)
 		case owner == id:
-			return nshelper.Target{}, nil, nshelper.InvalidRequest("network delay peer %s is the target's own address", peer.Addr)
+			return nshelper.Target{}, nil, nshelper.InvalidRequest("network profile peer %s is the target's own address", peer.Addr)
 		}
 		address := state.Address
 		if peer.Addr.Is6() {
 			if address = state.Address6; !address.IsValid() {
-				return nshelper.Target{}, nil, nshelper.InvalidRequest("network delay peer %s is IPv6, and the target has no IPv6 address on %s", peer.Addr, network)
+				return nshelper.Target{}, nil, nshelper.InvalidRequest("network profile peer %s is IPv6, and the target has no IPv6 address on %s", peer.Addr, network)
 			}
 		}
 		i := slices.IndexFunc(plan, func(p inboundPeer) bool { return p.id == owner })
@@ -1259,38 +764,38 @@ func planInbound(ctx context.Context, backend netemBackend, id, network string, 
 
 // ApplyLinkProfile applies the same netem profile on another bridge than the
 // cluster's planes, for fixtures that own one, such as the private HTTP
-// bridge between the gateways of an RGW multisite: it delays or drops the
+// bridge between the gateways of an RGW multisite: it shapes the
 // packets that ctr sends through its endpoint on the bridge named network.
 // Like InterruptLink, the caller owns ctr, the network and the returned
 // lease, and restores the lease before it removes either: no cluster's
-// Terminate knows it. delay.Plane stays empty; every other field, check and
+// Terminate knows it. profile.Plane stays empty; every other field, check and
 // error is that of ApplyNetworkProfile, and a network that is not a bridge
 // is refused.
 //
 //purpose:condition
-func ApplyLinkProfile(ctx context.Context, ctr testcontainers.Container, network string, delay NetworkProfile) (*NetworkProfileLease, error) {
-	return temporaryLinkDelay(ctx, dockerNetemBackend{}, ctr, network, delay)
+func ApplyLinkProfile(ctx context.Context, ctr testcontainers.Container, network string, profile NetworkProfile) (*NetworkProfileLease, error) {
+	return temporaryLinkProfile(ctx, dockerNetemBackend{}, ctr, network, profile)
 }
 
-func temporaryLinkDelay(ctx context.Context, backend netemBackend, ctr testcontainers.Container, network string, delay NetworkProfile) (*NetworkProfileLease, error) {
-	if err := validateDelay(delay, false); err != nil {
+func temporaryLinkProfile(ctx context.Context, backend netemBackend, ctr testcontainers.Container, network string, profile NetworkProfile) (*NetworkProfileLease, error) {
+	if err := validateProfile(profile, false); err != nil {
 		return nil, err
 	}
 	switch {
 	case ctr == nil || ctr.GetContainerID() == "":
-		return nil, nshelper.InvalidRequest("network delay requires a container")
+		return nil, nshelper.InvalidRequest("network profile requires a container")
 	case strings.TrimSpace(network) == "":
-		return nil, nshelper.InvalidRequest("a link delay requires a network name")
+		return nil, nshelper.InvalidRequest("a link profile requires a network name")
 	}
-	return applyDirectedDelay(ctx, backend, ctr.GetContainerID(), network, delay,
+	return applyDirectedProfile(ctx, backend, ctr.GetContainerID(), network, profile,
 		func(_ string, apply func() (*NetworkProfileLease, error)) (*NetworkProfileLease, error) {
 			return apply()
 		})
 }
 
-// admitNetworkDelayTarget returns the bridge of plane, after checking that
+// admitNetworkProfileTarget returns the bridge of plane, after checking that
 // the cluster is open and on bridges and that target is attached to it.
-func admitNetworkDelayTarget(ctx context.Context, c *ceph.Container, target testcontainers.Container, plane ceph.NetworkPlane) (string, error) {
+func admitNetworkProfileTarget(ctx context.Context, c *ceph.Container, target testcontainers.Container, plane ceph.NetworkPlane) (string, error) {
 	var closed, hostNetwork, owned bool
 	var name string
 	err := faulthook.WithTopology(ctx, c, func() error {
@@ -1314,7 +819,7 @@ func admitNetworkDelayTarget(ctx context.Context, c *ceph.Container, target test
 	case closed:
 		return "", terminated
 	case hostNetwork:
-		return "", nshelper.InvalidRequest("network delay requires a bridge cluster: a delay on a host network would delay the host")
+		return "", nshelper.InvalidRequest("network profile requires a bridge cluster: a profile on a host network would shape the host")
 	case name == "":
 		return "", nshelper.InvalidRequest("Ceph bridge is not initialized")
 	}
@@ -1330,9 +835,9 @@ func admitNetworkDelayTarget(ctx context.Context, c *ceph.Container, target test
 	return name, nil
 }
 
-// reserveNetworkDelay reserves the endpoint of container id on the bridge
-// name until settleNetworkDelay.
-func reserveNetworkDelay(ctx context.Context, c *ceph.Container, name, id string) (faulthook.Token, error) {
+// reserveNetworkProfile reserves the endpoint of container id on the bridge
+// name until settleNetworkProfile.
+func reserveNetworkProfile(ctx context.Context, c *ceph.Container, name, id string) (faulthook.Token, error) {
 	_, terminated := faulthook.Terminated()
 	var token faulthook.Token
 	err := faulthook.WithTopology(ctx, c, func() error {
@@ -1340,15 +845,15 @@ func reserveNetworkDelay(ctx context.Context, c *ceph.Container, name, id string
 			return terminated
 		}
 		var reserveErr error
-		token, _, reserveErr = faulthook.Reserve(ctx, c, faulthook.NetworkDelay, name+"/"+id)
+		token, _, reserveErr = faulthook.Reserve(ctx, c, faulthook.NetworkProfile, name+"/"+id)
 		return reserveErr
 	})
 	return token, err
 }
 
-// settleNetworkDelay keeps a returned lease for Terminate, or frees the
+// settleNetworkProfile keeps a returned lease for Terminate, or frees the
 // reservation when there is none. It reports whether Terminate has started.
-func settleNetworkDelay(c *ceph.Container, token faulthook.Token, lease *NetworkProfileLease) (closed bool) {
+func settleNetworkProfile(c *ceph.Container, token faulthook.Token, lease *NetworkProfileLease) (closed bool) {
 	faulthook.WithTopologyNoContext(c, func() {
 		held := faulthook.Held{}
 		if lease != nil {
@@ -1361,12 +866,12 @@ func settleNetworkDelay(c *ceph.Container, token faulthook.Token, lease *Network
 	return closed
 }
 
-// applyNetworkDelay checks the helper and the target, then applies the delay.
+// applyEndpointProfile checks the helper and the target, then applies the profile.
 // It returns a lease whenever the change may have reached the kernel.
 // With source, each peer's port is the TCP source port of what the
-// endpoint sends: the lease shapes a peer's side of an Inbound delay.
-func applyNetworkDelay(ctx context.Context, backend netemBackend, id, network string, delay NetworkProfile, source bool) (*NetworkProfileLease, error) {
-	state, peers, imageID, err := admitNetworkDelay(ctx, backend, id, network, delay, source)
+// endpoint sends: the lease shapes a peer's side of an Inbound profile.
+func applyEndpointProfile(ctx context.Context, backend netemBackend, id, network string, profile NetworkProfile, source bool) (*NetworkProfileLease, error) {
+	state, peers, imageID, err := admitEndpointProfile(ctx, backend, id, network, profile, source)
 	if err != nil {
 		return nil, err
 	}
@@ -1375,40 +880,63 @@ func applyNetworkDelay(ctx context.Context, backend netemBackend, id, network st
 	if err != nil {
 		return nil, err
 	}
-	lease := newNetworkProfileLease(backend, helper, id, network, state, imageID, peers, delay)
-	lease.SourcePorts, lease.match.source = source, source
+	lease := newNetworkProfileLease(backend, helper, id, network, state, imageID, peers, profile)
+	lease.SourcePorts, lease.shape.Match.Source = source, source
 	if err := lease.locate(ctx, state); err != nil {
 		return lease.discard(ctx, err)
 	}
-	lease.handle = fmt.Sprintf("%x:", 0x1000+rand.IntN(0xe000))
-	if keep, err := lease.runSteps(ctx, lease.plan(netemArguments(delay, lease.Rate, lease.QueueLimit))); err != nil {
+	lease.pickHandles()
+	if keep, err := lease.runSteps(ctx, lease.shape.Steps(lease.Interface, lease.params.Arguments())); err != nil {
 		if !keep {
 			return lease.discard(ctx, err)
 		}
 		return lease, err
 	}
-	return lease, lease.verifyApplied(ctx, delay)
+	return lease, lease.verifyApplied(ctx)
 }
 
-// admitNetworkDelay checks the target's endpoint, that every IPv6 peer has an
+// pickHandles picks the lease's root handle and, with peers, a different
+// handle for its netem child.
+func (l *NetworkProfileLease) pickHandles() {
+	random := func() string { return fmt.Sprintf("%x:", 0x1000+rand.IntN(0xe000)) }
+	l.shape.Handle = random()
+	if len(l.shape.Peers) == 0 {
+		return
+	}
+	for l.shape.Child = random(); l.shape.Child == l.shape.Handle; {
+		l.shape.Child = random()
+	}
+}
+
+// verifyApplied reads the kernel's qdisc back and requires exactly the
+// requested profile.
+func (l *NetworkProfileLease) verifyApplied(ctx context.Context) error {
+	status, err := l.read(ctx)
+	if err != nil {
+		return fmt.Errorf("read the netem profile: %w", err)
+	}
+	return l.params.Verify(status.state)
+}
+
+// admitEndpointProfile checks the target's endpoint, that every IPv6 peer has an
 // IPv6 target address, and the helper image, before anything is started. It
 // returns the target, the selected peers and the checked image's ID.
-func admitNetworkDelay(ctx context.Context, backend netemBackend, id, network string, delay NetworkProfile, source bool) (nshelper.Target, []NetworkPeer, string, error) {
+func admitEndpointProfile(ctx context.Context, backend netemBackend, id, network string, profile NetworkProfile, source bool) (nshelper.Target, []NetworkPeer, string, error) {
 	state, err := backend.target(ctx, id, network)
 	if err != nil {
-		return nshelper.Target{}, nil, "", faulthook.ClassifyDocker(ctx, fmt.Errorf("inspect the network delay target: %w", err))
+		return nshelper.Target{}, nil, "", faulthook.ClassifyDocker(ctx, fmt.Errorf("inspect the network profile target: %w", err))
 	}
 	if err := admitNetemTarget(state); err != nil {
 		return nshelper.Target{}, nil, "", err
 	}
-	peers := delay.selection()
+	peers := profile.selection()
 	for _, peer := range peers {
 		if peer.Addr.Is6() && !state.Address6.IsValid() {
-			return nshelper.Target{}, nil, "", nshelper.InvalidRequest("network delay peer %s is IPv6, and the target has no IPv6 address on %s", peer.Addr, network)
+			return nshelper.Target{}, nil, "", nshelper.InvalidRequest("network profile peer %s is IPv6, and the target has no IPv6 address on %s", peer.Addr, network)
 		}
 	}
-	imageID, err := preflightNetem(ctx, backend, delay.HelperImage, len(peers) > 0, delay.Rate > 0, delay.requestedFaults(),
-		peerMatch{source: source, setup: delay.Phase == ConnectionSetup})
+	imageID, err := preflightNetem(ctx, backend, profile.HelperImage, netem.Preflight{Rate: profile.Rate > 0,
+		Faults: profile.params().Requested(), Peers: len(peers) > 0, Match: netem.Match{Source: source, Setup: profile.Phase == ConnectionSetup}})
 	if err != nil {
 		return nshelper.Target{}, nil, "", err
 	}
@@ -1417,21 +945,39 @@ func admitNetworkDelay(ctx context.Context, backend netemBackend, id, network st
 
 // newNetworkProfileLease records the requested profile and the target it is
 // applied to; the interface, handles and kernel state are filled in later.
-func newNetworkProfileLease(backend netemBackend, helper testcontainers.Container, id, network string, state nshelper.Target, imageID string, peers []NetworkPeer, delay NetworkProfile) *NetworkProfileLease {
+func newNetworkProfileLease(backend netemBackend, helper testcontainers.Container, id, network string, state nshelper.Target, imageID string, peers []NetworkPeer, profile NetworkProfile) *NetworkProfileLease {
 	lease := &NetworkProfileLease{ContainerID: id, NetworkName: network, SandboxID: state.SandboxID,
-		MACAddress: state.MAC, Address: state.Address, HelperImageID: imageID, Delay: delay.Delay,
-		Jitter: delay.Jitter, Peer: delay.Peer, PeerPort: delay.PeerPort, Peers: slices.Clone(peers), Loss: delay.Loss, Direction: delay.Direction,
-		Phase: delay.Phase, backend: backend, helper: helper, shapes: true,
+		MACAddress: state.MAC, Address: state.Address, HelperImageID: imageID, Delay: profile.Delay,
+		Jitter: profile.Jitter, Peer: profile.Peer, PeerPort: profile.PeerPort, Peers: slices.Clone(peers), Loss: profile.Loss, Direction: profile.Direction,
+		Phase: profile.Phase, backend: backend, helper: helper, shapes: true,
 		id: id, network: network, sandbox: state.SandboxID, helperImage: imageID,
-		peerPolicy: slices.Clone(peers), match: peerMatch{setup: delay.Phase == ConnectionSetup}}
-	if delay.Rate > 0 {
-		lease.Rate, lease.QueueLimit = delay.Rate, delay.QueueLimit
-		if lease.QueueLimit == 0 {
-			lease.QueueLimit = DefaultNetworkQueueLimit
+		shape: netem.Shape{Peers: netemPeers(peers), Match: netem.Match{Setup: profile.Phase == ConnectionSetup}}, params: profile.params()}
+	lease.Rate, lease.QueueLimit = NetworkRate(lease.params.Rate), lease.params.Limit
+	lease.Reorder, lease.Duplicate, lease.Corrupt = profile.Reorder, profile.Duplicate, profile.Corrupt
+	return lease
+}
+
+// params is the profile's netem qdisc, with the queue limit of a Rate
+// resolved.
+func (d NetworkProfile) params() netem.Params {
+	params := netem.Params{Delay: d.Delay, Jitter: d.Jitter, Loss: d.Loss,
+		Reorder: netem.Fault(d.Reorder), Duplicate: netem.Fault(d.Duplicate), Corrupt: netem.Fault(d.Corrupt)}
+	if d.Rate > 0 {
+		params.Rate, params.Limit = uint64(d.Rate), d.QueueLimit
+		if params.Limit == 0 {
+			params.Limit = DefaultNetworkQueueLimit
 		}
 	}
-	lease.Reorder, lease.Duplicate, lease.Corrupt = delay.Reorder, delay.Duplicate, delay.Corrupt
-	return lease
+	return params
+}
+
+// netemPeers converts a selection for internal/netem.
+func netemPeers(peers []NetworkPeer) []netem.Peer {
+	converted := make([]netem.Peer, len(peers))
+	for i, peer := range peers {
+		converted[i] = netem.Peer(peer)
+	}
+	return converted
 }
 
 // discard removes the helper of a lease that changed nothing in the kernel.
@@ -1451,106 +997,45 @@ func (l *NetworkProfileLease) locate(ctx context.Context, state nshelper.Target)
 	if len(report.Links) != 1 {
 		return fmt.Errorf("found %d interfaces with the target's address and MAC on %s", len(report.Links), l.network)
 	}
-	root, err := report.root()
+	root, err := report.Root()
 	if err != nil {
 		return err
 	}
 	if root.Handle != "0:" {
-		return nshelper.InvalidRequest("the target's interface has a %s root qdisc (handle %s) that the delay would replace", root.Kind, root.Handle)
+		return nshelper.InvalidRequest("the target's interface has a %s root qdisc (handle %s) that the profile would replace", root.Kind, root.Handle)
 	}
 	l.namespace, l.interfaceIndex = report.Namespace, report.Links[0].Index
 	l.Namespace, l.Interface, l.InterfaceIndex = l.namespace, report.Links[0].Name, l.interfaceIndex
 	if again, err := l.backend.target(ctx, l.id, l.network); err != nil || again.SandboxID != state.SandboxID {
-		return errors.Join(errors.New("the network delay target restarted while it was being checked"), err)
+		return errors.Join(errors.New("the network profile target restarted while it was being checked"), err)
 	}
 	return nil
-}
-
-// netemArguments is the netem qdisc's parameter list for delay, with rate and
-// queueLimit as the lease resolved them.
-func netemArguments(delay NetworkProfile, rate NetworkRate, queueLimit int) []string {
-	netem := []string{"netem"}
-	// tc (iproute2 6.1, as in NetemHelperImage) sends a duplicate's
-	// correlation only together with a delay's correlation, and drops it
-	// silently otherwise. A zero delay correlation, which the kernel also
-	// has without one, makes it send both.
-	dupCorrelation := delay.Duplicate.Correlation != 0
-	if delay.Delay > 0 || dupCorrelation {
-		netem = append(netem, "delay", fmt.Sprintf("%dus", delay.Delay.Microseconds()))
-		if delay.Jitter > 0 || dupCorrelation {
-			netem = append(netem, fmt.Sprintf("%dus", delay.Jitter.Microseconds()))
-		}
-		if dupCorrelation {
-			netem = append(netem, "0%")
-		}
-	}
-	if delay.Loss > 0 {
-		netem = append(netem, "loss", strconv.FormatFloat(delay.Loss, 'f', -1, 64)+"%")
-	}
-	for _, fault := range delay.packetFaults() {
-		if !fault.fault.IsZero() {
-			netem = append(append(netem, fault.name), strings.Fields(fault.fault.String())...)
-		}
-	}
-	if rate > 0 {
-		netem = append(netem, "rate", strconv.FormatUint(uint64(rate), 10)+"bit", "limit", strconv.Itoa(queueLimit))
-	}
-	return netem
-}
-
-// plan is the tc commands that install netem under the lease's root handle:
-// netem itself as the root, or, with peers, a prio root whose every priority
-// is in band 1, netem on the peer band and the peer filters added last, so
-// nothing is delayed until the filters select the peers' packets. It picks
-// the child handle.
-func (l *NetworkProfileLease) plan(netem []string) []netemStep {
-	if len(l.peerPolicy) == 0 {
-		return []netemStep{{"add the netem delay", append([]string{"tc", "qdisc", "add", "dev", l.Interface, "root", "handle", l.handle}, netem...)}}
-	}
-	l.child = fmt.Sprintf("%x:", 0x1000+rand.IntN(0xe000))
-	for l.child == l.handle {
-		l.child = fmt.Sprintf("%x:", 0x1000+rand.IntN(0xe000))
-	}
-	priomap := slices.Repeat([]string{"0"}, 16)
-	steps := []netemStep{
-		{"add the delay's prio root", append([]string{"tc", "qdisc", "add", "dev", l.Interface, "root", "handle", l.handle, "prio", "bands", "3", "priomap"}, priomap...)},
-		{"add the netem delay", append([]string{"tc", "qdisc", "add", "dev", l.Interface, "parent", l.handle + peerBand, "handle", l.child}, netem...)},
-	}
-	leaves := planPeerLeaves(l.peerPolicy)
-	for i, leaf := range leaves {
-		label := "add the peer filter"
-		if len(leaves) > 1 {
-			label = fmt.Sprintf("add peer filter %d of %d", i+1, len(leaves))
-		}
-		steps = append(steps, netemStep{label, peerFilterArgs(l.Interface, l.handle, leaf, l.match)})
-	}
-	return steps
 }
 
 // runSteps runs the planned commands in order. On failure keep reports
 // whether the change may have reached the kernel, so the lease must be
 // returned; otherwise nothing changed and the helper can be discarded.
-func (l *NetworkProfileLease) runSteps(ctx context.Context, steps []netemStep) (keep bool, err error) {
+func (l *NetworkProfileLease) runSteps(ctx context.Context, steps []netem.Step) (keep bool, err error) {
 	for i, step := range steps {
-		result, err := l.backend.run(ctx, l.helper, step.label, step.argv...)
+		result, err := l.backend.run(ctx, l.helper, step.Label, step.Argv...)
 		if err != nil {
 			// The command may have reached the kernel; only the lease can tell.
 			if marker, unconfirmed := supervised.Unconfirmed(err); unconfirmed {
 				l.pending = marker
 			}
-			return true, fmt.Errorf("%s: %w", step.label, err)
+			return true, fmt.Errorf("%s: %w", step.Label, err)
 		}
 		if result.ExitCode == 0 && !result.TimedOut {
 			continue
 		}
-		cause := netemCommandError(step.label, result)
+		cause := netem.CommandError(step.Label, result)
 		if i > 0 {
 			// The root is the lease's; Restore removes it with the rest.
 			return true, cause
 		}
 		// tc changes nothing when the kernel refuses the request.
 		status, statusErr := l.read(ctx)
-		if statusErr != nil || status.Applied || status.RootHandle == l.handle {
+		if statusErr != nil || status.Applied || status.RootHandle == l.shape.Handle {
 			return true, errors.Join(cause, statusErr)
 		}
 		return false, cause
@@ -1558,47 +1043,11 @@ func (l *NetworkProfileLease) runSteps(ctx context.Context, steps []netemStep) (
 	return false, nil
 }
 
-// verifyApplied reads the kernel's qdisc back and requires exactly the
-// requested delay, jitter, loss, rate, queue limit and packet faults.
-func (l *NetworkProfileLease) verifyApplied(ctx context.Context, delay NetworkProfile) error {
-	status, err := l.read(ctx)
-	if err != nil {
-		return fmt.Errorf("read the netem delay: %w", err)
-	}
-	// The kernel keeps the loss as a 32-bit probability.
-	if !status.Applied || status.Delay != delay.Delay || status.Jitter != delay.Jitter || math.Abs(status.Loss-delay.Loss) > 1e-4 ||
-		status.Rate != l.Rate || l.Rate > 0 && status.QueueLimit != l.QueueLimit {
-		return errors.Join(fmt.Errorf("the kernel reports root %s %s with delay %v, jitter %v, loss %v%%, rate %v and queue limit %d instead of the requested delay",
-			status.RootKind, status.RootHandle, status.Delay, status.Jitter, status.Loss, status.Rate, status.QueueLimit), status.mismatch)
-	}
-	return l.checkFaults(status)
-}
-
-// checkFaults compares the kernel's packet faults and reorder gap with the
-// request: a fault that the kernel did not keep, or keeps without being
-// asked, is an error.
-func (l *NetworkProfileLease) checkFaults(status NetworkProfileStatus) error {
-	kernel := map[string]NetworkPacketFault{"reorder": status.Reorder, "duplicate": status.Duplicate, "corrupt": status.Corrupt}
-	for _, fault := range (NetworkProfile{Reorder: l.Reorder, Duplicate: l.Duplicate, Corrupt: l.Corrupt}).packetFaults() {
-		if !fault.fault.matches(kernel[fault.name]) {
-			return fmt.Errorf("the kernel reports %s %v instead of the requested %v", fault.name, kernel[fault.name], fault.fault)
-		}
-	}
-	wantGap := 0
-	if !l.Reorder.IsZero() {
-		wantGap = 1
-	}
-	if status.Gap != wantGap {
-		return fmt.Errorf("the kernel reports a reorder gap of %d instead of %d", status.Gap, wantGap)
-	}
-	return nil
-}
-
 // admitNetemTarget refuses targets whose namespace the helper cannot join.
 func admitNetemTarget(state nshelper.Target) error {
-	return nshelper.Admit(state, "network delay", "the container", func(state nshelper.Target) error {
+	return nshelper.Admit(state, "network profile", "the container", func(state nshelper.Target) error {
 		if !state.Address.Is4() || state.MAC == "" {
-			return nshelper.InvalidRequest("network delay requires an IPv4 endpoint with a MAC address")
+			return nshelper.InvalidRequest("network profile requires an IPv4 endpoint with a MAC address")
 		}
 		return nil
 	})
@@ -1606,10 +1055,10 @@ func admitNetemTarget(state nshelper.Target) error {
 
 // preflightNetem checks the helper image, NET_ADMIN and the kernel's netem,
 // for a Rate also netem's rate in tc and the kernel, for faults (netem
-// keywords) those packet faults in tc and the kernel, and for a delay with
+// keywords) those packet faults in tc and the kernel, and for a profile with
 // peers also the kernel's prio qdisc and u32 classifier, in a helper without
 // a network, and returns the helper's image ID.
-func preflightNetem(ctx context.Context, backend netemBackend, image string, peers, rate bool, faults []string, match peerMatch) (string, error) {
+func preflightNetem(ctx context.Context, backend netemBackend, image string, preflight netem.Preflight) (string, error) {
 	helper, err := backend.startHelper(ctx, image, "none")
 	if err != nil {
 		return "", errors.Join(faulthook.ClassifyDocker(ctx, fmt.Errorf("start the netem preflight helper: %w", err)), removeNetemHelper(ctx, backend, helper))
@@ -1619,237 +1068,39 @@ func preflightNetem(ctx context.Context, backend netemBackend, image string, pee
 		if err != nil {
 			return "", fmt.Errorf("inspect the netem preflight helper: %w", err)
 		}
-		args := []string{"preflight"}
-		if rate {
-			args = append(args, "rate")
-		}
-		args = append(args, faults...)
-		if peers {
-			args = append(args, "peers")
-			if match.source {
-				args = append(args, "sport")
-			}
-			if match.setup {
-				args = append(args, "setup")
-			}
-		}
-		report, err := runNetemScript(ctx, backend, helper, "check the netem helper", args...)
+		report, err := runNetemScript(ctx, backend, helper, "check the netem helper", preflight.Args()...)
 		if err != nil {
 			return "", err
 		}
-		// The helper's script wrote this report; anything that it leaves out
-		// or gets wrong is a helper that does not meet the contract.
-		switch {
-		case report.Missing == nil:
-			return "", fmt.Errorf("%w: the preflight report lists no missing executables", ErrNetemImageUnsupported)
-		case len(report.Missing) > 0:
-			return "", fmt.Errorf("%w: missing %s", ErrNetemImageUnsupported, strings.Join(report.Missing, ", "))
-		case report.Broken == nil:
-			return "", fmt.Errorf("%w: the preflight report lists no broken commands", ErrNetemImageUnsupported)
-		case len(report.Broken) > 0:
-			return "", fmt.Errorf("%w: failed %s", ErrNetemImageUnsupported, strings.Join(report.Broken, ", "))
-		case !report.NetAdmin:
-			return "", ErrNetemPermissionDenied
-		}
-		code, text, err := netemResult(report.Add, "add")
-		if err != nil {
+		if err := preflight.Check(report); err != nil {
 			return "", err
-		}
-		if code != 0 {
-			return "", classifyNetem("add netem on the helper's loopback", code, text)
-		}
-		var shown []netemQdisc
-		if err := json.Unmarshal([]byte(report.Shown), &shown); err != nil || len(shown) == 0 || shown[0].Kind != "netem" {
-			return "", fmt.Errorf("%w: tc did not show the netem qdisc it added", ErrNetemImageUnsupported)
-		}
-		if code, text, err = netemResult(report.Delete, "delete"); err != nil {
-			return "", err
-		}
-		if code != 0 {
-			return "", classifyNetem("remove netem from the helper's loopback", code, text)
-		}
-		if rate {
-			if err := preflightRate(report); err != nil {
-				return "", err
-			}
-		}
-		if len(faults) > 0 {
-			if err := preflightFaults(report, faults); err != nil {
-				return "", err
-			}
-		}
-		if peers {
-			if err := preflightPeers(report, match); err != nil {
-				return "", err
-			}
 		}
 		return imageID, nil
 	}()
 	return imageID, errors.Join(err, removeNetemHelper(ctx, backend, helper))
 }
 
-// preflightRate checks the preflight's netem rate on the helper's loopback:
-// tc must parse netem's rate and limit, and the kernel must keep both.
-func preflightRate(report netemReport) error {
-	code, text, err := netemResult(report.Rate, "rate")
-	if err != nil {
-		return err
-	}
-	if code != 0 {
-		return classifyNetem("add a netem rate on the helper's loopback", code, text)
-	}
-	var shown []netemQdisc
-	if err := json.Unmarshal([]byte(report.RateShown), &shown); err != nil {
-		return fmt.Errorf("%w: tc did not show the netem rate it added", ErrNetemImageUnsupported)
-	}
-	i := slices.IndexFunc(shown, func(qdisc netemQdisc) bool { return qdisc.Kind == "netem" && qdisc.Handle == "c7e3:" })
-	switch {
-	case i < 0:
-		return fmt.Errorf("%w: tc did not show the netem rate it added", ErrNetemImageUnsupported)
-	case shown[i].Options.Rate.Rate != 125000 || shown[i].Options.Limit != 100:
-		return fmt.Errorf("%w: netem kept a rate of %d bytes/s and a limit of %d instead of 125000 and 100", ErrNetemKernelUnsupported,
-			shown[i].Options.Rate.Rate, shown[i].Options.Limit)
-	}
-	if code, text, err = netemResult(report.RateDelete, "rate_delete"); err != nil {
-		return err
-	}
-	if code != 0 {
-		return classifyNetem("remove the netem rate from the helper's loopback", code, text)
-	}
-	return nil
-}
-
-// preflightFault is the packet fault that the preflight adds for each
-// netem keyword, with a correlation, as netemScript's arguments say.
-var preflightFault = map[string]NetworkPacketFault{
-	"reorder":   {Percent: 25, Correlation: 50},
-	"duplicate": {Percent: 3, Correlation: 10},
-	"corrupt":   {Percent: 2, Correlation: 5},
-}
-
-// preflightFaults checks the preflight's netem packet faults on the
-// helper's loopback: tc must parse each requested fault with its
-// correlation, and the kernel must keep each, and for a reorder the gap.
-func preflightFaults(report netemReport, faults []string) error {
-	code, text, err := netemResult(report.Faults, "faults")
-	if err != nil {
-		return err
-	}
-	if code != 0 {
-		return classifyNetem("add netem's "+strings.Join(faults, ", ")+" on the helper's loopback", code, text)
-	}
-	var shown []netemQdisc
-	if err := json.Unmarshal([]byte(report.FaultsShown), &shown); err != nil {
-		return fmt.Errorf("%w: tc did not show the netem packet faults it added", ErrNetemImageUnsupported)
-	}
-	i := slices.IndexFunc(shown, func(qdisc netemQdisc) bool { return qdisc.Kind == "netem" && qdisc.Handle == "c7e4:" })
-	if i < 0 {
-		return fmt.Errorf("%w: tc did not show the netem packet faults it added", ErrNetemImageUnsupported)
-	}
-	options := shown[i].Options
-	kernel := map[string]netemFault{"reorder": options.Reorder, "duplicate": options.Duplicate, "corrupt": options.Corrupt}
-	for _, name := range faults {
-		if got := kernel[name].fault(name); !preflightFault[name].matches(got) {
-			return fmt.Errorf("%w: netem kept %s %v instead of %v", ErrNetemKernelUnsupported, name, got, preflightFault[name])
-		}
-	}
-	if slices.Contains(faults, "reorder") && options.Gap != 1 {
-		return fmt.Errorf("%w: netem kept a reorder gap of %d instead of 1", ErrNetemKernelUnsupported, options.Gap)
-	}
-	if code, text, err = netemResult(report.FaultsDelete, "faults_delete"); err != nil {
-		return err
-	}
-	if code != 0 {
-		return classifyNetem("remove the netem packet faults from the helper's loopback", code, text)
-	}
-	return nil
-}
-
-// preflightPeers checks the preflight's prio root and u32 filter on the
-// helper's loopback: what a delay with peers adds above netem.
-func preflightPeers(report netemReport, match peerMatch) error {
-	code, text, err := netemResult(report.Prio, "prio")
-	if err != nil {
-		return err
-	}
-	if code != 0 {
-		return classifyNetem("add a prio qdisc on the helper's loopback", code, text)
-	}
-	if code, text, err = netemResult(report.U32, "u32"); err != nil {
-		return err
-	}
-	if code != 0 {
-		return classifyNetem("add a u32 filter on the helper's loopback", code, text)
-	}
-	var shown []netemFilter
-	if err := json.Unmarshal([]byte(report.U32Shown), &shown); err != nil {
-		return fmt.Errorf("%w: tc did not show the u32 filter it added", ErrNetemImageUnsupported)
-	}
-	i := slices.IndexFunc(shown, func(filter netemFilter) bool { return filter.Kind == "u32" && filter.Options.FlowID == "c7e2:3" })
-	if i < 0 {
-		return fmt.Errorf("%w: tc did not show the u32 filter it added", ErrNetemImageUnsupported)
-	}
-	if match.source || match.setup {
-		// The source port and SYN keys must reach the kernel as the
-		// lease will read them back.
-		var port uint16 = 7000
-		var got []u32Key
-		for _, key := range shown[i].Options.Matches {
-			value, err1 := strconv.ParseUint(key.Value, 16, 32)
-			mask, err2 := strconv.ParseUint(key.Mask, 16, 32)
-			if err1 != nil || err2 != nil || key.OffMask != "" {
-				return fmt.Errorf("%w: tc printed the u32 key %+v", ErrNetemImageUnsupported, key)
-			}
-			got = append(got, u32Key{Off: key.Off, Value: uint32(value), Mask: uint32(mask)})
-		}
-		if want := peerFilterKeys(netip.MustParseAddr("127.0.0.2"), port, match); !slices.Equal(got, want) {
-			return fmt.Errorf("%w: the u32 filter kept the keys %v instead of %v", ErrNetemKernelUnsupported, got, want)
-		}
-	}
-	if code, text, err = netemResult(report.PrioDelete, "prio_delete"); err != nil {
-		return err
-	}
-	if code != 0 {
-		return classifyNetem("remove the prio qdisc from the helper's loopback", code, text)
-	}
-	return nil
-}
-
-// netemResult reads one [exit code, stderr] pair of the preflight report.
-func netemResult(value []any, name string) (int, string, error) {
-	malformed := fmt.Errorf("%w: the preflight report has no valid %s result", ErrNetemImageUnsupported, name)
-	if len(value) != 2 {
-		return 0, "", malformed
-	}
-	code, isNumber := value[0].(float64)
-	text, isText := value[1].(string)
-	if !isNumber || !isText || code != math.Trunc(code) || code < 0 || code > 255 {
-		return 0, "", malformed
-	}
-	return int(code), text, nil
-}
-
-// runNetemScript runs netemScript in helper.
-func runNetemScript(ctx context.Context, backend netemBackend, helper testcontainers.Container, label string, args ...string) (netemReport, error) {
-	result, err := backend.run(ctx, helper, label, append([]string{"python3", "-c", netemScript}, args...)...)
+// runNetemScript runs netem.Script in helper.
+func runNetemScript(ctx context.Context, backend netemBackend, helper testcontainers.Container, label string, args ...string) (netem.Report, error) {
+	result, err := backend.run(ctx, helper, label, append([]string{"python3", "-c", netem.Script}, args...)...)
 	var exit *supervised.ExitError
 	if errors.As(err, &exit) && (exit.Code == 126 || exit.Code == 127) {
-		return netemReport{}, fmt.Errorf("%w: it cannot run python3", ErrNetemImageUnsupported)
+		return netem.Report{}, fmt.Errorf("%w: it cannot run python3", ErrNetemImageUnsupported)
 	}
 	if err != nil {
-		return netemReport{}, fmt.Errorf("%s: %w", label, err)
+		return netem.Report{}, fmt.Errorf("%s: %w", label, err)
 	}
 	if result.TimedOut {
 		// Too slow says nothing about the image.
-		return netemReport{}, fmt.Errorf("%s timed out", label)
+		return netem.Report{}, fmt.Errorf("%s timed out", label)
 	}
 	if result.ExitCode != 0 || result.StdoutTruncated {
 		// The contract's script failed: the image, whatever tc reported.
-		return netemReport{}, fmt.Errorf("%w: %v", ErrNetemImageUnsupported, netemCommandError(label, result))
+		return netem.Report{}, fmt.Errorf("%w: %v", ErrNetemImageUnsupported, netem.CommandError(label, result))
 	}
-	var report netemReport
+	var report netem.Report
 	if err := json.Unmarshal(result.Stdout, &report); err != nil {
-		return netemReport{}, fmt.Errorf("%s: parse its report: %w", label, err)
+		return netem.Report{}, fmt.Errorf("%s: parse its report: %w", label, err)
 	}
 	return report, nil
 }
@@ -1869,37 +1120,13 @@ func startNetemHelper(ctx context.Context, backend netemBackend, image string, n
 }
 
 // inspectNetem reads the namespace, interface and qdiscs that helper sees,
-// selecting the interface as netemScript's args say.
-func inspectNetem(ctx context.Context, backend netemBackend, helper testcontainers.Container, args ...string) (netemReport, error) {
-	report, err := runNetemScript(ctx, backend, helper, "inspect the delayed interface", args...)
+// selecting the interface as netem.Script's args say.
+func inspectNetem(ctx context.Context, backend netemBackend, helper testcontainers.Container, args ...string) (netem.Report, error) {
+	report, err := runNetemScript(ctx, backend, helper, "inspect the shaped interface", args...)
 	if err == nil && report.Error != "" {
-		err = fmt.Errorf("inspect the delayed interface: %s", report.Error)
+		err = fmt.Errorf("inspect the shaped interface: %s", report.Error)
 	}
 	return report, err
-}
-
-func netemCommandError(label string, result supervised.Report) error {
-	if result.TimedOut {
-		return fmt.Errorf("%s timed out", label)
-	}
-	return classifyNetem(label, result.ExitCode, strings.TrimSpace(string(result.Stderr)))
-}
-
-// classifyNetem turns tc's exit code and error text into the error kinds of
-// the contract, or a *ceph.NativeFailure of tc.
-func classifyNetem(label string, code int, text string) error {
-	switch {
-	case strings.Contains(text, "Operation not permitted"):
-		return fmt.Errorf("%s: %w", label, ErrNetemPermissionDenied)
-	case strings.Contains(text, "Specified qdisc kind is unknown"):
-		return fmt.Errorf("%s: %w: no such qdisc", label, ErrNetemKernelUnsupported)
-	case strings.Contains(text, "TC classifier not found"):
-		return fmt.Errorf("%s: %w: no such classifier", label, ErrNetemKernelUnsupported)
-	case strings.Contains(text, "Unknown qdisc") || strings.Contains(text, "Unknown filter") || strings.Contains(text, "unparsable") ||
-		strings.Contains(text, `What is "`):
-		return fmt.Errorf("%s: %w: tc cannot parse it", label, ErrNetemImageUnsupported)
-	}
-	return fmt.Errorf("%s: %w", label, faulthook.NativeFailure("tc", code, nil, []byte(text)))
 }
 
 // removeNetemHelper removes helper, also after ctx ended: a helper of a
@@ -1919,25 +1146,29 @@ func removeNetemHelper(ctx context.Context, backend netemBackend, helper testcon
 	return nil
 }
 
-// Status reads the delayed interface's qdiscs through the helper. After the
+// Status reads the shaped interface's qdiscs through the helper. After the
 // target restarted, stopped, was removed or left the bridge, it reports Gone.
 // With peers it reports Applied only when the root, the netem child and
 // exactly the lease's filters, with the requested address and port keys,
 // are present and nothing else is under the root; Filters holds tc's filter
 // dump with each u32 filter's keys under matches. The counters are the
-// child's, so they count only selected packets.
+// child's, so they count only selected packets. A nil lease is refused with
+// an error matching ceph.ErrInvalidRequest.
 //
 //purpose:observation
 func (l *NetworkProfileLease) Status(ctx context.Context) (NetworkProfileStatus, error) {
+	if l == nil {
+		return NetworkProfileStatus{}, unavailable("network profile")
+	}
 	if err := lockMutex(ctx, &l.mu); err != nil {
 		return NetworkProfileStatus{}, err
 	}
 	defer l.mu.Unlock()
 	if l.complete {
-		return NetworkProfileStatus{}, nshelper.InvalidRequest("the network delay was restored")
+		return NetworkProfileStatus{}, nshelper.InvalidRequest("the network profile was restored")
 	}
 	if !l.shapes {
-		return NetworkProfileStatus{}, nshelper.InvalidRequest("an Inbound delay shapes only its peers' endpoints: read the Status of each lease in PeerLeases")
+		return NetworkProfileStatus{}, nshelper.InvalidRequest("an Inbound profile shapes only its peers' endpoints: read the Status of each lease in PeerLeases")
 	}
 	if err := l.settle(ctx); err != nil {
 		return NetworkProfileStatus{}, err
@@ -1965,7 +1196,7 @@ func (l *NetworkProfileLease) settle(ctx context.Context) error {
 		}
 	}
 	if l.pending != "" {
-		if err := l.backend.cancel(ctx, l.helper, "netem delay", l.pending); err != nil {
+		if err := l.backend.cancel(ctx, l.helper, "netem profile", l.pending); err != nil {
 			return fmt.Errorf("confirm that the earlier tc command stopped: %w", err)
 		}
 		l.pending = ""
@@ -1978,7 +1209,7 @@ func (l *NetworkProfileLease) settle(ctx context.Context) error {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("inspect the network delay target: %w", err)
+		return fmt.Errorf("inspect the network profile target: %w", err)
 	}
 	// The validated image, by ID: its tag may now name another image.
 	helper, err := startNetemHelper(ctx, l.backend, l.helperImage, container.NetworkMode("container:"+l.id))
@@ -1989,7 +1220,7 @@ func (l *NetworkProfileLease) settle(ctx context.Context) error {
 	return nil
 }
 
-// read reports the delayed interface's state; the caller holds l.mu and has
+// read reports the shaped interface's state; the caller holds l.mu and has
 // settled the lease. Without a helper the namespace no longer exists.
 func (l *NetworkProfileLease) read(ctx context.Context) (NetworkProfileStatus, error) {
 	if l.helper == nil {
@@ -2001,132 +1232,28 @@ func (l *NetworkProfileLease) read(ctx context.Context) (NetworkProfileStatus, e
 	if err != nil {
 		return NetworkProfileStatus{}, err
 	}
-	// Another namespace, or no interface with that index, is not the delayed
+	// Another namespace, or no interface with that index, is not the shaped
 	// interface; its qdiscs are not the lease's.
 	if report.Namespace != l.namespace || len(report.Links) != 1 {
 		return NetworkProfileStatus{Gone: true}, nil
 	}
-	root, err := report.root()
+	state, err := l.shape.Inspect(report)
 	if err != nil {
 		return NetworkProfileStatus{}, err
 	}
-	status := NetworkProfileStatus{Interface: report.Links[0].Name, RootKind: root.Kind, RootHandle: root.Handle, Qdiscs: report.Qdiscs, Filters: report.Filters}
-	netem := root
-	switch {
-	case len(l.peerPolicy) == 0:
-		if root.Kind == "netem" && root.Handle == l.handle {
-			status.mismatch = l.ownedPrefix(status)
-			status.Applied = status.mismatch == nil
-		}
-	case root.Kind == "prio" && root.Handle == l.handle:
-		// The delay is applied only as the whole hierarchy: the root, its
-		// netem child in the selected band, and the one filter to it.
-		var qdiscs []netemQdisc
-		if err := json.Unmarshal(report.Qdiscs, &qdiscs); err != nil {
-			return NetworkProfileStatus{}, fmt.Errorf("parse tc qdisc output: %w", err)
-		}
-		children := 0
-		for _, qdisc := range qdiscs {
-			if qdisc.Kind == "netem" && qdisc.Handle == l.child && qdisc.Parent == l.handle+peerBand {
-				netem, children = qdisc, children+1
-			}
-		}
-		status.mismatch = errors.Join(checkPeerPriorityMap(root), checkPeerFilter(report.Filters, l.handle, l.peerPolicy, l.match))
-		if children != 1 {
-			status.mismatch = errors.Join(status.mismatch, fmt.Errorf("the prio root has no netem child %s in band %s", l.child, l.handle+peerBand))
-		} else if err := l.ownedPrefix(status); status.mismatch == nil && err != nil {
-			status.mismatch = errors.Join(status.mismatch, err)
-		}
-		status.Applied = status.mismatch == nil
-	}
-	if status.Applied {
-		status.Delay, status.Jitter = seconds(netem.Options.Delay.Delay), seconds(netem.Options.Delay.Jitter)
-		status.Loss = math.Round(netem.Options.Loss.Loss*100*1e6) / 1e6
-		status.Packets, status.Bytes, status.Drops = netem.Packets, netem.Bytes, netem.Drops
-		status.Overlimits, status.Requeues, status.Backlog, status.QueueLength = netem.Overlimits, netem.Requeues, netem.Backlog, netem.Qlen
-		status.Rate, status.QueueLimit = NetworkRate(netem.Options.Rate.Rate)*8, netem.Options.Limit
-		status.Reorder, status.Duplicate = netem.Options.Reorder.fault("reorder"), netem.Options.Duplicate.fault("duplicate")
-		status.Corrupt, status.Gap = netem.Options.Corrupt.fault("corrupt"), int(netem.Options.Gap)
-	}
-	return status, nil
+	return NetworkProfileStatus{Applied: state.Applied, Interface: report.Links[0].Name, RootKind: state.RootKind, RootHandle: state.RootHandle,
+		Delay: state.Delay, Jitter: state.Jitter, Loss: state.Loss, Rate: NetworkRate(state.Rate), QueueLimit: state.Limit,
+		Reorder: NetworkPacketFault(state.Reorder), Duplicate: NetworkPacketFault(state.Duplicate), Corrupt: NetworkPacketFault(state.Corrupt), Gap: state.Gap,
+		Packets: state.Packets, Bytes: state.Bytes, Drops: state.Drops,
+		Overlimits: state.Overlimits, Requeues: state.Requeues, Backlog: state.Backlog, QueueLength: state.QueueLength,
+		Qdiscs: report.Qdiscs, Filters: report.Filters, state: state}, nil
 }
 
-// checkPeerPriorityMap validates selection semantics independently of
-// ownership. An in-place edit can divert unselected traffic into netem
-// without replacing the root, child or filters that Restore owns.
-func checkPeerPriorityMap(root netemQdisc) error {
-	var bands int
-	var priorities []*int
-	if json.Unmarshal(root.Options.Bands, &bands) != nil || bands != 3 ||
-		json.Unmarshal(root.Options.Priomap, &priorities) != nil || len(priorities) != 16 {
-		return fmt.Errorf("unexpected prio routing: bands %s, priomap %s", root.Options.Bands, root.Options.Priomap)
-	}
-	for priority, band := range priorities {
-		if band == nil || *band != 0 {
-			return fmt.Errorf("prio priority %d does not select the unshaped first band: %s", priority, root.Options.Priomap)
-		}
-	}
-	return nil
-}
-
-// ownedPrefix checks that the qdiscs and filters under the lease's root are
-// a prefix of what applying the delay adds: the root, and for a selective
-// delay its netem child in the selected band and then the one filter.
-// Removing the root removes everything under it, so anything else there is
-// foreign; qdiscs outside the root, such as an ingress qdisc, are not.
-func (l *NetworkProfileLease) ownedPrefix(status NetworkProfileStatus) error {
-	var qdiscs []netemQdisc
-	if err := json.Unmarshal(status.Qdiscs, &qdiscs); err != nil {
-		return fmt.Errorf("parse tc qdisc output: %w", err)
-	}
-	rootKind := "netem"
-	if len(l.peerPolicy) > 0 {
-		rootKind = "prio"
-	}
-	// A qdisc is under the root when its parent is the root or a qdisc under
-	// it; tc does not promise to list a parent first.
-	under := map[string]bool{}
-	for changed := true; changed; {
-		changed = false
-		for _, qdisc := range qdiscs {
-			major, _, _ := strings.Cut(qdisc.Handle, ":")
-			parent, _, _ := strings.Cut(qdisc.Parent, ":")
-			if !under[major] && (qdisc.Root || under[parent]) {
-				under[major], changed = true, true
-			}
-		}
-	}
-	for _, qdisc := range qdiscs {
-		if major, _, _ := strings.Cut(qdisc.Handle, ":"); !under[major] {
-			continue
-		}
-		switch {
-		case qdisc.Root && qdisc.Kind == rootKind && qdisc.Handle == l.handle:
-		case len(l.peerPolicy) > 0 && !qdisc.Root && qdisc.Kind == "netem" && qdisc.Handle == l.child && qdisc.Parent == l.handle+peerBand:
-		case qdisc.Root:
-			return fmt.Errorf("the root is %s %s, not the delay's %s", qdisc.Kind, qdisc.Handle, rootKind)
-		default:
-			return fmt.Errorf("a %s qdisc %s under %s", qdisc.Kind, qdisc.Handle, qdisc.Parent)
-		}
-	}
-	if len(l.peerPolicy) > 0 {
-		return checkPeerFilters(status.Filters, l.handle, l.peerPolicy, l.match, false)
-	}
-	var filters []netemFilter
-	if err := json.Unmarshal(status.Filters, &filters); err != nil {
-		return fmt.Errorf("parse tc filter output: %w", err)
-	}
-	if len(filters) > 0 {
-		return fmt.Errorf("%d filters under the root", len(filters))
-	}
-	return nil
-}
-
-// Restore removes the delay's qdisc and then the helper, after restoring
-// each owned peer lease. A delay whose interface is gone needs no removal. A
+// Restore removes the profile's qdisc and then the helper, after restoring
+// each owned peer lease. A profile whose interface is gone needs no removal. A
 // root qdisc that someone replaced, or a filter or qdisc that someone added
 // under the lease's root, is refused, not removed, and the lease stays
-// retryable.
+// retryable. A nil lease has nothing to restore.
 //
 //purpose:condition,lifetime
 func (l *NetworkProfileLease) Restore(ctx context.Context) error {
@@ -2163,30 +1290,30 @@ func (l *NetworkProfileLease) Restore(ctx context.Context) error {
 		return err
 	}
 	if !status.Gone {
-		// The lease's root goes, also when a selective delay is incomplete,
+		// The lease's root goes, also when a selective profile is incomplete,
 		// only while everything under it is what the apply added: removing
 		// the root removes all of it, so foreign state there is refused even
-		// when the delay itself is still applied.
-		if status.RootHandle == l.handle {
-			if err := l.ownedPrefix(status); err != nil {
-				return nshelper.InvalidRequest("the delayed interface's root %s carries state that the lease did not add (%v); remove it, then Restore again", l.handle, err)
+		// when the profile itself is still applied.
+		if status.RootHandle == l.shape.Handle {
+			if err := l.shape.OwnedPrefix(status.Qdiscs, status.Filters); err != nil {
+				return nshelper.InvalidRequest("the shaped interface's root %s carries state that the lease did not add (%v); remove it, then Restore again", l.shape.Handle, err)
 			}
-			result, err := l.backend.run(ctx, l.helper, "remove the netem delay", "tc", "qdisc", "del", "dev", status.Interface, "root", "handle", l.handle)
+			result, err := l.backend.run(ctx, l.helper, "remove the netem profile", "tc", "qdisc", "del", "dev", status.Interface, "root", "handle", l.shape.Handle)
 			if err != nil {
 				if marker, unconfirmed := supervised.Unconfirmed(err); unconfirmed {
 					l.pending = marker
 				}
-				return fmt.Errorf("remove the netem delay: %w", err)
+				return fmt.Errorf("remove the netem profile: %w", err)
 			}
 			if result.ExitCode != 0 || result.TimedOut {
-				return netemCommandError("remove the netem delay", result)
+				return netem.CommandError("remove the netem profile", result)
 			}
 			if status, err = l.read(ctx); err != nil {
 				return err
 			}
 		}
 		if !status.Gone && status.RootHandle != "0:" {
-			return nshelper.InvalidRequest("the delayed interface's root qdisc is now %s %s, which the lease does not own", status.RootKind, status.RootHandle)
+			return nshelper.InvalidRequest("the shaped interface's root qdisc is now %s %s, which the lease does not own", status.RootKind, status.RootHandle)
 		}
 	}
 	if err := removeNetemHelper(ctx, l.backend, l.helper); err != nil {
@@ -2279,7 +1406,7 @@ func (dockerNetemBackend) cancel(ctx context.Context, helper testcontainers.Cont
 }
 
 // ApplyZoneProfile applies netem shaping at the boundary of a cluster with
-// zones (ceph.WithZoneConfig): to the packets that leave zone on delay.Plane,
+// zones (ceph.WithZoneConfig): to the packets that leave zone on profile.Plane,
 // which the zone's router forwards and only those. Every other zone's traffic,
 // and traffic within any zone, keeps its path. To delay or cut both
 // directions between two zones, apply a profile to each zone; one lease per
@@ -2290,7 +1417,7 @@ func (dockerNetemBackend) cancel(ctx context.Context, helper testcontainers.Cont
 // Direction must stay Outbound.
 //
 // It refuses a cluster without zones, an unknown zone or plane, and, while
-// any container on the bridge of any configured plane, not only delay.Plane,
+// any container on the bridge of any configured plane, not only profile.Plane,
 // is neither a router nor a member enrolled for its current start, the
 // shaping itself: such a container would reach the other zones directly (see
 // ceph.ZoneLayout.Unzoned). The
@@ -2299,29 +1426,22 @@ func (dockerNetemBackend) cancel(ctx context.Context, helper testcontainers.Cont
 // restores a held lease first, before the boundary is released.
 //
 //purpose:condition
-func ApplyZoneProfile(ctx context.Context, c *ceph.Container, zone string, delay NetworkProfile) (*NetworkProfileLease, error) {
-	if err := validateNetworkDelay(delay); err != nil {
+func ApplyZoneProfile(ctx context.Context, c *ceph.Container, zone string, profile NetworkProfile) (*NetworkProfileLease, error) {
+	if err := requireCluster(c, "a zone profile"); err != nil {
 		return nil, err
 	}
-	if delay.Direction != Outbound {
+	if err := validateNetworkProfile(profile); err != nil {
+		return nil, err
+	}
+	if profile.Direction != Outbound {
 		return nil, nshelper.InvalidRequest("a zone profile shapes the zone's egress: Direction must be Outbound, apply a profile to the other zone for its direction")
 	}
-	if c == nil {
-		return nil, nshelper.InvalidRequest("a zone profile requires a cluster")
-	}
-	router, name, err := faulthook.ZoneRouter(ctx, c, zone, delay.Plane)
-	if err != nil {
-		return nil, err
-	}
-	token, err := reserveNetworkDelay(ctx, c, name, router.GetContainerID())
+	router, name, err := faulthook.ZoneRouter(ctx, c, zone, profile.Plane)
 	if err != nil {
 		return nil, err
 	}
 	backend := dockerNetemBackend{label: faulthook.OwnedLabel(c)}
-	lease, err := applyNetworkDelay(ctx, backend, router.GetContainerID(), name, delay, false)
-	if closed := settleNetworkDelay(c, token, lease); closed && lease != nil {
-		native, _ := faulthook.Terminated()
-		return lease, errors.Join(err, native, lease.Restore(ctx))
-	}
-	return lease, err
+	return holdEndpoint(ctx, c, name, router.GetContainerID(), func() (*NetworkProfileLease, error) {
+		return applyEndpointProfile(ctx, backend, router.GetContainerID(), name, profile, false)
+	})
 }
