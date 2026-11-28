@@ -75,7 +75,7 @@ func composeOSDOptions(configs []OSDOptions) (osdPlan, error) {
 			if imageFrom >= 0 {
 				return osdPlan{}, invalidRequest("OSD image set by OSDOptions %d and %d; set it in one value", imageFrom, i)
 			}
-			if err := validateDaemonImage(config.image); err != nil {
+			if err := validateImageReference(config.image); err != nil {
 				return osdPlan{}, invalidRequest("OSD image: %v", err)
 			}
 			imageFrom, plan.image, plan.imageSet = i, config.image, true

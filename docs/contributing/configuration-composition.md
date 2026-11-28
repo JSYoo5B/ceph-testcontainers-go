@@ -73,7 +73,7 @@ values.
   unit, so an explicit placement is never mixed field by field with another
   value's placement (rule 3).
 - The image check is the same function as `DaemonOptions.WithImage`
-  (`validateDaemonImage`), so MON, MGR and OSD images are validated alike.
+  (`validateImageReference`), so MON, MGR and OSD images are validated alike.
   `DaemonOptions` is the value of `AddMonitor` and `AddManager`.
 - Hosts, racks, device class and root are validated and resolved by
   `resolveOSDDefaults` and `normalizeOSDConfig`.

@@ -119,7 +119,7 @@ func (c ClockConfig) apply(o *options) error {
 		return fmt.Errorf("clock %s set by more than one WithClockConfig", name)
 	}
 	if c.set&clockHelperImage != 0 {
-		if err := validateDaemonImage(c.helperImage); err != nil {
+		if err := validateImageReference(c.helperImage); err != nil {
 			return fmt.Errorf("clock helper image: %w", err)
 		}
 		o.clock.helperImage = c.helperImage
