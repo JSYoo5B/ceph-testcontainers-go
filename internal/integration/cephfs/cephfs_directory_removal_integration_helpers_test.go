@@ -282,8 +282,8 @@ func testCephFSDirectoryRemovalRelease(t *testing.T, host bool) {
 		t.Fatalf("read rebalanced directory policy: %s, %v", raw, err)
 	}
 	slices.Sort(tracked)
-	if !slices.Equal(tracked, slices.Sorted(slices.Values(remaining))) || !slices.Equal(mirror.Directories, remaining) || legacyFault.removals.Load() != 1 {
-		t.Fatalf("explicitly removed path %q after rebalance: native %v, fixture %v, expected %v, removes %d", selected, tracked, mirror.Directories, remaining, legacyFault.removals.Load())
+	if !slices.Equal(tracked, slices.Sorted(slices.Values(remaining))) || !slices.Equal(mirror.RegisteredDirectories(), remaining) || legacyFault.removals.Load() != 1 {
+		t.Fatalf("explicitly removed path %q after rebalance: native %v, fixture %v, expected %v, removes %d", selected, tracked, mirror.RegisteredDirectories(), remaining, legacyFault.removals.Load())
 	}
 	t.Logf("public strict directory release: path=%s original peer=%s two original CID/StartedAt/watcher sessions preserved; real lost reply reconciled without another delete; other three paths copied bytes while removed path stayed absent; same-path re-add superseded old receipt and copied independent checkpoints", selected, expected.PeerID)
 }

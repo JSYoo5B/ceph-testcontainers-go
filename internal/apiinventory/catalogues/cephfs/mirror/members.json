@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "cephfs/mirror",
-  "count": 100,
+  "count": 101,
   "types": {
     "cephfs/mirror.Config": [
       "Config.DaemonCount field int",
@@ -69,6 +69,7 @@
       "DirectoryStatus.Ready field bool",
       "DirectoryStatus.SnapsRenamed field uint64",
       "DirectoryStatus.SnapshotsDeleted field uint64",
+      "DirectoryStatus.SnapshotsRenamed field uint64",
       "DirectoryStatus.SnapshotsSynced field uint64",
       "DirectoryStatus.SourceFilesystem field string",
       "DirectoryStatus.SourceFilesystemID field int",

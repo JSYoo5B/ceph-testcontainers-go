@@ -31,8 +31,8 @@ type directoryWatchFixture struct {
 func newDirectoryWatchFixture() *directoryWatchFixture {
 	f := &directoryWatchFixture{}
 	f.mirror, f.source, f.destination, f.a, f.b = newCephFSObserverDraft()
-	f.mirror.source = &ceph.Container{Container: terminableDirectoryControl{f.source}}
-	f.mirror.destination = &ceph.Container{Container: terminableDirectoryControl{f.destination}}
+	f.mirror.pair.source = &ceph.Container{Container: terminableDirectoryControl{f.source}}
+	f.mirror.pair.destination = &ceph.Container{Container: terminableDirectoryControl{f.destination}}
 	return f
 }
 
@@ -385,10 +385,10 @@ func TestDirectoryWatchIdentitySubstitutionEndsTheWatch(t *testing.T) {
 			f.mirror.registerDirectory("/owned", false)
 		}, "registered again"},
 		"peer replaced by the fixture": {func(f *directoryWatchFixture) {
-			f.mirror.peerID = otherPeer
+			f.mirror.peer.id = otherPeer
 			f.mirror.ops.peerGeneration++
 		}, "peer was removed or replaced"},
-		"peer removed": {func(f *directoryWatchFixture) { f.mirror.peerID = "" }, "peer was removed or replaced"},
+		"peer removed": {func(f *directoryWatchFixture) { f.mirror.peer.id = "" }, "peer was removed or replaced"},
 		"native peer substituted": {func(f *directoryWatchFixture) {
 			f.source.peer = fmt.Sprintf(`{%q:{"client_name":"client.peer","site_name":"destination-site","fs_name":"destination"}}`, otherPeer)
 		}, "peer policy destination differs"},
@@ -437,9 +437,9 @@ func TestDirectoryWatchEndsWhenAClusterTerminates(t *testing.T) {
 			f := newDirectoryWatchFixture()
 			w := f.start(t, t.Context(), fastDirectoryWatch(4))
 			nextDirectoryEvent(t, w)
-			cluster := f.mirror.source
+			cluster := f.mirror.pair.source
 			if site == "destination" {
-				cluster = f.mirror.destination
+				cluster = f.mirror.pair.destination
 			}
 			if err := cluster.Terminate(t.Context()); err != nil {
 				t.Fatal(err)
@@ -469,7 +469,7 @@ func TestDirectoryWatchHoldsNoLockBetweenReadsOrDuringDelivery(t *testing.T) {
 				t.Fatalf("the watch kept the mirror lock %s", phase)
 			}
 			f.mirror.mu.Unlock()
-			for _, cluster := range []*ceph.Container{f.mirror.source, f.mirror.destination} {
+			for _, cluster := range []*ceph.Container{f.mirror.pair.source, f.mirror.pair.destination} {
 				if !testhelper.TestState(cluster).Mutex.TryLock() {
 					t.Fatalf("the watch kept a cluster topology lock %s", phase)
 				}
@@ -517,9 +517,9 @@ func TestDirectoryWatchHoldsNoLockBetweenReadsOrDuringDelivery(t *testing.T) {
 		}
 	}
 	// The same holds for a cluster operation that keeps the topology lock.
-	servicehook.Lock(f.mirror.source)
+	servicehook.Lock(f.mirror.pair.source)
 	gap = nextDirectoryEvent(t, w)
-	servicehook.Unlock(f.mirror.source)
+	servicehook.Unlock(f.mirror.pair.source)
 	if gap.Kind != ceph.WatchGap || !errors.Is(gap.Err, context.DeadlineExceeded) {
 		t.Fatalf("gap = %+v", gap)
 	}

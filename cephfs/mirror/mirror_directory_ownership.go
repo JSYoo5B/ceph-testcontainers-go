@@ -81,6 +81,19 @@ func (o *cephFSDirectoryOwnership) forget(directory string) {
 	delete(o.rebalanceRelease, directory)
 }
 
+// settleAbsent settles the pending release of directory once the path is
+// confirmed absent from the native policy. An explicit removal is complete,
+// so the path is forgotten and forgotten is true; a temporary rebalance
+// removal only drops its record, and the path stays owned.
+func (o *cephFSDirectoryOwnership) settleAbsent(directory string) (forgotten bool) {
+	if o.pendingRelease[directory] {
+		o.forget(directory)
+		return true
+	}
+	delete(o.rebalanceRelease, directory)
+	return false
+}
+
 // rebalancePaths lists owned paths that the caller still wants registered.
 func (o *cephFSDirectoryOwnership) rebalancePaths() []string {
 	directories := make([]string, 0, len(o.owned))
@@ -95,20 +108,28 @@ func (o *cephFSDirectoryOwnership) rebalancePaths() []string {
 
 // registerDirectory records an acknowledged owned registration of directory:
 // a completed addition receipt of the path is superseded, the path's
-// generation advances and, with publish, Directories lists the path.
-// Directories is a published descriptor only; ownership never reads it back.
+// generation advances and, with publish, RegisteredDirectories lists the
+// path. The list is published only; ownership never reads it back.
 // Container.mu is held, or Run has not shared the mirror yet.
 func (mirror *Container) registerDirectory(directory string, publish bool) {
 	mirror.ops.supersedeDirectoryAddition(directory)
 	mirror.directories.register(directory)
-	if publish && !slices.Contains(mirror.Directories, directory) {
-		mirror.Directories = append(mirror.Directories, directory)
+	if publish && !slices.Contains(mirror.registered, directory) {
+		mirror.registered = append(mirror.registered, directory)
+		mirror.Directories = slices.Clone(mirror.registered)
 	}
 }
 
-// forgetDirectory drops the ownership of directory and its Directories entry.
+// forgetDirectory drops the ownership of directory and its listing.
 // Container.mu is held.
 func (mirror *Container) forgetDirectory(directory string) {
-	mirror.Directories = slices.DeleteFunc(mirror.Directories, func(item string) bool { return item == directory })
+	mirror.unlistDirectory(directory)
 	mirror.directories.forget(directory)
+}
+
+// unlistDirectory drops directory from RegisteredDirectories and
+// Directories. Container.mu is held.
+func (mirror *Container) unlistDirectory(directory string) {
+	mirror.registered = slices.DeleteFunc(mirror.registered, func(item string) bool { return item == directory })
+	mirror.Directories = slices.Clone(mirror.registered)
 }

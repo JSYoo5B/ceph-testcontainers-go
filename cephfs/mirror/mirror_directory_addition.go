@@ -3,7 +3,6 @@ package mirror
 import (
 	"context"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -70,46 +69,40 @@ type DirectoryAdditionStatus struct {
 //
 //purpose:construction,condition
 func (mirror *Container) BeginDirectoryAddition(ctx context.Context, directory string) (*DirectoryAddition, error) {
-	if mirror == nil {
-		return nil, cephFSObserveGuard("CephFS directory addition fixture is unavailable")
-	}
-	return mirror.beginDirectoryAddition(ctx, directory, mirror.peerRemovalClusterIdentities)
+	return mirror.beginDirectoryAddition(ctx, directory, mirror.originalClusterIdentities)
 }
 
 func (mirror *Container) beginDirectoryAddition(ctx context.Context, directory string, readClusters func(context.Context) ([2]string, error)) (*DirectoryAddition, error) {
-	if mirror == nil {
-		return nil, cephFSObserveGuard("CephFS directory addition fixture is unavailable")
-	}
 	directory, err := normalizeMirrorDirectory(directory)
 	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
+	if err := mirror.lock(ctx); err != nil {
 		return nil, err
 	}
 	defer mirror.mu.Unlock()
-	if err := mirror.ops.guardCephFSRemovalOverlap(); err != nil {
+	if err := mirror.ops.guardPendingRemoval(); err != nil {
 		return nil, err
 	}
 	if r := mirror.ops.directoryAddition; r != nil && r.directory == directory && !r.superseded {
 		return r.result(r.resume(ctx))
 	}
-	if err := mirror.ops.guardDirectoryAdditionOverlap(); err != nil {
+	if err := mirror.ops.guardPendingAddition(); err != nil {
 		return nil, err
 	}
 	if err := mirror.confirmCephFSRefreshHandle(true); err != nil {
 		return nil, err
 	}
-	parsed, err := uuid.Parse(mirror.peerID)
-	if err != nil || parsed.String() != mirror.peerID || parsed == uuid.Nil || mirror.ops.peerGeneration == 0 {
+	parsed, err := uuid.Parse(mirror.peer.id)
+	if err != nil || parsed.String() != mirror.peer.id || parsed == uuid.Nil || mirror.ops.peerGeneration == 0 {
 		return nil, cephFSObserveGuard("CephFS directory addition original identity is unavailable")
 	}
 	if mirror.directories.hasIntent(directory) {
 		return nil, cephFSObserveGuard("CephFS directory addition path already has owned intent")
 	}
-	scope, err := mirror.captureOriginalScope(ctx, "CephFS directory addition", mirror.peerID, readClusters)
+	scope, err := mirror.captureOriginalScope(ctx, "CephFS directory addition", mirror.peer.id, readClusters)
 	if err != nil {
 		return nil, err
 	}
@@ -139,37 +132,18 @@ func (r *DirectoryAddition) result(err error) (*DirectoryAddition, error) {
 	return r, err
 }
 
-func (ops *mirrorOperations) guardDirectoryAdditionOverlap() error {
-	if r := ops.directoryAddition; r != nil && !r.registered {
-		return cephFSObserveGuard("explicit CephFS directory addition is incomplete")
-	}
-	return nil
-}
-
-// Called before a selected-path mutation, including an uncertain native attempt.
-func (ops *mirrorOperations) supersedeDirectoryAddition(directory string) {
-	if r := ops.directoryAddition; r != nil && r.registered && r.directory == directory {
-		r.superseded = true
-	}
-}
-
-// Peer removal invalidates only a completed addition from that exact owned peer
-// generation. Read-only/stale receipt retries do not retire a newer addition.
-func (ops *mirrorOperations) supersedePeerDirectoryAddition(id string) {
-	if r := ops.directoryAddition; r != nil && r.registered && r.scope != nil && r.scope.peerID == id && r.scope.generation == ops.peerGeneration {
-		r.superseded = true
-	}
-}
-
 func (r *DirectoryAddition) checkHandle(retained bool) error {
 	if r == nil || !r.scope.usable() {
 		return cephFSObserveGuard("CephFS directory addition original identity is unavailable")
 	}
 	m := r.scope.mirror
-	if m.closed || r.superseded || (retained && m.ops.directoryAddition != r) || m.ops.peerGeneration != r.scope.generation {
+	if m.closed {
+		return errCephFSMirrorTerminated()
+	}
+	if r.superseded || (retained && m.ops.directoryAddition != r) || m.ops.peerGeneration != r.scope.generation {
 		return cephFSObserveGuard("CephFS directory addition owner is closed or superseded")
 	}
-	if !r.scope.sameFixture(false) || m.pendingPeerImport != nil {
+	if !r.scope.sameFixture(false) || m.peer.pendingImport != nil {
 		return cephFSObserveGuard("CephFS directory addition original fixture identity changed")
 	}
 	want := r.baseGeneration
@@ -184,9 +158,12 @@ func (r *DirectoryAddition) checkHandle(retained bool) error {
 
 // Observe only one strict native ls authority, bracketed with original peer/FS
 // identities. No watcher or daemon cohort is needed for policy registration.
+// Three passes read the same answer: a path read may invoke user transport
+// code, so local authority and the original native scope are confirmed again
+// before each read and once more before reporting or publishing success.
 func (r *DirectoryAddition) observe(ctx context.Context, retained bool) (bool, error) {
 	var before bool
-	for pass := 0; pass < 2; pass++ {
+	for pass := range 3 {
 		if err := r.checkHandle(retained); err != nil {
 			return false, err
 		}
@@ -207,25 +184,6 @@ func (r *DirectoryAddition) observe(ctx context.Context, retained bool) (bool, e
 			return false, cephFSObserveQuery("CephFS directory addition policy changed during observation", nil)
 		}
 	}
-	// The final path read may invoke user transport code; confirm local authority
-	// and original native scope again before reporting or publishing success.
-	if err := r.checkHandle(retained); err != nil {
-		return false, err
-	}
-	present, fsPresent, err := r.scope.policy(ctx)
-	if err != nil {
-		return false, err
-	}
-	if !present || !fsPresent {
-		return false, cephFSObserveGuard("CephFS directory addition original peer changed during observation")
-	}
-	after, err := r.pathPolicy(ctx)
-	if err != nil {
-		return false, err
-	}
-	if after != before {
-		return false, cephFSObserveQuery("CephFS directory addition policy changed during observation", nil)
-	}
 	if err := r.checkHandle(retained); err != nil {
 		return false, err
 	}
@@ -238,7 +196,7 @@ func (r *DirectoryAddition) pathPolicy(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	for path := range paths {
-		if path != r.directory && (path == "/" || r.directory == "/" || strings.HasPrefix(path, r.directory+"/") || strings.HasPrefix(r.directory, path+"/")) {
+		if path != r.directory && cephFSDirectoriesOverlap(path, r.directory) {
 			return false, cephFSObserveGuard("CephFS directory addition overlaps another native path")
 		}
 	}
@@ -300,7 +258,7 @@ func (r *DirectoryAddition) attempt(ctx context.Context) error {
 		old.superseded = true
 	}
 	r.requestAttempted = true
-	if _, err := r.scope.source.Ceph(ctx, "fs", "snapshot", "mirror", "add", r.scope.sourceFilesystem, r.directory); err != nil {
+	if _, err := r.scope.pair.source.Ceph(ctx, "fs", "snapshot", "mirror", "add", r.scope.pair.sourceFilesystem, r.directory); err != nil {
 		var failure *ceph.NativeFailure
 		if errors.As(err, &failure) {
 			refusal := *failure
@@ -348,7 +306,7 @@ func (r *DirectoryAddition) Status(ctx context.Context) (DirectoryAdditionStatus
 		return result, cephFSObserveGuard("CephFS directory addition handle is unavailable")
 	}
 	o := r.scope
-	result = DirectoryAdditionStatus{Directory: r.directory, PeerID: o.peerID, SourceFilesystem: o.sourceFilesystem, DestinationFilesystem: o.destinationFilesystem, SourceFilesystemID: o.sourceID, DestinationFilesystemID: o.destinationID}
+	result = DirectoryAdditionStatus{Directory: r.directory, PeerID: o.peerID, SourceFilesystem: o.pair.sourceFilesystem, DestinationFilesystem: o.pair.destinationFilesystem, SourceFilesystemID: o.pair.sourceFilesystemID, DestinationFilesystemID: o.pair.destinationFilesystemID}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if err := multicluster.LockObservation(ctx, &o.mirror.mu); err != nil {

@@ -2,6 +2,7 @@ package mirror
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"slices"
@@ -37,7 +38,7 @@ func (c *cephFSIdentityControl) Exec(ctx context.Context, args []string, opts ..
 		if err != nil {
 			return 0, nil, err
 		}
-		return 0, cephFSObserverDraftStream(data), nil
+		return 0, cephFSObserverDraftStream(withFilesystemName(data, arguments[2])), nil
 	}
 	return c.cephFSObserverDraftControl.Exec(ctx, args, opts...)
 }
@@ -45,8 +46,8 @@ func (c *cephFSIdentityControl) Exec(ctx context.Context, args []string, opts ..
 func newCephFSIdentityFixture(answer func(name string) (string, error)) (*Container, *[]string) {
 	mirror, source, destination, _, _ := newCephFSObserverDraft()
 	reads := &[]string{}
-	mirror.source = &ceph.Container{Container: &cephFSIdentityControl{source, answer, reads}}
-	mirror.destination = &ceph.Container{Container: &cephFSIdentityControl{destination, answer, reads}}
+	mirror.pair.source = &ceph.Container{Container: &cephFSIdentityControl{source, answer, reads}}
+	mirror.pair.destination = &ceph.Container{Container: &cephFSIdentityControl{destination, answer, reads}}
 	return mirror, reads
 }
 
@@ -296,4 +297,25 @@ func TestCephFSRemovalWaitsClearTheirOwnFlag(t *testing.T) {
 			t.Fatalf("success lost: %+v %v", got, err)
 		}
 	})
+}
+
+// withFilesystemName adds the queried fs_name to the mdsmap object of a fake
+// `fs get` report, as Ceph prints it, unless the report has none or names
+// one already.
+func withFilesystemName(data, name string) string {
+	var report map[string]json.RawMessage
+	if json.Unmarshal([]byte(data), &report) != nil || report == nil {
+		return data
+	}
+	var mdsmap map[string]json.RawMessage
+	if json.Unmarshal(report["mdsmap"], &mdsmap) != nil || mdsmap == nil {
+		return data
+	}
+	if _, named := mdsmap["fs_name"]; named {
+		return data
+	}
+	mdsmap["fs_name"], _ = json.Marshal(name)
+	report["mdsmap"], _ = json.Marshal(mdsmap)
+	out, _ := json.Marshal(report)
+	return string(out)
 }

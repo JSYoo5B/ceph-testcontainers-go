@@ -54,7 +54,7 @@ func TestDirectoryStatusConfirmsSelectedSessionAfterReplay(t *testing.T) {
 		t.Run(change, func(t *testing.T) {
 			mirror, source, _, a, _ := newCephFSObserverDraft()
 			control := &directoryBoundaryControl{cephFSObserverDraftControl: source}
-			mirror.source.Container = control
+			mirror.pair.source.Container = control
 			boundary := &directoryBoundaryDaemon{cephFSObserverDraftDaemon: a}
 			mirror.roster.daemons[0].Container = boundary
 			boundary.beforeReplay = func() {

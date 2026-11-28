@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
@@ -308,5 +309,21 @@ func TestDecodeRBDBootstrapIdentityRejectsInvalidIdentityWithoutExposingToken(t 
 	}
 	if _, err := decodeRBDBootstrapIdentity([]byte("not base64")); err == nil {
 		t.Fatal("invalid token encoding accepted")
+	}
+}
+
+// TestAddDaemonRefusesDotsAndALeadingHyphen runs dotted, leading-hyphen and
+// plain names through AddDaemon: valid names reach the fixture check, which
+// an empty fixture refuses, while dotted and leading-hyphen names are
+// refused by the name admission.
+func TestAddDaemonRefusesDotsAndALeadingHyphen(t *testing.T) {
+	for name, admitted := range map[string]bool{"standby": true, "node-27": true, "a.b": false, ".a": false, "-a": false, "": false} {
+		t.Run(name, func(t *testing.T) {
+			_, err := (&Container{}).AddDaemon(t.Context(), name)
+			refused := err != nil && strings.Contains(err.Error(), "daemon name")
+			if err == nil || refused == admitted || !errors.Is(err, ceph.ErrInvalidRequest) {
+				t.Fatalf("AddDaemon(%q): %v", name, err)
+			}
+		})
 	}
 }

@@ -34,8 +34,8 @@ import cephfsmirror "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/mirror"
    (`mkdir <dir>/.snap/<name>` through the client) as a checkpoint.
 4. **Observe and verify**: `WaitDirectoryReady` (a live daemon owns the
    directory), `WaitSnapshotSynced` with the source snapshot's ID and name, then
-   compare the destination data. `DirectoryStatus`, `PeerIDs` and the daemon
-   handles show the current state.
+   compare the destination data. `DirectoryStatus`, `PeerIDs`,
+   `RegisteredDirectories` and the daemon handles show the current state.
 5. **Change the topology** when the scenario needs it: `AddDaemon`,
    `Daemon.Remove`, `RebalanceDirectories`, `Daemon.InterruptPeerLink`,
    `RemovePeer` / `RebootstrapPeer`, or the tracked calls `BeginDirectoryAddition`,

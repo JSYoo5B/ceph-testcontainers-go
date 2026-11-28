@@ -148,7 +148,7 @@ func newDirectoryRemovalFixture() (*Container, *directoryRemovalControlFake, *pe
 	s := &directoryRemovalControlFake{peerRemovalControlFake: source, directories: []string{"/owned"}, applyRemoval: true, applyAdd: true}
 	da := &directoryRemovalDaemonFake{peerRemovalDaemonFake: a, stats: directoryRemovalTracked}
 	db := &directoryRemovalDaemonFake{peerRemovalDaemonFake: b, stats: `{}`}
-	m.source.Container = s
+	m.pair.source.Container = s
 	m.roster.daemons[0].Container, m.roster.daemons[1].Container = da, db
 	m.directories.generations = map[string]uint64{"/owned": 1}
 	return m, s, destination, da, db
@@ -166,7 +166,7 @@ func beginDirectoryRemovalFixture(t *testing.T) (*DirectoryRemoval, *Container, 
 
 func TestCephFSDirectoryRemovalProductionExactCycleRelease(t *testing.T) {
 	r, m, s, _, a, b := beginDirectoryRemovalFixture(t)
-	if m.ops.directoryRemoval != r || s.removals != 1 || m.ops.peerRemoval != nil || m.peerID != cephFSObserverDraftPeer || m.directories.owned["/owned"] {
+	if m.ops.directoryRemoval != r || s.removals != 1 || m.ops.peerRemoval != nil || m.peer.id != cephFSObserverDraftPeer || m.directories.owned["/owned"] {
 		t.Fatal("directory intent altered peer ownership or failed to retain path")
 	}
 	for _, stats := range []string{
@@ -221,11 +221,11 @@ func TestCephFSDirectoryRemovalProductionPreflightNeverMutatesInvalidOwnership(t
 			case "dead":
 				a.state.Dead = true
 			case "missing-original-fs":
-				m.filesystemID = 0
+				m.pair.sourceFilesystemID = 0
 			case "missing-source-auth":
 				m.SourceClientEntity = ""
 			case "missing-pool":
-				m.metadataPool = ""
+				m.pair.metadataPool = ""
 			case "mapping":
 				s.mappingOverride = `{"state":"mapping"}`
 			case "foreign-owner":
@@ -967,7 +967,7 @@ func TestRebalanceKeepsExplicitlyRemovedPathOutOfPolicy(t *testing.T) {
 			// be redistributed without resending it or adopting foreign policy.
 			s.removeError, s.applyRemoval = nil, true
 			s.directories = []string{"/owned", "/foreign", "/keep"}
-			s.states = map[string]string{"/foreign": `{"state":"mapped"}`, "/keep": `{"state":"mapped"}`}
+			s.states = map[string]string{"/foreign": `{"state":"mapped","instance_id":"4262"}`, "/keep": `{"state":"mapped","instance_id":"4262"}`}
 			m.registerDirectory("/keep", true)
 			if err := m.RebalanceDirectories(t.Context()); err != nil {
 				t.Fatal(err)
@@ -984,10 +984,10 @@ func TestRebalanceKeepsExplicitlyRemovedPathOutOfPolicy(t *testing.T) {
 			if err := m.RebalanceDirectories(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			if !slices.Equal(m.Directories, []string{"/keep"}) || !slices.Equal(s.directories, []string{"/foreign", "/keep"}) ||
+			if !slices.Equal(m.registered, []string{"/keep"}) || !slices.Equal(s.directories, []string{"/foreign", "/keep"}) ||
 				m.directories.releasePending("/owned") || m.directories.owns("/owned") || m.directories.generation("/owned") != 1 ||
 				m.directories.generation("/keep") != 3 || s.removals != 3 || s.adds != 2 {
-				t.Fatalf("rebalance changed explicitly removed or foreign membership: native=%v fixture=%v ownership=%+v removes=%d adds=%d", s.directories, m.Directories, m.directories, s.removals, s.adds)
+				t.Fatalf("rebalance changed explicitly removed or foreign membership: native=%v fixture=%v ownership=%+v removes=%d adds=%d", s.directories, m.registered, m.directories, s.removals, s.adds)
 			}
 		})
 	}
@@ -1009,9 +1009,9 @@ func TestExplicitReaddAfterUncertainRemovalKeepsNewGeneration(t *testing.T) {
 	if err := m.RebalanceDirectories(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(s.directories, []string{"/owned"}) || !slices.Equal(m.Directories, s.directories) ||
+	if !slices.Equal(s.directories, []string{"/owned"}) || !slices.Equal(m.registered, s.directories) ||
 		m.directories.releasePending("/owned") || m.directories.generation("/owned") != 3 || s.removals != 2 || s.adds != 2 {
-		t.Fatalf("re-added path: native=%v fixture=%v ownership=%+v removes=%d adds=%d", s.directories, m.Directories, m.directories, s.removals, s.adds)
+		t.Fatalf("re-added path: native=%v fixture=%v ownership=%+v removes=%d adds=%d", s.directories, m.registered, m.directories, s.removals, s.adds)
 	}
 }
 

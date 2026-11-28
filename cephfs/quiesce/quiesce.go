@@ -181,15 +181,27 @@ func (q *Set) Status(ctx context.Context) (*State, error) {
 // status is one admitted read of the set through begin: volbase.Begin for
 // Status, volbase.BeginObservation for a watch.
 func (q *Set) status(ctx context.Context, begin func(context.Context, *fsbase.Core) (context.Context, int64, func(), error)) (*State, error) {
-	ctx, fsID, done, err := begin(ctx, q.filesystem)
+	ctx, done, err := q.admit(ctx, begin)
 	if err != nil {
 		return nil, err
 	}
 	defer done()
-	if fsID != q.state.filesystemID {
-		return nil, ownershipError("quiesce filesystem was replaced")
-	}
 	return q.read(ctx)
+}
+
+// admit begins one operation on the set's filesystem through begin and
+// refuses a filesystem that is no longer the one the set was created on.
+// After success the caller runs done.
+func (q *Set) admit(ctx context.Context, begin func(context.Context, *fsbase.Core) (context.Context, int64, func(), error)) (context.Context, func(), error) {
+	ctx, fsID, done, err := begin(ctx, q.filesystem)
+	if err != nil {
+		return ctx, nil, err
+	}
+	if fsID != q.state.filesystemID {
+		done()
+		return ctx, nil, ownershipError("quiesce filesystem was replaced")
+	}
+	return ctx, done, nil
 }
 
 // ownershipError is a read that shows the set is no longer the one this
@@ -214,14 +226,11 @@ func (q *Set) Release(ctx context.Context) error {
 		return errors.New("quiesce handle is unavailable")
 	}
 	fs := q.filesystem
-	ctx, fsID, done, err := volbase.Begin(ctx, fs)
+	ctx, done, err := q.admit(ctx, volbase.Begin)
 	if err != nil {
 		return err
 	}
 	defer done()
-	if fsID != q.state.filesystemID {
-		return ownershipError("quiesce filesystem was replaced")
-	}
 	if q.state.released {
 		return nil
 	}

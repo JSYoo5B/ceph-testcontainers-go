@@ -24,16 +24,10 @@ type ProcessQuiescenceAcknowledgment struct {
 //
 //purpose:condition
 func (r *PeerRemoval) AcknowledgeProcessQuiescence(ctx context.Context) (ProcessQuiescenceAcknowledgment, error) {
-	if r == nil {
+	if r == nil || r.scope == nil {
 		return ProcessQuiescenceAcknowledgment{}, cephFSObserveGuard("original peer acknowledgment receipt is unavailable")
 	}
-	return acknowledgeCephFSProcessQuiescence(ctx, &r.cohort, "", r.checkHandle, func(ctx context.Context) (bool, error) {
-		present, fsPresent, err := r.scope.policy(ctx)
-		return !present && !fsPresent && err == nil, err
-	}, func() bool { return r.completed }, func() {
-		r.scope.mirror.peerID = ""
-		r.processQuiescenceAcknowledged = true
-	})
+	return acknowledgeCephFSProcessQuiescence(ctx, r)
 }
 
 // AcknowledgeProcessQuiescence accepts the exact interrupted path removal after
@@ -45,21 +39,13 @@ func (r *DirectoryRemoval) AcknowledgeProcessQuiescence(ctx context.Context) (Pr
 	if r == nil || r.scope == nil {
 		return ProcessQuiescenceAcknowledgment{}, cephFSObserveGuard("original directory acknowledgment receipt is unavailable")
 	}
-	return acknowledgeCephFSProcessQuiescence(ctx, &r.cohort, r.directory, func() error { return r.checkDirectoryRemovalHandle(true) }, func(ctx context.Context) (bool, error) {
-		if err := r.peerPolicy(ctx); err != nil {
-			return false, err
-		}
-		present, err := r.policy(ctx)
-		return !present && err == nil, err
-	}, func() bool { return r.completed }, func() {
-		r.forgetDesiredPolicy()
-		r.processQuiescenceAcknowledged = true
-	})
+	return acknowledgeCephFSProcessQuiescence(ctx, r)
 }
 
-func acknowledgeCephFSProcessQuiescence(ctx context.Context, c *cephFSRemovalCohort, directory string, owner func() error, authority func(context.Context) (bool, error), completed func() bool, commit func()) (ProcessQuiescenceAcknowledgment, error) {
-	result := ProcessQuiescenceAcknowledgment{Observation: initialCephFSProcessQuiescenceStatus(c, directory)}
-	if c == nil || c.scope == nil || c.scope.mirror == nil || owner == nil || authority == nil || completed == nil || commit == nil {
+func acknowledgeCephFSProcessQuiescence(ctx context.Context, receipt cephFSQuiescenceReceipt) (ProcessQuiescenceAcknowledgment, error) {
+	c := receipt.quiescenceCohort()
+	result := ProcessQuiescenceAcknowledgment{Observation: initialCephFSProcessQuiescenceStatus(c, receipt.quiescenceDirectory())}
+	if c.scope == nil || c.scope.mirror == nil {
 		return result, cephFSObserveGuard("original process acknowledgment owner is unavailable")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -68,16 +54,16 @@ func acknowledgeCephFSProcessQuiescence(ctx context.Context, c *cephFSRemovalCoh
 		return result, err
 	}
 	defer c.scope.mirror.mu.Unlock()
-	if err := owner(); err != nil {
+	if err := receipt.quiescenceOwner(); err != nil {
 		return result, err
 	}
-	if completed() {
+	if receipt.nativelyCompleted() {
 		return result, cephFSObserveGuard("original removal already has native graceful completion")
 	}
 	if err := confirmCephFSAcknowledgmentRetiredInventory(ctx, c); err != nil {
 		return result, err
 	}
-	observation, err := observeCephFSReceiptProcessQuiescenceLocked(ctx, c, directory, owner, authority)
+	observation, err := observeCephFSReceiptProcessQuiescenceLocked(ctx, receipt)
 	result.Observation = observation
 	if err != nil {
 		return result, err
@@ -90,7 +76,7 @@ func acknowledgeCephFSProcessQuiescence(ctx context.Context, c *cephFSRemovalCoh
 			return result, cephFSObserveQuery("original process acknowledgment requires removed original containers", nil)
 		}
 	}
-	if err := owner(); err != nil {
+	if err := receipt.quiescenceOwner(); err != nil {
 		return result, err
 	}
 	if err := confirmCephFSAcknowledgmentRetiredInventory(ctx, c); err != nil {
@@ -100,7 +86,7 @@ func acknowledgeCephFSProcessQuiescence(ctx context.Context, c *cephFSRemovalCoh
 		return result, err
 	}
 	// No native mutation or unlock occurs between fresh proof and local decision.
-	commit()
+	receipt.acknowledge()
 	result.Acknowledged = true
 	return result, nil
 }

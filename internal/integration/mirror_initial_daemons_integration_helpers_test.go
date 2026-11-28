@@ -256,7 +256,7 @@ func runMirrorInitialCephFS(t *testing.T, host bool) {
 	harness.CephFSDirectoryAdditionReconcile(t, ctx, mirror, added, addition)
 	status, err := addition.Status(ctx)
 	harness.CephFSDirectoryAdditionAssertStatus(t, status, expected, added, true, true)
-	if err != nil || !slices.Equal(mirror.Directories, []string{seed, added}) || len(mirror.Daemons()) != 0 || customizers.Load() != 0 || factoryCalls.Load() != 0 {
+	if err != nil || !slices.Equal(mirror.RegisteredDirectories(), []string{seed, added}) || len(mirror.Daemons()) != 0 || customizers.Load() != 0 || factoryCalls.Load() != 0 {
 		t.Fatal("zero typed addition started or adopted process", err)
 	}
 	harness.CephFSDirectoryAdditionWaitScope(t, ctx, policy, []string{seed, added})
@@ -309,5 +309,5 @@ func runMirrorInitialCephFS(t *testing.T, host bool) {
 	if err := harness.CephFSDirectoryAdditionCheckScope(ctx, policy, []string{seed, added}); err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("MIRROR_INITIAL_CEPHFS_COMPLETE source_fsid=%s destination_fsid=%s peer=%s customizers=%d raw_factory_calls=%d directories=%q", policy.FSIDs[0], policy.FSIDs[1], expected.PeerID, customizers.Load(), factoryCalls.Load(), mirror.Directories)
+	t.Logf("MIRROR_INITIAL_CEPHFS_COMPLETE source_fsid=%s destination_fsid=%s peer=%s customizers=%d raw_factory_calls=%d directories=%q", policy.FSIDs[0], policy.FSIDs[1], expected.PeerID, customizers.Load(), factoryCalls.Load(), mirror.RegisteredDirectories())
 }

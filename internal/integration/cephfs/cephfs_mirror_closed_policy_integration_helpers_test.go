@@ -48,7 +48,7 @@ func cephFSCheckClosedPolicyAdmission(t *testing.T, ctx context.Context, mirror 
 		return result
 	}
 	expected := readPolicy()
-	owned := slices.Clone(mirror.Directories)
+	owned := slices.Clone(mirror.RegisteredDirectories())
 	daemon := mirror.Daemons()[0]
 	wrapped := &cephFSMirrorCleanupFailure{Container: daemon.Container, fail: true}
 	daemon.Container = wrapped
@@ -77,7 +77,7 @@ func cephFSCheckClosedPolicyAdmission(t *testing.T, ctx context.Context, mirror 
 				t.Fatalf("%s %s refusal: %v", phase, name, err)
 			}
 		}
-		if actual := readPolicy(); !reflect.DeepEqual(actual, expected) || !slices.Equal(owned, mirror.Directories) {
+		if actual := readPolicy(); !reflect.DeepEqual(actual, expected) || !slices.Equal(owned, mirror.RegisteredDirectories()) {
 			t.Fatalf("%s changed native policy or fixture ownership", phase)
 		}
 		for _, cluster := range []*ceph.Container{source, destination} {

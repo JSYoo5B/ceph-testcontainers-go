@@ -64,7 +64,7 @@ func TestCephFSMirrorPendingImportIdentity(t *testing.T) {
 	const serverUUID = "8d8c4729-3701-4f3f-8e9b-a527061bc449"
 	expected := cephFSPeerIdentity{ClientName: "client.unique-peer", SiteName: "destination", FilesystemName: "backup-fs"}
 	valid := map[string]json.RawMessage{serverUUID: json.RawMessage(`{"client_name":"client.unique-peer","site_name":"destination","fs_name":"backup-fs"}`)}
-	if id, err := matchPendingCephFSPeer(valid, &expected); err != nil || id != serverUUID {
+	if id, err := matchRawPendingPeer(valid, &expected); err != nil || id != serverUUID {
 		t.Fatalf("matching pending import did not recover server UUID: id=%q error=%v", id, err)
 	}
 	for name, peer := range map[string]string{
@@ -76,37 +76,51 @@ func TestCephFSMirrorPendingImportIdentity(t *testing.T) {
 		"malformed identity":  `{"client_name":42,"site_name":"destination","fs_name":"backup-fs"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			if id, err := matchPendingCephFSPeer(map[string]json.RawMessage{serverUUID: json.RawMessage(peer)}, &expected); err == nil || id != "" {
+			if id, err := matchRawPendingPeer(map[string]json.RawMessage{serverUUID: json.RawMessage(peer)}, &expected); err == nil || id != "" {
 				t.Fatalf("adopted unrelated or invalid peer: id=%q error=%v", id, err)
 			}
 		})
 	}
-	if _, err := matchPendingCephFSPeer(valid, nil); err == nil {
+	if _, err := matchRawPendingPeer(valid, nil); err == nil {
 		t.Fatal("adopted existing peer without an owned pending import")
 	}
-	if _, err := matchPendingCephFSPeer(nil, &expected); err == nil {
+	if _, err := matchRawPendingPeer(nil, &expected); err == nil {
 		t.Fatal("recovered a peer absent from the server")
 	}
-	if _, err := matchPendingCephFSPeer(map[string]json.RawMessage{"not-a-server-uuid": valid[serverUUID]}, &expected); err == nil {
+	if _, err := matchRawPendingPeer(map[string]json.RawMessage{"not-a-server-uuid": valid[serverUUID]}, &expected); err == nil {
 		t.Fatal("accepted invalid server UUID")
 	}
 	multiple := map[string]json.RawMessage{serverUUID: valid[serverUUID], "eaefb4ab-5011-419d-9420-ac7f71f11d73": valid[serverUUID]}
-	if _, err := matchPendingCephFSPeer(multiple, &expected); err == nil {
+	if _, err := matchRawPendingPeer(multiple, &expected); err == nil {
 		t.Fatal("adopted an ambiguous multiple-peer policy")
 	}
 	// The state transition must retain an uncertain import after mismatch, then
 	// assign only the server UUID and clear the pending flag on exact recovery.
-	mirror := &Container{pendingPeerImport: &expected}
-	if _, err := mirror.reconcilePendingPeer(map[string]json.RawMessage{serverUUID: json.RawMessage(`{"client_name":"client.foreign"}`)}); err == nil {
+	mirror := &Container{peer: cephFSMirrorPeer{pendingImport: &expected}}
+	if _, err := mirror.reconcilePendingPeer(map[string]cephFSPeerIdentity{serverUUID: {ClientName: "client.foreign", SiteName: "destination", FilesystemName: "backup-fs"}}); err == nil {
 		t.Fatal("recovered a foreign peer")
 	}
-	if mirror.pendingPeerImport == nil || mirror.peerID != "" {
+	if mirror.peer.pendingImport == nil || mirror.peer.id != "" {
 		t.Fatal("failed reconciliation changed peer ownership")
 	}
-	if _, err := mirror.reconcilePendingPeer(valid); err != nil {
+	if _, err := mirror.reconcilePendingPeer(map[string]cephFSPeerIdentity{serverUUID: expected}); err != nil {
 		t.Fatal(err)
 	}
-	if mirror.peerID != serverUUID || mirror.pendingPeerImport != nil {
+	if mirror.peer.id != serverUUID || mirror.peer.pendingImport != nil {
 		t.Fatal("successful reconciliation did not settle peer ownership")
 	}
+}
+
+// matchRawPendingPeer decodes a peer_list object as readPeerList does and
+// matches the pending import against it.
+func matchRawPendingPeer(raw map[string]json.RawMessage, expected *cephFSPeerIdentity) (string, error) {
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return "", err
+	}
+	peers, err := decodePeerList(data)
+	if err != nil {
+		return "", err
+	}
+	return matchPendingCephFSPeer(peers, expected)
 }
