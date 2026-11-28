@@ -1,9 +1,9 @@
 {
   "schema": "ceph-api-naming-review/v2",
   "package": "rgw/multisite",
-  "declarations_sha256": "096e0b21a78fe1073f34a815d35f36fc629f2251e3adc50b79271606687b247b",
+  "declarations_sha256": "ba8dc245df08b9ad7b472eafdfb3fbf65b7b65966646b1285c1a2652475f1d27",
   "members_sha256": "9738403a8042da37834d60552b49ca1b8543b60a2b27833467886b14a23198e2",
-  "declarations": 73,
+  "declarations": 77,
   "members": 136,
   "review": "api-naming.md",
   "page": "rgw/multisite/README.md"
