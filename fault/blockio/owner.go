@@ -63,10 +63,10 @@ func (b *Container) owner(ctx context.Context, action string) (ownerReply, error
 	}
 	if reply.ErrorKind != "" {
 		kind := ceph.ErrNativeFailure
-		if reply.ErrorKind == "image" {
+		if reply.ErrorKind == string(control.GateImage) {
 			kind = ceph.ErrImageCapability
 		}
-		if reply.ErrorKind == "environment" {
+		if reply.ErrorKind == string(control.GateEnvironment) {
 			kind = ceph.ErrEnvironmentUnavailable
 		}
 		return reply, failure(kind, "%s", reply.Error)
@@ -119,7 +119,7 @@ func (b *Container) acceptOwner(r ownerReply) error {
 // Dispatch acknowledgements can be lost; their detached process and manifest
 // remain discoverable without a second mutation. The private tmpfs and helper
 // must stay alive until these operations and their consumers are excluded.
-const ownerScript = `import json, os, re, shutil, stat, subprocess, sys
+var ownerScript = `import json, os, re, stat, subprocess, sys
 action, name, size, expected = sys.argv[1:5]
 size = int(size)
 attempt=sys.argv[5] if action in ("start-detach","detach","detached","detach-started") and len(sys.argv)>5 else ""
@@ -182,19 +182,19 @@ if action=="exec":
     os.execvp(sys.argv[5],sys.argv[5:])
 elif action=="probe":
     tools=probe_tools(command)[0]
-    if tools["state"]!="observed": emit({"ErrorKind":tools["kind"],"Error":tools["error"]});sys.exit(0)
+    if tools["state"]!=_OBSERVED: emit({"ErrorKind":tools["kind"],"Error":tools["error"]});sys.exit(0)
     roots=[]
     with open("/proc/self/mountinfo") as f:
         for line in f:
             left,_,right=line.partition(" - ")
             if left.split()[4]==work: roots.append(right.split()[0])
-    if roots!=["tmpfs"]: emit({"ErrorKind":"environment","Error":"private tmpfs mount was not retained"});sys.exit(0)
+    if roots!=["tmpfs"]: emit({"ErrorKind":_ENVIRONMENT,"Error":"private tmpfs mount was not retained"});sys.exit(0)
     cap=os.statvfs(work);total=cap.f_blocks*cap.f_frsize
     if not size+(64<<20)<=total<size+(64<<20)+4096:
-        emit({"ErrorKind":"environment","Error":"private tmpfs size differs from the requested bound"});sys.exit(0)
+        emit({"ErrorKind":_ENVIRONMENT,"Error":"private tmpfs size differs from the requested bound"});sys.exit(0)
     gates,targets=probe_host(command)
     for gate in gates:
-        if gate["state"]!="observed": emit({"ErrorKind":gate["kind"],"Error":gate["error"]});sys.exit(0)
+        if gate["state"]!=_OBSERVED: emit({"ErrorKind":gate["kind"],"Error":gate["error"]});sys.exit(0)
     emit({"targets":targets})
 elif action=="start":
     spawn("build");emit({"done":False})

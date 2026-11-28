@@ -24,8 +24,8 @@ profiles of `fault/blockio`.
 
 | Level | What it does | What stays unknown |
 | --- | --- | --- |
-| `Inspect` (the default) | Reads the engine's information. Starts no container, pulls no image, changes nothing. | Every check that needs the helper: image tools, drivers, control devices and targets are `not-run`, so a block I/O verdict is at most `unknown`. |
-| `Helper` | Also starts one temporary container from `Request.HelperImage`, pulling it when the engine lacks it, with the block I/O keeper's privileges (root, privileged, the engine host's `/dev`, no network). It runs a read-only probe in it and removes it. | Whatever the probe could not read. |
+| `LevelInspect` (the default) | Reads the engine's information. Starts no container, pulls no image, changes nothing. | Every check that needs the helper: image tools, drivers, control devices and targets are `not-run`, so a block I/O verdict is at most `unknown`. |
+| `LevelHelper` | Also starts one temporary container from `Request.HelperImage`, pulling it when the engine lacks it, with the block I/O keeper's privileges (root, privileged, the engine host's `/dev`, no network). It runs a read-only probe in it and removes it. | Whatever the probe could not read. |
 
 The helper probe is the one `blockio.Run` and `Container.Apply` run in their
 keeper: the image tools, the loop and device-mapper drivers, read and write
@@ -42,14 +42,31 @@ and `Observe` returns an error along with the report.
 ## Reading a report
 
 Each check has a stable key, a state, the source that observed it, and for an
-unavailable one its kind and guidance:
+unavailable one its kind and guidance. `Report.Lookup` takes the key as a
+`CheckKey` constant:
+
+| Key | Constant | Prerequisite |
+| --- | --- | --- |
+| `engine.info` | `CheckKeyEngineInfo` | The selected engine answered with its information. |
+| `blockio.engine-os` | `CheckKeyBlockIOEngineOS` | A Linux engine. |
+| `blockio.helper-start` | `CheckKeyBlockIOHelperStart` | The helper started with the keeper's privileged configuration. |
+| `blockio.image-tools` | `CheckKeyBlockIOImageTools` | The helper image has the probe's tools. |
+| `blockio.drivers` | `CheckKeyBlockIODrivers` | The engine kernel registers the loop and device-mapper drivers. |
+| `blockio.control-access` | `CheckKeyBlockIOControlAccess` | Their control devices can be read and written. |
+| `blockio.target.linear` | `CheckKeyBlockIOTargetLinear` | `dmsetup targets` lists `linear`. |
+| `blockio.target.delay` | `CheckKeyBlockIOTargetDelay` | `dmsetup targets` lists `delay`. |
+| `blockio.target.error` | `CheckKeyBlockIOTargetError` | `dmsetup targets` lists `error`. |
+
+The source is `SourceEngineInfo` (`engine-info`), `SourceHelperStart`
+(`helper-start`) or `SourceHelperProbe` (`helper-probe`). The states and
+kinds are the `State` and `Kind` constants:
 
 | State | Meaning |
 | --- | --- |
-| `observed` | The prerequisite was observed. |
-| `unavailable` | An observation proved it missing. Kind `environment` is an engine, kernel or privilege limit, which operations report as `ceph.ErrEnvironmentUnavailable`; kind `image` is the helper image, reported as `ceph.ErrImageCapability`. |
-| `unknown` | The observation failed or was inconclusive. It proves nothing either way. |
-| `not-run` | The check was not run at this level, or a gate before it was not observed. |
+| `observed` (`StateObserved`) | The prerequisite was observed. |
+| `unavailable` (`StateUnavailable`) | An observation proved it missing. Kind `environment` (`KindEnvironment`) is an engine, kernel or privilege limit, which operations report as `ceph.ErrEnvironmentUnavailable`; kind `image` (`KindImage`) is the helper image, reported as `ceph.ErrImageCapability`. |
+| `unknown` (`StateUnknown`) | The observation failed or was inconclusive. It proves nothing either way. |
+| `not-run` (`StateNotRun`) | The check was not run at this level, or a gate before it was not observed. |
 
 `Observe` returns an error with the report for every `unknown` check that a
 failed observation left, and for a helper whose removal was not confirmed.
@@ -59,7 +76,8 @@ failed observation left, and for a helper whose removal was not confirmed.
 otherwise `unknown` when one is unknown or not run, otherwise `observed`.
 The common gates (engine, Linux engine, helper start, tools, drivers,
 control devices, `linear`) belong to both block I/O capabilities; the `delay`
-target belongs to `BlockIODelay` and the `error` target to `BlockIOEIO`, so
+target belongs to `CapabilityBlockIODelay` and the `error` target to
+`CapabilityBlockIOEIO`, so
 a missing delay target leaves EIO eligible.
 
 Two cases are easy to read wrongly:
@@ -79,10 +97,11 @@ prove those effects; see [`fault/blockio`](../../fault/blockio/README.md).
 `Report.Process` is the platform of the Go test process and
 `Report.Engine` that of the engine, which differ for Docker Desktop and for
 a remote engine. The engine facts are an allowlist: server version, OS type,
-architecture, kernel version, operating system, cgroup version, Docker Desktop
-and a WSL 2 backend when the engine reports them, rootless and user namespace
-security options, and the transport scheme of the endpoint (`unix`, `npipe`,
-`tcp`, `ssh`, `http`, `https`). A fact the engine did not report is unknown.
+architecture, kernel version, operating system, cgroup version, whether it is
+Docker Desktop, a WSL 2 backend when the engine reports one, rootless and user
+namespace security options, and the transport scheme of the endpoint (`unix`,
+`npipe`, `tcp`, `ssh`, `http`, `https`). A fact the engine did not report is
+unknown, and so is every fact of an engine whose information was not read.
 The report never holds the endpoint, a host name, a path, a credential, the
 environment or a raw engine response, and `Observe`'s errors carry fixed texts
 and the context error only.

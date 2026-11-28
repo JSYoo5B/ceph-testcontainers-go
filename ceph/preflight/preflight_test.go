@@ -6,12 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	control "github.com/JSYoo5B/ceph-testcontainers-go/internal/blockio"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/containerd/errdefs"
+	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/system"
 	"github.com/moby/moby/client"
 )
@@ -95,14 +98,14 @@ func helperChecker(engine *testEngine, helper *testHelper) checker {
 	}
 }
 
-var both = []Capability{BlockIODelay, BlockIOEIO}
+var both = []Capability{CapabilityBlockIODelay, CapabilityBlockIOEIO}
 
 func helperRequest() Request {
-	return Request{Capabilities: both, Level: Helper, HelperImage: "registry.example/helper:v1"}
+	return Request{Capabilities: both, Level: LevelHelper, HelperImage: "registry.example/helper:v1"}
 }
 
-func states(r *Report) map[string]State {
-	out := map[string]State{}
+func states(r *Report) map[CheckKey]State {
+	out := map[CheckKey]State{}
 	for _, check := range r.Checks {
 		out[check.Key] = check.State
 	}
@@ -140,24 +143,27 @@ func TestInspectStartsNoHelperAndLeavesHelperChecksNotRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Level != Inspect || report.Helper != nil || !engine.closed {
+	if report.Level != LevelInspect || report.Helper != nil || !engine.closed {
 		t.Fatalf("report %+v, engine closed %t", report, engine.closed)
 	}
-	want := map[string]State{keyEngine: Observed, keyEngineOS: Observed, keyHelperStart: NotRun, keyTools: NotRun, keyDrivers: NotRun,
-		keyControl: NotRun, keyTargetLinear: NotRun, keyTargetDelay: NotRun, keyTargetError: NotRun}
+	want := map[CheckKey]State{CheckKeyEngineInfo: StateObserved, CheckKeyBlockIOEngineOS: StateObserved, CheckKeyBlockIOHelperStart: StateNotRun, CheckKeyBlockIOImageTools: StateNotRun, CheckKeyBlockIODrivers: StateNotRun,
+		CheckKeyBlockIOControlAccess: StateNotRun, CheckKeyBlockIOTargetLinear: StateNotRun, CheckKeyBlockIOTargetDelay: StateNotRun, CheckKeyBlockIOTargetError: StateNotRun}
 	if got := states(report); !reflect.DeepEqual(got, want) {
 		t.Fatalf("states %v, want %v", got, want)
 	}
-	if check, _ := report.Lookup(keyTargetDelay); check.Reason != "needs a helper level check" {
+	if check, _ := report.Lookup(CheckKeyBlockIOTargetDelay); check.Reason != "needs a helper level check" {
 		t.Fatalf("delay check: %+v", check)
 	}
-	for capability, want := range map[Capability]State{Engine: Observed, BlockIODelay: Unknown, BlockIOEIO: Unknown} {
+	for capability, want := range map[Capability]State{CapabilityEngine: StateObserved, CapabilityBlockIODelay: StateUnknown, CapabilityBlockIOEIO: StateUnknown} {
 		if got := report.Verdict(capability); got != want {
 			t.Errorf("%s: %s, want %s", capability, got, want)
 		}
 	}
-	if report.Engine.ServerVersion != "29.1.0" || report.Engine.Transport != "tcp" || *report.Engine.Rootless || report.Engine.Desktop != nil {
+	if report.Engine.ServerVersion != "29.1.0" || report.Engine.Transport != "tcp" || *report.Engine.Rootless || report.Engine.Desktop == nil || *report.Engine.Desktop {
 		t.Fatalf("engine facts: %+v", report.Engine)
+	}
+	if text := report.String(); !strings.Contains(text, "desktop no") {
+		t.Fatalf("a Linux engine read without error is not reported as no Desktop:\n%s", text)
 	}
 	if report.Process.OS == "" || report.Process.Architecture == "" {
 		t.Fatalf("process platform: %+v", report.Process)
@@ -166,8 +172,8 @@ func TestInspectStartsNoHelperAndLeavesHelperChecksNotRun(t *testing.T) {
 }
 
 func TestEngineOnlyRequestChecksTheEngine(t *testing.T) {
-	report, err := helperChecker(linuxEngine(), nil).check(t.Context(), Request{Capabilities: []Capability{Engine}})
-	if err != nil || len(report.Checks) != 1 || report.Verdict(Engine) != Observed || report.Verdict(BlockIODelay) != NotRun {
+	report, err := helperChecker(linuxEngine(), nil).check(t.Context(), Request{Capabilities: []Capability{CapabilityEngine}})
+	if err != nil || len(report.Checks) != 1 || report.Verdict(CapabilityEngine) != StateObserved || report.Verdict(CapabilityBlockIODelay) != StateNotRun {
 		t.Fatalf("%+v %v", report, err)
 	}
 }
@@ -187,34 +193,34 @@ func TestHelperVerdicts(t *testing.T) {
 		name         string
 		helper       testHelper
 		delay, eio   State
-		checks       map[string]State
+		checks       map[CheckKey]State
 		kind         Kind
 		wantErr      error
 		wantReleased bool
 	}{
-		{name: "supported targets", helper: testHelper{probe: probeOutput("striped", "linear", "error", "delay")}, delay: Observed, eio: Observed, wantReleased: true},
-		{name: "delay missing, EIO available", helper: testHelper{probe: probeOutput("linear", "error")}, delay: Unavailable, eio: Observed,
-			checks: map[string]State{keyTargetDelay: Unavailable, keyTargetError: Observed}, kind: EnvironmentKind, wantReleased: true},
-		{name: "common prerequisite missing", helper: testHelper{probe: gates("observed", "unavailable", "not-run", "not-run")}, delay: Unavailable, eio: Unavailable,
-			checks: map[string]State{keyDrivers: Unavailable, keyControl: NotRun, keyTargetLinear: NotRun, keyTargetDelay: NotRun}, kind: EnvironmentKind, wantReleased: true},
-		{name: "image tool missing", helper: testHelper{probe: gates("unavailable", "not-run", "not-run", "not-run")}, delay: Unavailable, eio: Unavailable,
-			checks: map[string]State{keyTools: Unavailable, keyDrivers: NotRun}, kind: ImageKind, wantReleased: true},
-		{name: "python3 missing", helper: testHelper{probeErr: &supervised.ExitError{Label: "preflight helper", Code: 127}}, delay: Unavailable, eio: Unavailable,
-			checks: map[string]State{keyHelperStart: Observed, keyTools: Unavailable, keyDrivers: NotRun}, kind: ImageKind, wantReleased: true},
-		{name: "targets unreadable", helper: testHelper{probe: gates("observed", "observed", "observed", "unknown")}, delay: Unknown, eio: Unknown,
-			checks: map[string]State{keyControl: Observed, keyTargetLinear: Unknown, keyTargetDelay: Unknown, keyTargetError: Unknown}, wantErr: ceph.ErrNativeFailure, wantReleased: true},
+		{name: "supported targets", helper: testHelper{probe: probeOutput("striped", "linear", "error", "delay")}, delay: StateObserved, eio: StateObserved, wantReleased: true},
+		{name: "delay missing, EIO available", helper: testHelper{probe: probeOutput("linear", "error")}, delay: StateUnavailable, eio: StateObserved,
+			checks: map[CheckKey]State{CheckKeyBlockIOTargetDelay: StateUnavailable, CheckKeyBlockIOTargetError: StateObserved}, kind: KindEnvironment, wantReleased: true},
+		{name: "common prerequisite missing", helper: testHelper{probe: gates("observed", "unavailable", "not-run", "not-run")}, delay: StateUnavailable, eio: StateUnavailable,
+			checks: map[CheckKey]State{CheckKeyBlockIODrivers: StateUnavailable, CheckKeyBlockIOControlAccess: StateNotRun, CheckKeyBlockIOTargetLinear: StateNotRun, CheckKeyBlockIOTargetDelay: StateNotRun}, kind: KindEnvironment, wantReleased: true},
+		{name: "image tool missing", helper: testHelper{probe: gates("unavailable", "not-run", "not-run", "not-run")}, delay: StateUnavailable, eio: StateUnavailable,
+			checks: map[CheckKey]State{CheckKeyBlockIOImageTools: StateUnavailable, CheckKeyBlockIODrivers: StateNotRun}, kind: KindImage, wantReleased: true},
+		{name: "python3 missing", helper: testHelper{probeErr: &supervised.ExitError{Label: "preflight helper", Code: 127}}, delay: StateUnavailable, eio: StateUnavailable,
+			checks: map[CheckKey]State{CheckKeyBlockIOHelperStart: StateObserved, CheckKeyBlockIOImageTools: StateUnavailable, CheckKeyBlockIODrivers: StateNotRun}, kind: KindImage, wantReleased: true},
+		{name: "targets unreadable", helper: testHelper{probe: gates("observed", "observed", "observed", "unknown")}, delay: StateUnknown, eio: StateUnknown,
+			checks: map[CheckKey]State{CheckKeyBlockIOControlAccess: StateObserved, CheckKeyBlockIOTargetLinear: StateUnknown, CheckKeyBlockIOTargetDelay: StateUnknown, CheckKeyBlockIOTargetError: StateUnknown}, wantErr: ceph.ErrNativeFailure, wantReleased: true},
 		{name: "helper configuration refused", helper: testHelper{startErr: fmt.Errorf("create container: %w", errdefs.ErrPermissionDenied.WithMessage("authorization denied by plugin for /home/secret-user"))},
-			delay: Unavailable, eio: Unavailable, checks: map[string]State{keyHelperStart: Unavailable, keyTools: NotRun, keyTargetDelay: NotRun}, kind: EnvironmentKind, wantReleased: true},
+			delay: StateUnavailable, eio: StateUnavailable, checks: map[CheckKey]State{CheckKeyBlockIOHelperStart: StateUnavailable, CheckKeyBlockIOImageTools: StateNotRun, CheckKeyBlockIOTargetDelay: StateNotRun}, kind: KindEnvironment, wantReleased: true},
 		{name: "helper image not found", helper: testHelper{startErr: fmt.Errorf("pull: %w", errdefs.ErrNotFound.WithMessage("secret-host.example.internal/helper"))},
-			delay: Unavailable, eio: Unavailable, checks: map[string]State{keyHelperStart: Unavailable, keyTools: NotRun}, kind: ImageKind, wantReleased: true},
-		{name: "helper start inconclusive", helper: testHelper{startErr: errors.New("start: exec failed on 10.9.8.7")}, delay: Unknown, eio: Unknown,
-			checks: map[string]State{keyHelperStart: Unknown, keyTools: NotRun}, wantErr: ceph.ErrEnvironmentUnavailable, wantReleased: true},
-		{name: "probe inconclusive", helper: testHelper{probeErr: errors.New("exec: s3cr3t-token")}, delay: Unknown, eio: Unknown,
-			checks: map[string]State{keyHelperStart: Observed, keyTools: Unknown, keyDrivers: NotRun}, wantErr: ceph.ErrNativeFailure, wantReleased: true},
-		{name: "probe output invalid", helper: testHelper{probe: `{"gates":[]}`}, delay: Unknown, eio: Unknown,
-			checks: map[string]State{keyTools: Unknown}, wantErr: ceph.ErrNativeFailure, wantReleased: true},
+			delay: StateUnavailable, eio: StateUnavailable, checks: map[CheckKey]State{CheckKeyBlockIOHelperStart: StateUnavailable, CheckKeyBlockIOImageTools: StateNotRun}, kind: KindImage, wantReleased: true},
+		{name: "helper start inconclusive", helper: testHelper{startErr: errors.New("start: exec failed on 10.9.8.7")}, delay: StateUnknown, eio: StateUnknown,
+			checks: map[CheckKey]State{CheckKeyBlockIOHelperStart: StateUnknown, CheckKeyBlockIOImageTools: StateNotRun}, wantErr: ceph.ErrEnvironmentUnavailable, wantReleased: true},
+		{name: "probe inconclusive", helper: testHelper{probeErr: errors.New("exec: s3cr3t-token")}, delay: StateUnknown, eio: StateUnknown,
+			checks: map[CheckKey]State{CheckKeyBlockIOHelperStart: StateObserved, CheckKeyBlockIOImageTools: StateUnknown, CheckKeyBlockIODrivers: StateNotRun}, wantErr: ceph.ErrNativeFailure, wantReleased: true},
+		{name: "probe output invalid", helper: testHelper{probe: `{"gates":[]}`}, delay: StateUnknown, eio: StateUnknown,
+			checks: map[CheckKey]State{CheckKeyBlockIOImageTools: StateUnknown}, wantErr: ceph.ErrNativeFailure, wantReleased: true},
 		{name: "cleanup failure", helper: testHelper{probe: probeOutput("linear", "error", "delay"), terminateErr: errors.New("remove on /home/secret-user failed")},
-			delay: Observed, eio: Observed, wantErr: ceph.ErrEnvironmentUnavailable},
+			delay: StateObserved, eio: StateObserved, wantErr: ceph.ErrEnvironmentUnavailable},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			helper := tc.helper
@@ -222,10 +228,10 @@ func TestHelperVerdicts(t *testing.T) {
 			if tc.wantErr == nil && err != nil || tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
 				t.Fatalf("error %v, want %v", err, tc.wantErr)
 			}
-			if got := report.Verdict(BlockIODelay); got != tc.delay {
+			if got := report.Verdict(CapabilityBlockIODelay); got != tc.delay {
 				t.Errorf("delay verdict %s, want %s\n%s", got, tc.delay, report)
 			}
-			if got := report.Verdict(BlockIOEIO); got != tc.eio {
+			if got := report.Verdict(CapabilityBlockIOEIO); got != tc.eio {
 				t.Errorf("EIO verdict %s, want %s\n%s", got, tc.eio, report)
 			}
 			got := states(report)
@@ -233,7 +239,7 @@ func TestHelperVerdicts(t *testing.T) {
 				if got[key] != want {
 					t.Errorf("%s: %s, want %s", key, got[key], want)
 				}
-				if want == Unavailable {
+				if want == StateUnavailable {
 					if check, _ := report.Lookup(key); check.Kind != tc.kind || check.Reason == "" || check.Guidance == "" {
 						t.Errorf("%s: %+v, want kind %s with reason and guidance", key, check, tc.kind)
 					}
@@ -262,7 +268,7 @@ func TestCancellationKeepsCauseAndStillRemovesHelper(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("error %v, want context.Canceled", err)
 	}
-	if report == nil || report.Verdict(BlockIODelay) != Unknown || report.Verdict(BlockIOEIO) != Unknown {
+	if report == nil || report.Verdict(CapabilityBlockIODelay) != StateUnknown || report.Verdict(CapabilityBlockIOEIO) != StateUnknown {
 		t.Fatalf("partial report:\n%s", report)
 	}
 	if helper.terminated != 1 || !helper.terminateCtxLive || !report.Helper.Released {
@@ -275,7 +281,7 @@ func TestCancelledEngineSelectionKeepsCause(t *testing.T) {
 	cancel()
 	c := checker{engine: func(ctx context.Context) (engineClient, error) { return nil, ctx.Err() }}
 	report, err := c.check(ctx, Request{Capabilities: both})
-	if !errors.Is(err, context.Canceled) || report.Verdict(Engine) != Unknown || report.Verdict(BlockIODelay) != Unknown {
+	if !errors.Is(err, context.Canceled) || report.Verdict(CapabilityEngine) != StateUnknown || report.Verdict(CapabilityBlockIODelay) != StateUnknown {
 		t.Fatalf("%v\n%s", err, report)
 	}
 }
@@ -295,11 +301,11 @@ func TestUnreachableEngineIsUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	check, _ := report.Lookup(keyEngine)
-	if check.State != Unavailable || check.Kind != EnvironmentKind || report.Verdict(BlockIODelay) != Unavailable || report.Engine.Transport != "unix" {
+	check, _ := report.Lookup(CheckKeyEngineInfo)
+	if check.State != StateUnavailable || check.Kind != KindEnvironment || report.Verdict(CapabilityBlockIODelay) != StateUnavailable || report.Engine.Transport != "unix" {
 		t.Fatalf("%+v\n%s", check, report)
 	}
-	if got := states(report); got[keyEngineOS] != NotRun || got[keyTargetDelay] != NotRun {
+	if got := states(report); got[CheckKeyBlockIOEngineOS] != StateNotRun || got[CheckKeyBlockIOTargetDelay] != StateNotRun {
 		t.Fatalf("checks after an unreachable engine ran: %v", got)
 	}
 	requireShareable(t, report, err)
@@ -317,7 +323,7 @@ func TestEngineSelectionFailureIsUnknown(t *testing.T) {
 		return nil, errors.New(`check host "unix:///home/secret-user/docker.sock": connection refused`)
 	}}
 	report, err := c.check(t.Context(), Request{Capabilities: both})
-	if !errors.Is(err, ceph.ErrEnvironmentUnavailable) || report.Verdict(Engine) != Unknown || report.Verdict(BlockIOEIO) != Unknown {
+	if !errors.Is(err, ceph.ErrEnvironmentUnavailable) || report.Verdict(CapabilityEngine) != StateUnknown || report.Verdict(CapabilityBlockIOEIO) != StateUnknown {
 		t.Fatalf("%v\n%s", err, report)
 	}
 	requireShareable(t, report, err)
@@ -327,8 +333,11 @@ func TestEngineInfoFailureIsUnknown(t *testing.T) {
 	engine := linuxEngine()
 	engine.err = errors.New("Error response from daemon: secret-host.example.internal: 500")
 	report, err := helperChecker(engine, nil).check(t.Context(), Request{Capabilities: both})
-	if !errors.Is(err, ceph.ErrEnvironmentUnavailable) || report.Verdict(Engine) != Unknown || report.Verdict(BlockIODelay) != Unknown {
+	if !errors.Is(err, ceph.ErrEnvironmentUnavailable) || report.Verdict(CapabilityEngine) != StateUnknown || report.Verdict(CapabilityBlockIODelay) != StateUnknown {
 		t.Fatalf("%v\n%s", err, report)
+	}
+	if report.Engine.Desktop != nil || !strings.Contains(report.String(), "desktop unknown") {
+		t.Fatalf("an engine whose information was not read has a Desktop fact: %+v\n%s", report.Engine, report)
 	}
 	requireShareable(t, report, err)
 }
@@ -339,7 +348,7 @@ func TestNonLinuxEngineIsUnavailableWithoutHelper(t *testing.T) {
 	c := helperChecker(engine, nil)
 	c.helper = func(engineClient) helperRunner { t.Fatal("a helper started on a Windows engine"); return nil }
 	report, err := c.check(t.Context(), helperRequest())
-	if err != nil || report.Verdict(BlockIODelay) != Unavailable || report.Helper != nil {
+	if err != nil || report.Verdict(CapabilityBlockIODelay) != StateUnavailable || report.Helper != nil {
 		t.Fatalf("%v\n%s", err, report)
 	}
 }
@@ -350,7 +359,7 @@ func TestEngineWithoutOperatingSystemIsUnknownWithError(t *testing.T) {
 	c := helperChecker(engine, nil)
 	c.helper = func(engineClient) helperRunner { t.Fatal("a helper started without a known engine OS"); return nil }
 	report, err := c.check(t.Context(), helperRequest())
-	if !errors.Is(err, ceph.ErrEnvironmentUnavailable) || report.Verdict(BlockIODelay) != Unknown || report.Verdict(Engine) != Observed {
+	if !errors.Is(err, ceph.ErrEnvironmentUnavailable) || report.Verdict(CapabilityBlockIODelay) != StateUnknown || report.Verdict(CapabilityEngine) != StateObserved {
 		t.Fatalf("%v\n%s", err, report)
 	}
 }
@@ -361,8 +370,8 @@ func TestEngineFacts(t *testing.T) {
 	if f.Desktop == nil || !*f.Desktop || f.Backend != "wsl2" || !*f.Rootless || !*f.UserNamespaces || f.Transport != "npipe" {
 		t.Fatalf("%+v", f)
 	}
-	if f := facts(system.Info{}, ""); f.Desktop != nil || f.Rootless != nil || f.UserNamespaces != nil {
-		t.Fatalf("unobserved facts were invented: %+v", f)
+	if f := facts(system.Info{}, ""); f.Desktop == nil || *f.Desktop || f.Rootless != nil || f.UserNamespaces != nil {
+		t.Fatalf("read information without Docker Desktop or security options: %+v", f)
 	}
 	for host, want := range map[string]string{"unix:///var/run/docker.sock": "unix", "ssh://user@secret-host.example.internal": "ssh", "tcp://10.9.8.7:2376": "tcp", "fd://": "", "::": ""} {
 		if got := transport(host); got != want {
@@ -374,11 +383,11 @@ func TestEngineFacts(t *testing.T) {
 func TestRequestValidation(t *testing.T) {
 	for name, request := range map[string]Request{
 		"unknown capability":     {Capabilities: []Capability{"blockio.netem"}},
-		"duplicate capability":   {Capabilities: []Capability{BlockIOEIO, BlockIOEIO}},
+		"duplicate capability":   {Capabilities: []Capability{CapabilityBlockIOEIO, CapabilityBlockIOEIO}},
 		"unknown level":          {Level: "active"},
-		"helper without image":   {Capabilities: both, Level: Helper},
+		"helper without image":   {Capabilities: both, Level: LevelHelper},
 		"image at inspect level": {Capabilities: both, HelperImage: "helper:v1"},
-		"image without blockio":  {Level: Helper, HelperImage: "helper:v1"},
+		"image without blockio":  {Level: LevelHelper, HelperImage: "helper:v1"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			c := checker{engine: func(context.Context) (engineClient, error) {
@@ -406,7 +415,7 @@ func TestReportJSONRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(&decoded, report) || decoded.Verdict(BlockIODelay) != Unavailable || decoded.Verdict(BlockIOEIO) != Observed {
+	if !reflect.DeepEqual(&decoded, report) || decoded.Verdict(CapabilityBlockIODelay) != StateUnavailable || decoded.Verdict(CapabilityBlockIOEIO) != StateObserved {
 		t.Fatalf("decoded %+v\nwant %+v", decoded, report)
 	}
 	for _, want := range []string{`"schema_version":1`, `"state":"unavailable"`, `"key":"blockio.target.delay"`, `"level":"helper"`} {
@@ -429,22 +438,22 @@ func TestVerdictKeepsUnavailableAndUnknownApart(t *testing.T) {
 		states []State
 		want   State
 	}{
-		{[]State{Observed, Observed}, Observed},
-		{[]State{Observed, NotRun}, Unknown},
-		{[]State{Unknown, Observed}, Unknown},
-		{[]State{Unknown, Unavailable}, Unavailable},
-		{[]State{Unavailable, NotRun}, Unavailable},
-		{[]State{NotRun, Unknown}, Unknown},
+		{[]State{StateObserved, StateObserved}, StateObserved},
+		{[]State{StateObserved, StateNotRun}, StateUnknown},
+		{[]State{StateUnknown, StateObserved}, StateUnknown},
+		{[]State{StateUnknown, StateUnavailable}, StateUnavailable},
+		{[]State{StateUnavailable, StateNotRun}, StateUnavailable},
+		{[]State{StateNotRun, StateUnknown}, StateUnknown},
 	} {
-		r := &Report{Capabilities: []Capability{BlockIODelay}}
+		r := &Report{Capabilities: []Capability{CapabilityBlockIODelay}}
 		for i, state := range tc.states {
-			r.Checks = append(r.Checks, Check{Key: fmt.Sprint(i), Capabilities: []Capability{BlockIODelay}, State: state})
+			r.Checks = append(r.Checks, Check{Key: CheckKey(fmt.Sprint(i)), Capabilities: []Capability{CapabilityBlockIODelay}, State: state})
 		}
-		if got := r.Verdict(BlockIODelay); got != tc.want {
+		if got := r.Verdict(CapabilityBlockIODelay); got != tc.want {
 			t.Errorf("%v: %s, want %s", tc.states, got, tc.want)
 		}
 	}
-	if (*Report)(nil).Verdict(Engine) != NotRun {
+	if (*Report)(nil).Verdict(CapabilityEngine) != StateNotRun {
 		t.Fatal("nil report")
 	}
 }
@@ -478,5 +487,91 @@ func TestOnlyConnectionFailures(t *testing.T) {
 		if got := onlyConnectionFailures(tc.err); got != tc.want {
 			t.Errorf("%s: %t, want %t", name, got, tc.want)
 		}
+	}
+}
+
+// Every key that a report of all capabilities at the helper level holds is
+// one of the exported check keys, and each of them is reported.
+func TestReportedKeysAreExported(t *testing.T) {
+	exported := []CheckKey{CheckKeyEngineInfo, CheckKeyBlockIOEngineOS, CheckKeyBlockIOHelperStart, CheckKeyBlockIOImageTools,
+		CheckKeyBlockIODrivers, CheckKeyBlockIOControlAccess, CheckKeyBlockIOTargetLinear, CheckKeyBlockIOTargetDelay, CheckKeyBlockIOTargetError}
+	report, err := helperChecker(linuxEngine(), &testHelper{probe: probeOutput("linear", "error", "delay")}).check(t.Context(), helperRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys []CheckKey
+	for _, check := range report.Checks {
+		if !slices.Contains(exported, check.Key) {
+			t.Errorf("report key %q is not an exported CheckKey", check.Key)
+		}
+		if !slices.Contains([]Source{SourceEngineInfo, SourceHelperStart, SourceHelperProbe}, check.Source) {
+			t.Errorf("%s has source %q", check.Key, check.Source)
+		}
+		keys = append(keys, check.Key)
+	}
+	if !slices.Equal(keys, exported) {
+		t.Fatalf("report keys %v, want %v", keys, exported)
+	}
+}
+
+// The helper names a missing tool from the probe's tool list and maps the
+// probe's gates by key, so a tool added to the probe and gates in another
+// order are reported as the probe concluded.
+func TestRecordFollowsTheProbeToolsAndGateKeys(t *testing.T) {
+	t.Run("added tool", func(t *testing.T) {
+		tools := control.ProbeTools
+		control.ProbeTools = append(slices.Clone(tools), "mkfs.xfs")
+		t.Cleanup(func() { control.ProbeTools = tools })
+		probe := `{"gates":[{"key":"tools","state":"unavailable","kind":"image","missing":["mkfs.xfs"]},{"key":"drivers","state":"not-run"},{"key":"control","state":"not-run"},{"key":"targets","state":"not-run"}],"targets":[]}`
+		report, err := helperChecker(linuxEngine(), &testHelper{probe: probe}).check(t.Context(), helperRequest())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if check, _ := report.Lookup(CheckKeyBlockIOImageTools); check.State != StateUnavailable || check.Kind != KindImage || check.Reason != "the helper image lacks mkfs.xfs" {
+			t.Fatalf("added tool: %+v", check)
+		}
+	})
+	t.Run("reordered gates", func(t *testing.T) {
+		report := &Report{Checks: plan([]Capability{CapabilityBlockIODelay, CapabilityBlockIOEIO})}
+		probe := control.Probe{Gates: []control.Gate{
+			{Key: control.GateTargets, State: control.GateObserved},
+			{Key: control.GateControl, State: control.GateUnavailable, Kind: control.GateEnvironment},
+			{Key: control.GateTools, State: control.GateObserved},
+			{Key: control.GateDrivers, State: control.GateObserved},
+		}, Targets: []string{"linear", "error"}}
+		if err := record(probe, report); err != nil {
+			t.Fatal(err)
+		}
+		for key, want := range map[CheckKey]State{
+			CheckKeyBlockIOImageTools: StateObserved, CheckKeyBlockIODrivers: StateObserved, CheckKeyBlockIOControlAccess: StateUnavailable,
+			CheckKeyBlockIOTargetLinear: StateObserved, CheckKeyBlockIOTargetDelay: StateUnavailable, CheckKeyBlockIOTargetError: StateObserved,
+		} {
+			if check, _ := report.Lookup(key); check.State != want {
+				t.Errorf("%s: %+v, want %s", key, check, want)
+			}
+		}
+		if check, _ := report.Lookup(CheckKeyBlockIOControlAccess); check.Kind != KindEnvironment {
+			t.Errorf("control access kind: %+v", check)
+		}
+	})
+}
+
+// The helper runs with the block I/O keeper's privileges and host
+// configuration: it starts from the request that fault/blockio's keeper
+// starts from, and adds only its owner label.
+func TestHelperRequestIsTheKeeperConfiguration(t *testing.T) {
+	request := helperContainerRequest("registry.example/helper:v1")
+	shared := control.HelperRequest("registry.example/helper:v1", request.Name)
+	if !strings.HasPrefix(request.Name, "tcpre-") || request.Labels[ownerLabel] != request.Name || !request.Started {
+		t.Fatalf("helper identity: %+v", request)
+	}
+	if request.Image != shared.Image || !slices.Equal(request.Entrypoint, shared.Entrypoint) || !slices.Equal(request.Cmd, shared.Cmd) || request.User != shared.User {
+		t.Fatalf("helper request %+v, keeper request %+v", request.ContainerRequest, shared)
+	}
+	var got, want container.HostConfig
+	request.HostConfigModifier(&got)
+	shared.HostConfigModifier(&want)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("helper host configuration %+v, keeper %+v", got, want)
 	}
 }

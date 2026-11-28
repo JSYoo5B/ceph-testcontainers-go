@@ -92,7 +92,7 @@ func TestParseProbeRefusesIncompleteOutput(t *testing.T) {
 			if state == "unavailable" {
 				kind = "environment"
 			}
-			parts = append(parts, `{"key":"`+ProbeGates[i]+`","state":"`+state+`","kind":"`+kind+`"}`)
+			parts = append(parts, `{"key":"`+string(ProbeGates[i])+`","state":"`+state+`","kind":"`+kind+`"}`)
 		}
 		return "[" + strings.Join(parts, ",") + "]"
 	}

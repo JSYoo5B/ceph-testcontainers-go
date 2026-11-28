@@ -18,8 +18,8 @@ func ExampleObserve() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	report, err := preflight.Observe(ctx, preflight.Request{
-		Capabilities: []preflight.Capability{preflight.BlockIODelay, preflight.BlockIOEIO},
-		Level:        preflight.Helper,
+		Capabilities: []preflight.Capability{preflight.CapabilityBlockIODelay, preflight.CapabilityBlockIOEIO},
+		Level:        preflight.LevelHelper,
 		HelperImage:  blockio.HelperImage,
 	})
 	if report != nil {
@@ -30,10 +30,10 @@ func ExampleObserve() {
 	if err != nil {
 		fmt.Println("preflight incomplete:", err)
 	}
-	switch report.Verdict(preflight.BlockIODelay) {
-	case preflight.Observed:
+	switch report.Verdict(preflight.CapabilityBlockIODelay) {
+	case preflight.StateObserved:
 		// Start the backend and the cluster, then apply the delay.
-	case preflight.Unavailable:
+	case preflight.StateUnavailable:
 		// The engine lacks a prerequisite: skip the delay case on this engine.
 	default:
 		// Unknown: nothing proves the prerequisite missing; run the case and

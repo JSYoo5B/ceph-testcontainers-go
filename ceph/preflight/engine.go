@@ -13,19 +13,6 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-// Check keys, in report order.
-const (
-	keyEngine       = "engine.info"
-	keyEngineOS     = "blockio.engine-os"
-	keyHelperStart  = "blockio.helper-start"
-	keyTools        = "blockio.image-tools"
-	keyDrivers      = "blockio.drivers"
-	keyControl      = "blockio.control-access"
-	keyTargetLinear = "blockio.target.linear"
-	keyTargetDelay  = "blockio.target.delay"
-	keyTargetError  = "blockio.target.error"
-)
-
 // engineClient is the part of the Docker client that Observe uses.
 //
 //testdouble:dependency-port
@@ -50,7 +37,7 @@ func (e clientEngine) Close() error { return e.docker.Close() }
 
 func blockIOCapabilities(capabilities []Capability) []Capability {
 	var selected []Capability
-	for _, capability := range []Capability{BlockIODelay, BlockIOEIO} {
+	for _, capability := range []Capability{CapabilityBlockIODelay, CapabilityBlockIOEIO} {
 		if slices.Contains(capabilities, capability) {
 			selected = append(selected, capability)
 		}
@@ -61,19 +48,19 @@ func blockIOCapabilities(capabilities []Capability) []Capability {
 // plan lists the checks of the requested capabilities. Engine reachability
 // is a gate of every capability.
 func plan(blockIO []Capability) []Check {
-	all := append([]Capability{Engine}, blockIO...)
-	checks := []Check{{Key: keyEngine, Capabilities: all}}
+	all := append([]Capability{CapabilityEngine}, blockIO...)
+	checks := []Check{{Key: CheckKeyEngineInfo, Capabilities: all}}
 	if len(blockIO) == 0 {
 		return checks
 	}
-	for _, key := range []string{keyEngineOS, keyHelperStart, keyTools, keyDrivers, keyControl, keyTargetLinear} {
+	for _, key := range []CheckKey{CheckKeyBlockIOEngineOS, CheckKeyBlockIOHelperStart, CheckKeyBlockIOImageTools, CheckKeyBlockIODrivers, CheckKeyBlockIOControlAccess, CheckKeyBlockIOTargetLinear} {
 		checks = append(checks, Check{Key: key, Capabilities: slices.Clone(blockIO)})
 	}
-	if slices.Contains(blockIO, BlockIODelay) {
-		checks = append(checks, Check{Key: keyTargetDelay, Capabilities: []Capability{BlockIODelay}})
+	if slices.Contains(blockIO, CapabilityBlockIODelay) {
+		checks = append(checks, Check{Key: CheckKeyBlockIOTargetDelay, Capabilities: []Capability{CapabilityBlockIODelay}})
 	}
-	if slices.Contains(blockIO, BlockIOEIO) {
-		checks = append(checks, Check{Key: keyTargetError, Capabilities: []Capability{BlockIOEIO}})
+	if slices.Contains(blockIO, CapabilityBlockIOEIO) {
+		checks = append(checks, Check{Key: CheckKeyBlockIOTargetError, Capabilities: []Capability{CapabilityBlockIOEIO}})
 	}
 	return checks
 }
@@ -96,19 +83,19 @@ func (c checker) inspect(ctx context.Context, report *Report) (engineClient, boo
 	engine, err := newEngine(ctx)
 	switch {
 	case err == nil:
-	case ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
-		report.set(keyEngine, Unknown, "", "engine-info", "the engine selection was interrupted", engineGuidance)
+	case interrupted(ctx, err):
+		report.set(CheckKeyEngineInfo, StateUnknown, "", SourceEngineInfo, "the engine selection was interrupted", engineGuidance)
 		return nil, false, cause(ctx, err, ceph.ErrEnvironmentUnavailable, "select the engine")
 	case onlyConnectionFailures(err):
 		// testcontainers reads the information of each candidate endpoint
 		// and caches the result for the process, so a fixture started next
 		// fails the same way.
-		report.set(keyEngine, Unavailable, EnvironmentKind, "engine-info", "testcontainers found no reachable engine", engineGuidance)
+		report.set(CheckKeyEngineInfo, StateUnavailable, KindEnvironment, SourceEngineInfo, "testcontainers found no reachable engine", engineGuidance)
 		return nil, false, nil
 	default:
 		// A candidate answered with an error, no candidate was found, or the
 		// runtime provider failed: nothing proves the engine unreachable.
-		report.set(keyEngine, Unknown, "", "engine-info", "testcontainers could not select an engine", engineGuidance)
+		report.set(CheckKeyEngineInfo, StateUnknown, "", SourceEngineInfo, "testcontainers could not select an engine", engineGuidance)
 		return nil, false, cause(ctx, err, ceph.ErrEnvironmentUnavailable, "select the engine")
 	}
 	report.Engine.Transport = transport(engine.DaemonHost())
@@ -116,14 +103,14 @@ func (c checker) inspect(ctx context.Context, report *Report) (engineClient, boo
 	switch {
 	case err == nil:
 	case ctx.Err() == nil && client.IsErrConnectionFailed(err):
-		report.set(keyEngine, Unavailable, EnvironmentKind, "engine-info", "the selected engine is not reachable", engineGuidance)
+		report.set(CheckKeyEngineInfo, StateUnavailable, KindEnvironment, SourceEngineInfo, "the selected engine is not reachable", engineGuidance)
 		return engine, false, nil
 	default:
-		report.set(keyEngine, Unknown, "", "engine-info", "the engine did not return its information", engineGuidance)
+		report.set(CheckKeyEngineInfo, StateUnknown, "", SourceEngineInfo, "the engine did not return its information", engineGuidance)
 		return engine, false, cause(ctx, err, ceph.ErrEnvironmentUnavailable, "read the engine information")
 	}
 	report.Engine = facts(info, report.Engine.Transport)
-	report.set(keyEngine, Observed, "", "engine-info", "", "")
+	report.set(CheckKeyEngineInfo, StateObserved, "", SourceEngineInfo, "", "")
 	return engine, true, nil
 }
 
@@ -186,9 +173,8 @@ func facts(info system.Info, transport string) EngineFacts {
 		OperatingSystem: info.OperatingSystem,
 		CgroupVersion:   info.CgroupVersion,
 	}
-	if strings.Contains(info.OperatingSystem, "Docker Desktop") {
-		f.Desktop = new(true)
-	}
+	desktop := strings.Contains(info.OperatingSystem, "Docker Desktop")
+	f.Desktop = &desktop
 	if strings.Contains(strings.ToLower(info.KernelVersion), "microsoft-standard-wsl2") {
 		f.Backend = "wsl2"
 	}
@@ -214,12 +200,12 @@ func facts(info system.Info, transport string) EngineFacts {
 func engineOS(report *Report) error {
 	switch report.Engine.OSType {
 	case "linux":
-		report.set(keyEngineOS, Observed, "", "engine-info", "", "")
+		report.set(CheckKeyBlockIOEngineOS, StateObserved, "", SourceEngineInfo, "", "")
 	case "":
-		report.set(keyEngineOS, Unknown, "", "engine-info", "the engine did not report its operating system", "")
+		report.set(CheckKeyBlockIOEngineOS, StateUnknown, "", SourceEngineInfo, "the engine did not report its operating system", "")
 		return failure(ceph.ErrEnvironmentUnavailable, "the engine did not report its operating system")
 	default:
-		report.set(keyEngineOS, Unavailable, EnvironmentKind, "engine-info", "block I/O faults need a Linux engine", "select a Linux engine; on Docker Desktop for Windows, switch to Linux containers")
+		report.set(CheckKeyBlockIOEngineOS, StateUnavailable, KindEnvironment, SourceEngineInfo, "block I/O faults need a Linux engine", "select a Linux engine; on Docker Desktop for Windows, switch to Linux containers")
 	}
 	return nil
 }
