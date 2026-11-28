@@ -2,6 +2,8 @@ package mirror
 
 import (
 	"context"
+	"errors"
+	"maps"
 	"strconv"
 	"strings"
 	"time"
@@ -15,10 +17,11 @@ import (
 // rules the two removals share: every owned daemon runs normally, witnesses
 // the owned peer in a filesystem session that is a native watcher and lists
 // the exact peer command, the watcher set holds exactly the cohort, and an
-// optional process observer is bound to each original run. The per-daemon
-// completion observations differ (a peer drain waits for the peer command to
-// unregister, a directory release for the path to leave the peer stats), so
-// each removal keeps its own. Its methods run while Container.mu is held.
+// optional process observer is bound to each original run. Capture and every
+// later observation confirm each witness the same way (confirmWitness); only
+// the read between the two session reads belongs to the removal: a peer drain
+// waits for the peer command to unregister, a directory release for the path
+// to leave the peer stats. Its methods run while Container.mu is held.
 type cephFSRemovalCohort struct {
 	scope     *cephFSOriginalScope
 	witnesses []cephFSRemovalWitness
@@ -67,60 +70,43 @@ func (c *cephFSRemovalCohort) capture(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if !equalCephFSRemovalWatchers(watchers, after) {
+	if !maps.Equal(watchers, after) {
 		return cephFSObserveGuard("CephFS original filesystem watchers changed during removal preflight")
 	}
 	return c.checkWatchers(after)
 }
 
+// captureDaemon records daemon as a witness through the confirmation that
+// every later observation repeats, in its capturing form, then binds its
+// original process when the fixture observes processes.
 func (c *cephFSRemovalCohort) captureDaemon(ctx context.Context, daemon *Daemon, watchers map[string]string) (cephFSRemovalWitness, error) {
 	w := cephFSRemovalWitness{daemon: daemon, name: daemon.DaemonName}
-	if daemon.removed || daemon.Container == nil || !validCephFSRemovalContainerID(daemon.GetContainerID()) || w.name == "" {
+	if daemon.removed || daemon.Container == nil || !validCephFSContainerID(daemon.GetContainerID()) || w.name == "" {
 		return w, cephFSObserveGuard("original CephFS daemon ownership is unavailable")
 	}
 	w.containerID = daemon.GetContainerID()
-	state, err := daemon.State(ctx)
-	if err != nil {
-		return w, cephFSObserveQuery("inspect original CephFS mirror process", err)
-	}
-	if !normalCephFSRemovalProcess(state) {
-		return w, cephFSObserveGuard("strict CephFS peer removal requires every daemon running normally")
-	}
-	if _, err := time.Parse(time.RFC3339Nano, state.StartedAt); err != nil || strings.HasPrefix(state.StartedAt, "0001-") {
-		return w, cephFSObserveGuard("original CephFS process generation is unavailable")
-	}
-	w.startedAt = state.StartedAt
-	session, err := c.scope.session(ctx, daemon)
-	if err != nil {
+	if _, err := c.confirmWitness(ctx, &w, watchers, cephFSWitnessCheck{
+		subject: "CephFS removal preflight",
+		capture: true,
+		read: func(ctx context.Context, w *cephFSRemovalWitness, before cephFSDaemonSession) (string, error) {
+			if !before.peerPresent {
+				return "", cephFSObserveGuard("original CephFS daemon did not witness the owned peer")
+			}
+			w.instanceID = watchers[before.address]
+			if gid, err := strconv.ParseUint(w.instanceID, 10, 64); err != nil || gid == 0 {
+				return "", cephFSObserveGuard("original CephFS filesystem watcher is unavailable")
+			}
+			registered, err := c.scope.catalog(ctx, w.daemon)
+			if err != nil {
+				return "", err
+			}
+			if !registered {
+				return "", cephFSObserveGuard("original exact CephFS peer command was not witnessed before removal")
+			}
+			return "", nil
+		},
+	}); err != nil {
 		return w, err
-	}
-	if !session.peerPresent {
-		return w, cephFSObserveGuard("original CephFS daemon did not witness the owned peer")
-	}
-	w.address, w.instanceID = session.address, watchers[session.address]
-	if gid, err := strconv.ParseUint(w.instanceID, 10, 64); err != nil || gid == 0 {
-		return w, cephFSObserveGuard("original CephFS filesystem watcher is unavailable")
-	}
-	registered, err := c.scope.catalog(ctx, daemon)
-	if err != nil {
-		return w, err
-	}
-	if !registered {
-		return w, cephFSObserveGuard("original exact CephFS peer command was not witnessed before removal")
-	}
-	after, err := c.scope.session(ctx, daemon)
-	if err != nil {
-		return w, err
-	}
-	if after != session {
-		return w, cephFSObserveGuard("original CephFS filesystem session changed during removal preflight")
-	}
-	state, err = daemon.State(ctx)
-	if err != nil {
-		return w, cephFSObserveQuery("confirm original CephFS mirror process", err)
-	}
-	if !normalCephFSRemovalProcess(state) || !sameCephFSRemovalStartedAt(state.StartedAt, w.startedAt) || daemon.GetContainerID() != w.containerID {
-		return w, cephFSObserveGuard("original CephFS process changed during removal preflight")
 	}
 	if c.scope.mirror.roster.observesProcesses() {
 		if daemon.originalProcess == nil {
@@ -132,6 +118,162 @@ func (c *cephFSRemovalCohort) captureDaemon(ctx context.Context, daemon *Daemon,
 		}
 	}
 	return w, ctx.Err()
+}
+
+// cephFSWitnessCheck is one removal's use of the witness confirmation: the
+// subject its refusals name, the read it makes between the two session
+// reads, and how a change of peer presence during that read is reported.
+type cephFSWitnessCheck struct {
+	subject string
+	// capture records the process start and the session address that the
+	// confirmation reads instead of comparing them, and refuses every
+	// deviation as a guard, so that only a normal live process becomes a
+	// witness.
+	capture bool
+	// peerMayLeave reports a session whose peer presence changed during
+	// read as pending, because the peer drain waits for exactly that;
+	// otherwise the change is a changed session.
+	peerMayLeave bool
+	// read is the per-removal read. It gets the session read before it and
+	// returns the witness state.
+	read func(ctx context.Context, w *cephFSRemovalWitness, before cephFSDaemonSession) (string, error)
+}
+
+// confirmWitness reads one original daemon in its original process and
+// filesystem session around check.read: the container identity, a normal
+// process with the original start, the session and its native watcher, the
+// read, the session again and the process again. It returns the read's state,
+// or the state of the first step that failed: retired (the daemon left the
+// fixture), stopped or unavailable (retryable query errors), or
+// session-changed (a guard error). The caller holds the daemon's lock.
+func (c *cephFSRemovalCohort) confirmWitness(ctx context.Context, w *cephFSRemovalWitness, watchers map[string]string, check cephFSWitnessCheck) (string, error) {
+	if !check.capture {
+		if w.daemon == nil || w.daemon.Container == nil || w.daemon.removed {
+			return "retired", cephFSObserveQuery(check.subject+" original daemon is no longer owned", nil)
+		}
+		if w.daemon.DaemonName != w.name || w.daemon.GetContainerID() != w.containerID {
+			return "session-changed", cephFSObserveGuard(check.subject + " original container identity changed")
+		}
+	}
+	if state, err := c.confirmProcess(ctx, w, check, "inspect"); err != nil {
+		return state, err
+	}
+	before, err := c.scope.session(ctx, w.daemon)
+	if err != nil {
+		return "unavailable", err
+	}
+	if check.capture {
+		w.address = before.address
+	} else if before.address != w.address || watchers[w.address] != w.instanceID {
+		return "session-changed", cephFSObserveGuard(check.subject + " original filesystem session changed")
+	}
+	state, err := check.read(ctx, w, before)
+	if err != nil {
+		return state, err
+	}
+	after, err := c.scope.session(ctx, w.daemon)
+	if err != nil {
+		return "unavailable", err
+	}
+	if after.address != before.address {
+		return "session-changed", cephFSObserveGuard(check.subject + " original filesystem session changed during observation")
+	}
+	if after.peerPresent != before.peerPresent {
+		if check.peerMayLeave {
+			return "pending", cephFSObserveQuery(check.subject+" peer changed during observation", nil)
+		}
+		return "session-changed", cephFSObserveGuard(check.subject + " original peer changed during observation")
+	}
+	if state, err := c.confirmProcess(ctx, w, check, "confirm"); err != nil {
+		return state, err
+	}
+	if err := ctx.Err(); err != nil {
+		return "unavailable", err
+	}
+	return state, nil
+}
+
+// confirmProcess reads the witness's container state: a normal process
+// with the original start in the original container. A capturing first
+// read records the start instead.
+func (c *cephFSRemovalCohort) confirmProcess(ctx context.Context, w *cephFSRemovalWitness, check cephFSWitnessCheck, step string) (string, error) {
+	state, err := w.daemon.State(ctx)
+	if err != nil {
+		return "unavailable", cephFSObserveQuery(step+" "+check.subject+" original process", err)
+	}
+	if !normalCephFSMirrorProcess(state) {
+		if check.capture {
+			return "", cephFSObserveGuard(check.subject + " requires every daemon running normally")
+		}
+		return "stopped", cephFSObserveQuery(check.subject+" original process is not running normally", nil)
+	}
+	if check.capture && w.startedAt == "" {
+		if !validProcessTime(state.StartedAt) {
+			return "", cephFSObserveGuard(check.subject + " original process generation is unavailable")
+		}
+		w.startedAt = state.StartedAt
+		return "", nil
+	}
+	if !sameCephFSProcessStart(state.StartedAt, w.startedAt) || w.daemon.GetContainerID() != w.containerID {
+		return "session-changed", cephFSObserveGuard(check.subject + " original process generation changed")
+	}
+	return "", nil
+}
+
+// observe confirms every witness with check, each under its own lock, and
+// records its state and problem through record. Both removals read the
+// watcher set and check it against the cohort before any witness: a foreign
+// or retired watcher means the session that a witness reports is not proven
+// to be the only one, so no witness state can be release or drain evidence.
+// The set is read again after the witnesses and must be unchanged. It returns
+// whether every witness reached done, the joined observation errors, and
+// whether a guard ended the observation before its last step.
+func (c *cephFSRemovalCohort) observe(ctx context.Context, check cephFSWitnessCheck, done string, record func(name, state, problem string)) (bool, error, bool) {
+	before, err := c.scope.watchers(ctx)
+	if err != nil {
+		return false, err, true
+	}
+	if err := c.checkWatchers(before); err != nil {
+		return false, err, true
+	}
+	all := true
+	var errs []error
+	for i := range c.witnesses {
+		w := &c.witnesses[i]
+		if err := multicluster.LockObservation(ctx, &w.daemon.mu); err != nil {
+			all = false
+			errs = append(errs, err)
+			break
+		}
+		state, err := c.confirmWitness(ctx, w, before, check)
+		w.daemon.mu.Unlock()
+		problem := ""
+		if err != nil {
+			all = false
+			problem = err.Error()
+			errs = append(errs, err)
+		}
+		if state != done {
+			all = false
+		}
+		record(w.name, state, problem)
+		if errors.Is(err, errCephFSObservationGuard) {
+			return false, errors.Join(errs...), true
+		}
+	}
+	after, err := c.scope.watchers(ctx)
+	if err != nil {
+		return false, errors.Join(append(errs, err)...), true
+	}
+	if !maps.Equal(before, after) {
+		all = false
+		errs = append(errs, cephFSObserveGuard(check.subject+" original watcher set changed during observation"))
+	}
+	if err := c.checkWatchers(after); err != nil {
+		all = false
+		errs = append(errs, err)
+	}
+	return all && len(errs) == 0, errors.Join(errs...), false
 }
 
 func (c *cephFSRemovalCohort) checkWatchers(watchers map[string]string) error {
@@ -155,7 +297,6 @@ func (c *cephFSRemovalCohort) validateProcesses(ctx context.Context) error {
 	owned := make(map[*Daemon]bool)
 	names, ids, gids := make(map[string]bool), make(map[string]bool), make(map[uint64]bool)
 	for _, w := range c.witnesses {
-		gid, err := strconv.ParseUint(w.instanceID, 10, 64)
 		if w.daemon == nil {
 			return cephFSObserveGuard("original daemon identity is unavailable")
 		}
@@ -164,7 +305,8 @@ func (c *cephFSRemovalCohort) validateProcesses(ctx context.Context) error {
 		}
 		sameOwner := w.originalProcess != nil && w.originalProcess.originalHandle == w.daemon.Container && w.daemon.originalProcess == w.originalProcess && w.daemon.DaemonName == w.name
 		w.daemon.mu.Unlock()
-		if !sameOwner || w.daemon == nil || w.originalProcess == nil || w.daemon.originalProcess != w.originalProcess || w.daemon.DaemonName != w.name || w.originalProcess.containerID != w.containerID || w.address == "" || !validProcessTime(w.startedAt) || err != nil || gid == 0 || names[w.name] || ids[w.containerID] || gids[gid] || owned[w.daemon] {
+		gid, err := strconv.ParseUint(w.instanceID, 10, 64)
+		if !sameOwner || w.originalProcess.containerID != w.containerID || w.address == "" || !validProcessTime(w.startedAt) || err != nil || gid == 0 || names[w.name] || ids[w.containerID] || gids[gid] || owned[w.daemon] {
 			return cephFSObserveGuard("original process cohort binding or numeric watcher identity differs")
 		}
 		owned[w.daemon], names[w.name], ids[w.containerID], gids[gid] = true, true, true, true
@@ -177,7 +319,7 @@ func (c *cephFSRemovalCohort) validateProcesses(ctx context.Context) error {
 	return nil
 }
 
-func validCephFSRemovalContainerID(id string) bool {
+func validCephFSContainerID(id string) bool {
 	if len(id) != 64 {
 		return false
 	}
@@ -189,24 +331,23 @@ func validCephFSRemovalContainerID(id string) bool {
 	return true
 }
 
-func sameCephFSRemovalStartedAt(a, b string) bool {
+// validProcessTime reports a parseable, non-zero container start or finish
+// time; Docker reports the zero time 0001-01-01 for a container that never
+// ran.
+func validProcessTime(value string) bool {
+	v, err := time.Parse(time.RFC3339Nano, value)
+	return err == nil && !v.IsZero()
+}
+
+// sameCephFSProcessStart reports two valid start times of one process run.
+func sameCephFSProcessStart(a, b string) bool {
 	left, e1 := time.Parse(time.RFC3339Nano, a)
 	right, e2 := time.Parse(time.RFC3339Nano, b)
 	return e1 == nil && e2 == nil && !left.IsZero() && !right.IsZero() && left.Equal(right)
 }
 
-func normalCephFSRemovalProcess(s *container.State) bool {
+// normalCephFSMirrorProcess reports a running process that is not paused,
+// restarting or dead.
+func normalCephFSMirrorProcess(s *container.State) bool {
 	return s != nil && s.Running && !s.Paused && !s.Restarting && !s.Dead
-}
-
-func equalCephFSRemovalWatchers(a, b map[string]string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, v := range a {
-		if b[k] != v {
-			return false
-		}
-	}
-	return true
 }

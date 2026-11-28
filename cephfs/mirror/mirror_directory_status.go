@@ -195,7 +195,7 @@ func (mirror *Container) observeDaemonSession(ctx context.Context, daemon *Daemo
 	if stateErr != nil {
 		return "", cephFSPeerIdentity{}, cephFSObserveQuery("inspect CephFS mirror process", stateErr), nil
 	}
-	if state == nil || !state.Running || state.Paused || state.Restarting || state.Dead {
+	if !normalCephFSMirrorProcess(state) {
 		return "", cephFSPeerIdentity{}, cephFSObserveQuery("owned CephFS mirror process is not running normally", nil), nil
 	}
 	session, err := readDaemonSession(ctx, daemon, mirror.pair, "read CephFS mirror filesystem session")

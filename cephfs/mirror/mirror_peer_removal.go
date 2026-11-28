@@ -259,76 +259,31 @@ func (r *PeerRemoval) statusWithAdmission(ctx context.Context, admitted *bool) (
 	if !result.PolicyRemoved {
 		return result, ctx.Err()
 	}
-	watchers, err := r.scope.watchers(ctx)
-	if err != nil {
-		return result, err
-	}
-	all, errs, guarded := r.observeCohort(ctx, watchers, result.Daemons)
-	if guarded {
-		return result, errors.Join(errs...)
-	}
-	after, err := r.scope.watchers(ctx)
-	if err != nil {
-		return result, errors.Join(append(errs, err)...)
-	}
-	if !equalCephFSRemovalWatchers(watchers, after) {
-		all = false
-		errs = append(errs, cephFSObserveGuard("original CephFS filesystem watcher set changed during drain observation"))
-	}
-	if err := r.cohort.checkWatchers(after); err != nil {
-		all = false
-		errs = append(errs, err)
+	all, observed, stopped := r.cohort.observe(ctx, r.drainCheck(), "drained", func(name, state, problem string) {
+		entry := result.Daemons[name]
+		entry.State, entry.Problem = state, problem
+		result.Daemons[name] = entry
+	})
+	if stopped {
+		return result, observed
 	}
 	present, fsPresent, err = r.scope.policy(ctx)
 	if err != nil {
-		return result, errors.Join(append(errs, err)...)
+		return result, errors.Join(observed, err)
 	}
 	if present || fsPresent {
 		all = false
 		result.PolicyRemoved = false
 	}
 	if err := ctx.Err(); err != nil {
-		return result, errors.Join(append(errs, err)...)
+		return result, errors.Join(observed, err)
 	}
-	result.Drained = all && len(errs) == 0
+	result.Drained = all
 	if result.Drained {
 		r.completed = true
 		r.scope.mirror.peer.id = ""
 	}
-	return result, errors.Join(errs...)
-}
-
-// observeCohort observes each original daemon under its own lock and records
-// its state and problem in daemons. It reports whether every daemon has
-// drained the peer, the observation errors, and whether a guard refusal ended
-// the observation early. Container.mu is held.
-func (r *PeerRemoval) observeCohort(ctx context.Context, watchers map[string]string, daemons map[string]PeerRemovalDaemonStatus) (bool, []error, bool) {
-	all := true
-	var errs []error
-	for _, w := range r.cohort.witnesses {
-		entry := daemons[w.name]
-		if err := multicluster.LockObservation(ctx, &w.daemon.mu); err != nil {
-			all = false
-			errs = append(errs, err)
-			break
-		}
-		state, entryError := r.observeDaemon(ctx, w, watchers)
-		w.daemon.mu.Unlock()
-		entry.State = state
-		if entryError != nil {
-			all = false
-			entry.Problem = entryError.Error()
-			errs = append(errs, entryError)
-		}
-		if state != "drained" {
-			all = false
-		}
-		daemons[w.name] = entry
-		if errors.Is(entryError, errCephFSObservationGuard) {
-			return all, errs, true
-		}
-	}
-	return all, errs, false
+	return result, observed
 }
 
 // WaitDrained releases the fixture lock between observations. Deadline/cancel
@@ -351,62 +306,25 @@ func waitCephFSPeerDrainWithAdmission(ctx context.Context, interval time.Duratio
 		func(status *PeerRemovalStatus) { status.Drained = false })
 }
 
-func (r *PeerRemoval) observeDaemon(ctx context.Context, w cephFSRemovalWitness, watchers map[string]string) (string, error) {
-	if w.daemon == nil || w.daemon.Container == nil || w.daemon.removed {
-		return "retired", cephFSObserveQuery("original CephFS daemon no longer has a live drain witness", nil)
+// drainCheck observes a witness's peer teardown: drained once its original
+// session no longer sees the peer and its admin socket no longer lists the
+// peer's command.
+func (r *PeerRemoval) drainCheck() cephFSWitnessCheck {
+	return cephFSWitnessCheck{
+		subject:      "CephFS peer drain",
+		peerMayLeave: true,
+		read: func(ctx context.Context, w *cephFSRemovalWitness, before cephFSDaemonSession) (string, error) {
+			registered, err := r.scope.catalog(ctx, w.daemon)
+			if err != nil {
+				return "unavailable", err
+			}
+			switch {
+			case before.peerPresent:
+				return "awaiting-peer-removal", nil
+			case registered:
+				return "awaiting-command-unregister", nil
+			}
+			return "drained", nil
+		},
 	}
-	if w.daemon.DaemonName != w.name {
-		return "session-changed", cephFSObserveGuard("original CephFS peer drain daemon name changed")
-	}
-	if w.daemon.GetContainerID() != w.containerID {
-		return "session-changed", cephFSObserveGuard("original CephFS peer drain container was replaced")
-	}
-	state, err := w.daemon.State(ctx)
-	if err != nil {
-		return "unavailable", cephFSObserveQuery("inspect original CephFS drain process", err)
-	}
-	if !normalCephFSRemovalProcess(state) {
-		return "stopped", cephFSObserveQuery("original CephFS peer drain process is not running normally", nil)
-	}
-	if !sameCephFSRemovalStartedAt(state.StartedAt, w.startedAt) {
-		return "session-changed", cephFSObserveGuard("original CephFS peer drain process generation changed")
-	}
-	before, err := r.scope.session(ctx, w.daemon)
-	if err != nil {
-		return "unavailable", err
-	}
-	if before.address != w.address || watchers[w.address] != w.instanceID {
-		return "session-changed", cephFSObserveGuard("original CephFS peer drain filesystem session changed")
-	}
-	registered, err := r.scope.catalog(ctx, w.daemon)
-	if err != nil {
-		return "unavailable", err
-	}
-	after, err := r.scope.session(ctx, w.daemon)
-	if err != nil {
-		return "unavailable", err
-	}
-	if before.address != after.address {
-		return "session-changed", cephFSObserveGuard("original CephFS peer drain filesystem session changed during observation")
-	}
-	if before.peerPresent != after.peerPresent {
-		return "pending", cephFSObserveQuery("CephFS peer drain peer changed during observation", nil)
-	}
-	state, err = w.daemon.State(ctx)
-	if err != nil {
-		return "unavailable", cephFSObserveQuery("confirm original CephFS drain process", err)
-	}
-	if !normalCephFSRemovalProcess(state) {
-		return "stopped", cephFSObserveQuery("original CephFS peer drain process stopped during observation", nil)
-	}
-	if !sameCephFSRemovalStartedAt(state.StartedAt, w.startedAt) || w.daemon.GetContainerID() != w.containerID {
-		return "session-changed", cephFSObserveGuard("original CephFS peer drain process changed during observation")
-	}
-	if before.peerPresent {
-		return "awaiting-peer-removal", nil
-	}
-	if registered {
-		return "awaiting-command-unregister", nil
-	}
-	return "drained", ctx.Err()
 }
