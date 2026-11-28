@@ -86,9 +86,9 @@ func (m *initialOSDMon) Exec(ctx context.Context, args []string, _ ...tcexec.Pro
 			if state.in {
 				in = 1
 			}
-			rows = append(rows, map[string]any{"osd": id, "uuid": m.uuids[id], "up": up, "in": in})
+			rows = append(rows, map[string]any{"osd": id, "uuid": m.uuids[id], "up": up, "in": in, "weight": in})
 		}
-		data, _ := json.Marshal(map[string]any{"osds": rows})
+		data, _ := json.Marshal(map[string]any{"epoch": 1, "flags": "", "osds": rows})
 		return 0, noInitialOSDStream(string(data)), nil
 	case len(action) == 4 && action[0] == "osd" && action[1] == "crush" && action[2] == "rm-device-class":
 		return 0, noInitialOSDStream(""), nil
