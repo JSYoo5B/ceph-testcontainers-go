@@ -14,12 +14,15 @@ a cluster with zones uses the same helper image for its routers and route
 agents (see [A routed boundary between logical zones](#a-routed-boundary-between-logical-zones)).
 Block I/O faults run a privileged keeper container from their own helper
 image, such as `blockio.HelperImage` (see [Delaying or failing an OSD's device](#delaying-or-failing-an-osds-device)).
+Clock offsets copy a file out of the clock helper, such as
+`fault.ClockHelperImage`, and never run it (see [Offsetting a MON's wall clock](#offsetting-a-mons-wall-clock)).
 
 | Condition you want | API | What peers observe | Host network | Undo |
 | --- | --- | --- | --- | --- |
 | A daemon process exits | `Stop`/`Start` on a daemon handle | Closed connections right away | Yes | `Start` |
 | A daemon or client is alive but silent | `fault.Pause` | No replies, no closed connection; down only after heartbeat grace | Yes | `PauseLease.Resume` |
 | A daemon or client is alive but slow | `fault.ApplyCPULimit` | Replies and heartbeats arrive late; the process, its memory and its connections stay | Yes | `CPULimitLease.Restore` |
+| A MON's wall clock is wrong | `fault.ApplyClockOffset` on a MON armed with `ceph.ClockConfig` (opt-in clock helper) | `MON_CLOCK_SKEW` after the next timecheck round; the process and its quorum stay | Yes | `ClockOffsetLease.Restore` |
 | A container loses one Docker network | `fault.InterruptNetwork` | The endpoint disappears | No | `NetworkInterruption.Restore` |
 | Packets a container sends are delayed, dropped, rate-limited, reordered, duplicated or corrupted | `fault.ApplyNetworkProfile` (opt-in netem helper) | Slow or lossy replies from that container; connections stay up | No | `NetworkProfileLease.Restore` |
 | Packets between the logical zones of one cluster are delayed, rate-limited or cut | `fault.ApplyZoneProfile` on a cluster started with `ceph.WithZoneConfig` | Slow or lost cross-zone replies; paths within a zone keep working | No | `NetworkProfileLease.Restore` |
@@ -181,6 +184,103 @@ engines, whose cgroups live in a VM the test process cannot read.
 first), a container that was restarted while limited, and settings changed
 outside the lease, which it does not overwrite. A stopped container only gets
 its settings back. Restore before stopping, restarting or pausing the target.
+
+## Offsetting a MON's wall clock
+
+[`fault.ApplyClockOffset`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/fault#ApplyClockOffset)
+moves the wall clock of one running MON process by a whole number of
+seconds, so that a test can watch the cluster and its SUT meet a MON whose
+clock is wrong: `MON_CLOCK_SKEW`, the timecheck, and the timing of leases and
+tickets. The process keeps running; the offset is restored in the same
+process.
+
+A MON can take an offset only when it was armed as its container was
+created, because an interposer cannot be attached to a running process.
+`ceph.ClockConfig` arms the initial MONs and names the clock helper, which is
+never selected implicitly; `ceph.DaemonOptions.WithClockInstrumentation` arms
+one MON that `AddMonitor` adds:
+
+```golang
+clock := ceph.ClockConfig{}.WithHelperImage(fault.ClockHelperImage).WithMonitors("a", "b", "c")
+cluster, err := ceph.Run(ctx, ceph.DefaultImage,
+	ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3)),
+	ceph.WithClockConfig(clock))
+// ...
+monitors, err := cluster.Monitors(ctx)
+skew, err := fault.ApplyClockOffset(ctx, cluster, monitors[1], fault.ClockOffset{Offset: 2 * time.Second})
+if skew != nil {
+	defer skew.Restore(cleanupCtx) // also when err is not nil
+}
+if err != nil {
+	t.Fatal(err)
+}
+// ... the SUT runs while mon.b's clock is two seconds ahead ...
+status, err := skew.Status(ctx)
+// status.State == fault.ClockOffsetApplied, status.MeasuredMin <= 2s <= status.MeasuredMax
+```
+
+`Run` pulls the helper, copies its libfaketime interposer and build manifest
+out of it without starting it, and refuses it before any daemon starts
+unless the manifest describes the libfaketime `default` build and its hash,
+ELF class and machine match the interposer. A helper that carries the
+`intercept-syscall` build is refused: that build hangs every process that
+loads tcmalloc, as every Ceph daemon does. `ceph.FactsOf(cluster).ClockInterposer`
+records the accepted source commit and tree, toolchain, architecture and
+hash.
+
+An armed MON container receives the interposer and a timestamp file at `+0`
+that the cluster owns, copied in before the container starts. Its startup
+script preloads them only into its final `exec` of `ceph-mon`, with
+`FAKETIME_DONT_FAKE_MONOTONIC=1` and a cache duration of one second. The
+container environment carries none of these variables, so `--mkfs`, the key
+and map tools before the daemon and every command executed in the container
+later run with the real clock. A cluster without `ClockConfig` copies nothing
+and starts every MON unchanged.
+
+`ApplyClockOffset` first admits the daemon: its own environment preloads the
+cluster's interposer with the owned file and an unfaked monotonic clock,
+has no `FAKETIME`, the interposer is mapped, the file holds `+0`, and a
+measurement contains zero. It then rewrites the file in place and returns
+without error once a measurement after the cache window shows the offset in
+the same process. A measurement runs an uninstrumented `python3` in the MON
+container that reads the real clock before and after a `mon_status` request
+on the daemon's admin socket, and takes the daemon's own time from the
+audit line the daemon logs for that request, so `MeasuredMin` and
+`MeasuredMax` bound the daemon's clock minus the real one. Ceph stamps its
+log with a coarse clock, so the interval is about 10 ms wide.
+
+Ceph measures clock skew against the leader only. An offset of a follower
+raises `MON_CLOCK_SKEW` for that follower; an offset of the leader reads as
+the opposite skew of every follower. The warning appears after the next
+timecheck round, every `mon_timecheck_interval` (300 seconds by default), so
+a test that waits for it sets a shorter interval at bootstrap with
+`WithConfigFile`. On 20.2.4, 19.2.5 and 21.2.0, with
+`mon_timecheck_interval = 30` and `mon_timecheck_skew_interval = 10`, an
+offset of two seconds either way of a follower or of the leader raised the
+warning within 25 seconds of `ApplyClockOffset` returning and cleared it
+within 10 seconds of `Restore` returning, without an election.
+
+`Restore` rewrites the file to `+0` and returns only after a measurement
+after the cache window shows the same process back at the real clock. It is
+retryable: a paused container is refused until it is resumed, a stopped
+container gets the `+0` file back, which its daemon reads when it starts,
+and a removed container needs nothing. The offset survives a restart of the
+MON in the file, and `Status` reports such a process as `Replaced`. The
+cluster's `Terminate` restores a held lease after it resumes paused
+containers and before it stops the daemons.
+
+What the interposer does not change:
+
+- `CLOCK_MONOTONIC`, and with it Ceph's timers and `quorum_age`.
+- A clock read through the libc `syscall()` function, the vDSO symbol or a
+  raw system call: the `default` build reaches only the public
+  `clock_gettime` and related libc calls.
+- The host clock, NTP and every other process, including the other daemons
+  and the commands executed in the MON container. Time namespaces, virtual
+  machines and kernel clock faults are not used.
+
+Only MONs accept the instrumentation; `AddManager` refuses
+`WithClockInstrumentation`.
 
 ## Interrupting a network endpoint
 

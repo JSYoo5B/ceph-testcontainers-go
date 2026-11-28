@@ -24,6 +24,9 @@ after the cluster.
    - `fault.Pause`: freeze every process of a daemon or client container.
    - `fault.ApplyCPULimit`: lower the CPU bandwidth of a running daemon or
      client container, so it answers late instead of not at all.
+   - `fault.ApplyClockOffset`: move the wall clock of one MON process by
+     whole seconds, for a MON started armed with `ceph.ClockConfig` (opt-in
+     clock helper, `fault.ClockHelperImage`).
    - `fault.InterruptNetwork`: disconnect one endpoint from the public or
      cluster bridge.
    - `fault.ApplyNetworkProfile`: delay, drop, rate-limit, reorder, duplicate
@@ -38,7 +41,7 @@ after the cluster.
 3. **Run the SUT** under the fault.
 4. **Observe** the effect with the cluster's observation APIs
    (`ceph.Observer`, `Pool.PGs`, `NetworkProfileLease.Status`,
-   `CPULimitLease.Status`, ...).
+   `CPULimitLease.Status`, `ClockOffsetLease.Status`, ...).
 5. **Restore** with the handle's `Resume` / `Restore` when the scenario needs
    recovery; `Terminate` restores what is still held. Keep a non-nil handle
    returned with an error: restoring it stays retryable.
@@ -66,7 +69,8 @@ if err != nil {
 ## Concepts and limits
 
 - Ownership: cluster-bound handles are restored by `Terminate` (shaping first,
-  then endpoints, then paused containers, then CPU limits), also when the target is a
+  then endpoints, then paused containers, then clock offsets, then CPU
+  limits), also when the target is a
   caller-owned container; restore those before removing the container.
   Standalone link faults are the caller's: restore them before removing the
   bridge.
@@ -96,6 +100,14 @@ if err != nil {
   back the baseline in its own encoding; an unset quota comes back as Docker's
   unlimited value -1. See
   [Limiting a container's CPU](../docs/guides/fault-injection.md#limiting-a-containers-cpu).
+- Clock offsets need a MON that was armed when its container was created
+  (`ceph.ClockConfig.WithMonitors`, or `DaemonOptions.WithClockInstrumentation`
+  for `AddMonitor`): only the long-running `ceph-mon` preloads the clock
+  helper's libfaketime interposer, and every other process in the container
+  keeps the real clock. The interposer covers the public `clock_gettime`
+  route only, never `CLOCK_MONOTONIC`, the libc `syscall()` function, the
+  vDSO symbol or a raw system call, and the host clock never changes. See
+  [Offsetting a MON's wall clock](../docs/guides/fault-injection.md#offsetting-a-mons-wall-clock).
 - Ceph reacts to faults on its own schedule: a frozen or cut OSD is marked down
   only after its peers report it (heartbeat grace), and TCP hides reorder,
   duplicate and corrupt faults from Ceph. Hold `nodown` with
