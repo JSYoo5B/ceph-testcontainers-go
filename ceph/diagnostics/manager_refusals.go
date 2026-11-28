@@ -89,7 +89,7 @@ func CollectManagerRefusals(ctx context.Context, cluster *ceph.Container, manage
 }
 
 func readManagerRefusals(ctx context.Context, docker diagnosticsDocker, snapshot diagnosticsSnapshot, manager evidence.Member, config LogConfig) (*ManagerRefusals, error) {
-	redact := evidence.Redactor(snapshot.secrets)
+	redact := logRedactor(snapshot.secrets)
 	process, err := readProcessLog(ctx, docker, manager, config, redact, isMonClientRefusal)
 	if err != nil {
 		return nil, err
@@ -118,7 +118,7 @@ func readManagerRefusals(ctx context.Context, docker diagnosticsDocker, snapshot
 
 // readMonitorRefusals scans one MON's log since the MGR's process start for
 // the refusals of entity.
-func readMonitorRefusals(ctx context.Context, docker diagnosticsDocker, member evidence.Member, process *ProcessLog, entity string, config LogConfig, redact func(string) string) (MonitorRefusals, error) {
+func readMonitorRefusals(ctx context.Context, docker diagnosticsDocker, member evidence.Member, process *ProcessLog, entity string, config LogConfig, redact func(string, bool) string) (MonitorRefusals, error) {
 	id := member.Container.GetContainerID()
 	run, err := inspectRun(ctx, docker, id)
 	if err != nil {
@@ -143,8 +143,8 @@ func readMonitorRefusals(ctx context.Context, docker diagnosticsDocker, member e
 	// The window keeps only refusals; each is classified on its raw text and
 	// reported with its redacted line.
 	refusals := []MonitorRefusal{}
-	for i, line := range redactLines(w.lines, redact) {
-		refusal, _ := monitorRefusal(w.lines[i].Text, entity)
+	for i, line := range w.result(redact) {
+		refusal, _ := monitorRefusal(w.lines[i].raw, entity)
 		refusal.Line = line
 		refusals = append(refusals, refusal)
 	}

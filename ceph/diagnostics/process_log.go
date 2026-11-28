@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -24,8 +23,11 @@ const (
 	// LogComplete: the read covered the whole window and the result holds
 	// every line of it that it keeps.
 	LogComplete LogStatus = "complete"
-	// LogTruncated: the window holds more than LogConfig.MaxBytes. The
-	// result covers its first MaxBytes; the rest was not read or not kept.
+	// LogTruncated: the result lost text of the window. The window holds
+	// more than LogConfig.MaxBytes, and the result covers its first
+	// MaxBytes; or a line of it was longer than 64 KiB, and its rest was
+	// not read; or a line had no valid Docker timestamp, so whether it
+	// belongs to the window is unknown, and it was not kept.
 	LogTruncated LogStatus = "truncated"
 	// LogStartNotFound: the log does not show where the window starts, so
 	// earlier lines of it may be missing. A process log found no line where
@@ -126,16 +128,20 @@ func CollectProcessLog(ctx context.Context, cluster *ceph.Container, daemon test
 		return nil, fmt.Errorf("process log Docker client: %w", err)
 	}
 	defer func() { _ = docker.Close() }()
-	return readProcessLog(ctx, docker, member, config, evidence.Redactor(snapshot.secrets), nil)
+	return readProcessLog(ctx, docker, member, config, logRedactor(snapshot.secrets), nil)
 }
 
-// defaultLogBytes and maxLogBytes bound LogConfig.MaxBytes; maxLogLine
-// bounds one line, which is cut beyond it.
+// defaultLogBytes and maxLogBytes bound LogConfig.MaxBytes.
 const (
 	defaultLogBytes = 8 << 20
 	maxLogBytes     = 64 << 20
-	maxLogLine      = 64 << 10
 )
+
+// logRedactor redacts one log line with secrets, also a secret that the
+// missing end of a cut line split.
+func logRedactor(secrets []string) func(string, bool) string {
+	return evidence.LogLineRedactor(secrets, evidence.Redactor(secrets))
+}
 
 func normalizeLogConfig(config LogConfig) (LogConfig, error) {
 	if config.MaxBytes == 0 {
@@ -241,8 +247,8 @@ func inspectRun(ctx context.Context, docker diagnosticsDocker, id string) (conta
 
 // readProcessLog reads member's latest process log. keep selects the lines
 // of the process that the result keeps, nil for all of them; its Start is
-// always kept.
-func readProcessLog(ctx context.Context, docker diagnosticsDocker, member evidence.Member, config LogConfig, redact func(string) string, keep func(string) bool) (*ProcessLog, error) {
+// always kept. redact redacts a kept line, which may lack its end.
+func readProcessLog(ctx context.Context, docker diagnosticsDocker, member evidence.Member, config LogConfig, redact func(string, bool) string, keep func(string) bool) (*ProcessLog, error) {
 	id := member.Container.GetContainerID()
 	before, err := inspectRun(ctx, docker, id)
 	if err != nil {
@@ -258,7 +264,7 @@ func readProcessLog(ctx context.Context, docker diagnosticsDocker, member eviden
 	}
 	result := &ProcessLog{LogSource: LogSource{Role: member.Role, Name: member.Name, ContainerID: id,
 		ContainerStartedAt: before.started, Running: before.running, Since: before.started}}
-	lines := redactLines(w.lines, redact)
+	lines := w.result(redact)
 	switch {
 	case after.startedAt != before.startedAt || after.running != before.running:
 		result.Status = LogChanged
@@ -280,25 +286,57 @@ func readProcessLog(ctx context.Context, docker diagnosticsDocker, member eviden
 // process window starts again at each line where a process starts (see
 // processBoundary), which it always keeps; keep, when set, selects the other
 // lines it keeps. Every line counts towards max, kept or not. full is set
-// once the window exceeds max, cut once a line of it was cut.
+// once the window exceeds max, lost once a line of it was cut or had no
+// timestamp.
+//
+// The window follows the private key blocks of each stream through every
+// line it reads, kept or not, and masks what lies inside one; an end
+// without a beginning withholds the kept lines of its stream since the
+// stream's last end (see evidence.KeyBlockFollower).
 type logWindow struct {
-	max       int
-	process   bool
-	keep      func(string) bool
-	size      int
-	started   bool
-	full, cut bool
-	lines     []LogLine
+	max        int
+	process    bool
+	keep       func(string) bool
+	blocks     evidence.KeyBlockFollower
+	size       int
+	started    bool
+	full, lost bool
+	lines      []windowLine
+}
+
+// windowLine is one kept line: its stream and number in the read, its raw
+// text, and its time and text with key blocks masked, not yet redacted.
+type windowLine struct {
+	stream     string
+	number     int
+	raw        string
+	time       time.Time
+	safe       string
+	missingEnd bool
 }
 
 // add takes one line and reports whether the rest of the log can still
 // change the window: a process window may start again, any other one stops
 // once full.
-func (w *logWindow) add(line LogLine, cut bool) bool {
+func (w *logWindow) add(line evidence.LogLine) bool {
+	safe, number, withhold := w.blocks.Follow(line.Stream, line.Text)
+	if withhold >= 0 {
+		for i := range w.lines {
+			if w.lines[i].stream == line.Stream && w.lines[i].number >= withhold {
+				w.lines[i].safe, w.lines[i].missingEnd = evidence.PrivateKeyMarker, false
+			}
+		}
+	}
+	if line.Malformed {
+		// Its time is unknown, so it may belong to the window.
+		w.lost = true
+		return w.process || !w.full
+	}
+	kept := windowLine{stream: line.Stream, number: number, raw: line.Text, time: line.Time, safe: safe, missingEnd: line.Cut || line.Ended}
 	if w.process && processBoundary(line.Text) {
 		// The start line is kept even when it alone exceeds max; the window
 		// is then truncated like any other that does.
-		w.started, w.cut, w.size, w.lines = true, cut, len(line.Text), []LogLine{line}
+		w.started, w.lost, w.size, w.lines = true, kept.missingEnd, len(line.Text), []windowLine{kept}
 		w.full = w.size > w.max
 		return true
 	}
@@ -309,21 +347,31 @@ func (w *logWindow) add(line LogLine, cut bool) bool {
 		w.full = true
 		return w.process
 	}
-	w.cut = w.cut || cut
+	w.lost = w.lost || kept.missingEnd
 	if w.keep == nil || w.keep(line.Text) {
-		w.lines = append(w.lines, line)
+		w.lines = append(w.lines, kept)
 	}
 	return true
 }
 
-// truncated reports whether the window lost text to a bound.
-func (w *logWindow) truncated() bool { return w.full || w.cut }
+// truncated reports whether the window lost text to a bound or a line
+// without a timestamp.
+func (w *logWindow) truncated() bool { return w.full || w.lost }
+
+// result returns the kept lines, redacted with redact.
+func (w *logWindow) result(redact func(string, bool) string) []LogLine {
+	lines := make([]LogLine, len(w.lines))
+	for i, line := range w.lines {
+		lines[i] = LogLine{Time: line.time, Text: redact(line.safe, line.missingEnd)}
+	}
+	return lines
+}
 
 // streamLog reads id's stdout and stderr log entries recorded since since
 // and passes each line to visit, in order, until visit returns false. A
-// line longer than maxLogLine is cut, and visit is told so. The stream is
-// closed when ctx ends.
-func streamLog(ctx context.Context, docker diagnosticsDocker, id string, since time.Time, tty bool, visit func(LogLine, bool) bool) error {
+// line longer than evidence.MaxLogLine is cut, and visit is told so. The
+// stream is closed when ctx ends.
+func streamLog(ctx context.Context, docker diagnosticsDocker, id string, since time.Time, tty bool, visit func(evidence.LogLine) bool) error {
 	reader, err := docker.ContainerLogs(ctx, id, dockerclient.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Timestamps: true,
 		Since: since.UTC().Format(time.RFC3339Nano)})
 	if err != nil {
@@ -332,107 +380,6 @@ func streamLog(ctx context.Context, docker diagnosticsDocker, id string, since t
 	defer func() { _ = reader.Close() }()
 	stop := context.AfterFunc(ctx, func() { _ = reader.Close() })
 	defer stop()
-	lines := &logLines{visit: visit}
-	err = evidence.DemuxLogs(reader, tty, lines, lines)
-	if errors.Is(err, errLogEnough) {
-		err = nil
-	}
-	if err == nil {
-		lines.flush()
-	}
+	_, err = evidence.ReadLogLines(reader, tty, 0, visit)
 	return errors.Join(err, ctx.Err())
-}
-
-// errLogEnough ends a read whose window can no longer change.
-var errLogEnough = errors.New("the log window is complete")
-
-// logLines splits demultiplexed log bytes into lines with Docker's
-// timestamp prefix.
-type logLines struct {
-	visit   func(LogLine, bool) bool
-	pending []byte
-	cut     bool
-	done    bool
-}
-
-func (l *logLines) Write(data []byte) (int, error) {
-	n := len(data)
-	for len(data) > 0 && !l.done {
-		end := slices.Index(data, '\n')
-		chunk := data
-		if end >= 0 {
-			chunk = data[:end]
-		}
-		if room := maxLogLine - len(l.pending); len(chunk) > room {
-			chunk, l.cut = chunk[:max(room, 0)], true
-		}
-		l.pending = append(l.pending, chunk...)
-		if end < 0 {
-			break
-		}
-		data = data[end+1:]
-		l.emit()
-	}
-	if l.done {
-		return n, errLogEnough
-	}
-	return n, nil
-}
-
-func (l *logLines) flush() {
-	if len(l.pending) > 0 && !l.done {
-		l.emit()
-	}
-}
-
-func (l *logLines) emit() {
-	text := strings.TrimSuffix(string(l.pending), "\r")
-	line := LogLine{Text: text}
-	if stamp, rest, ok := strings.Cut(text, " "); ok {
-		if at, err := time.Parse(time.RFC3339Nano, stamp); err == nil {
-			line = LogLine{Time: at.UTC(), Text: rest}
-		}
-	}
-	if !l.visit(line, l.cut) {
-		l.done = true
-	}
-	l.pending, l.cut = l.pending[:0], false
-}
-
-// privateKeyMarker replaces the lines, or parts of them, inside a private
-// key block, as Redact writes it for a whole block.
-const privateKeyMarker = "[REDACTED PRIVATE KEY]"
-
-// redactLines redacts each line with redact, after masking what lies inside
-// a private key block that spans lines: redact sees one line at a time and
-// would miss the block's payload. An end without a beginning masks its line
-// up to the end.
-func redactLines(lines []LogLine, redact func(string) string) []LogLine {
-	result := make([]LogLine, len(lines))
-	open := false
-	for i, line := range lines {
-		var out strings.Builder
-		from := 0
-		evidence.VisitPrivateKeyDelimiters(line.Text, func(begin bool, start, end int) {
-			if begin {
-				if !open {
-					out.WriteString(line.Text[from:start])
-					open = true
-				}
-				return
-			}
-			if !open {
-				out.Reset()
-			}
-			out.WriteString(privateKeyMarker)
-			open, from = false, end
-		})
-		if open {
-			out.WriteString(privateKeyMarker)
-		} else {
-			out.WriteString(line.Text[from:])
-		}
-		result[i] = LogLine{Time: line.Time, Text: redact(out.String())}
-	}
-	return result
 }

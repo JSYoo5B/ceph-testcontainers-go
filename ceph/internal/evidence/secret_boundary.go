@@ -139,7 +139,7 @@ func renderMask(text string, masked []byte) string {
 				j++
 			}
 			if slices.Contains(masked[i:j], byte(privateKeyByte)) {
-				out.WriteString("[REDACTED PRIVATE KEY]")
+				out.WriteString(PrivateKeyMarker)
 			} else {
 				out.WriteString("[REDACTED]")
 			}
