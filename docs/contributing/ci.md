@@ -1044,7 +1044,7 @@ same offline.
 
 To add a release, add its row once ceph-testcontainers-images publishes its
 role images under the `<variant>-<release>-<role>` tags, add it to the
-`release` options of `periodic.yml` and the
+`release` options of `periodic.yml` and `arm64.yml` and the
 `public-api` matrix of `block-fault-probe.yml`, which cannot read the table
 (`test_scenario_shards.py` fails until they match), run the CI tooling tests,
 and for a new major release add it to
@@ -1306,26 +1306,29 @@ The ARM64 workflow runs a small source-owned cohort on a GitHub-hosted native
 ARM64 runner (`ubuntu-24.04-arm`) with the `linux/arm64` children of the
 published role images. A batch joins it with `architecture=arm64` on its `//ci:` line
 (see [Testing](testing.md#batches-and-the-ci-line)). The cohort is
-`default` and `network_faults` of `./internal/integration`: cluster startup and
-bootstrap failure cleanup, the Ceph tools in the role containers, pool and
-placement observation, and the netem helper image. The cgroup, device-mapper
-and clock-interposition recipes stay out of it until their host
-prerequisites are established on that runner.
+`default`, `network_faults` and `clock_offset` of `./internal/integration`:
+cluster startup and bootstrap failure cleanup, the Ceph tools in the role
+containers, pool and placement observation, the netem helper image, and the
+clock helper's interposer in MON daemons. The cgroup and device-mapper
+recipes stay out of it until their host prerequisites are established on
+that runner.
 
 ```sh
 python3 .github/scripts/tag_scenarios.py plan --architecture-cohort --goarch arm64 --output plan.json
-gh workflow run "ARM64" [-f ref=<commit>]
+gh workflow run "ARM64" [-f ref=<commit>] [-f release=21.2.0]
 ```
 
 The workflow calls the template with `category: architecture` and
-`goarch: arm64`. The cohort plan claims only its batches (`coverage_scope`
+`goarch: arm64`, on the default release; a dispatch's `release` input selects
+another supported release of the arm64 role images and never changes the
+cohort. The cohort plan claims only its batches (`coverage_scope`
 `architecture`); every category workflow still runs amd64, the default, and
 none of them depends on the ARM64 workflow, so amd64 acceptance stays
 attributable on its own. `plan --goarch arm64` without `--architecture-cohort`
 is refused, so no caller can run an ordinary category on ARM64 by accident.
 The ARM64 workflow runs weekly, on a pull request that changes the planner, image or storage
-preparation, the runtime template, the bootstrap scripts or the netem helper,
-and manually. It is not a required check, and its rows are not written to
+preparation, the runtime template, the bootstrap scripts, the netem helper or
+the clock instrumentation, and manually. It is not a required check, and its rows are not written to
 the scenario history.
 
 The architectures are recorded separately, each by the phase that observes it:
