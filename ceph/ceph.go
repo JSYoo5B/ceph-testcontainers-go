@@ -556,7 +556,7 @@ func (c *Container) firstMonitorOptions(fsid string, ports []int, opts []testcon
 	if len(c.settings.userConfig) > 0 {
 		moduleOpts = append(moduleOpts, testcontainers.WithFiles(textFile(userConfigPath, renderUserConfig(c.settings.userConfig), 0o644)))
 	}
-	moduleOpts = append(moduleOpts, c.clockFiles("a")...)
+	moduleOpts = append(moduleOpts, c.clockFiles("a", false)...)
 	if ports != nil {
 		moduleOpts = append(moduleOpts, hostContainerCustomizer(c.settings.publicAddress), testcontainers.WithNoStart())
 	}

@@ -52,6 +52,9 @@ func (c *Container) replaceMonitor(ctx context.Context, handle *MonitorContainer
 	if err != nil {
 		return nil, err
 	}
+	if err := c.checkClockArming(daemon); err != nil {
+		return nil, err
+	}
 	if !c.settings.monitorVolume {
 		return nil, invalidRequest("MonitorContainer.Replace needs MonitorStorage.WithVolume")
 	}
@@ -87,11 +90,7 @@ func (c *Container) replaceMonitor(ctx context.Context, handle *MonitorContainer
 	if daemon.imageSet {
 		image = daemon.image
 	}
-	if daemon.clock {
-		if err := c.armClock(name); err != nil {
-			return nil, err
-		}
-	}
+	join.clock = daemon.clock
 	gens := c.monitorGenerations(name, func(ports []int) []testcontainers.ContainerCustomizer { return c.monitorJoinOptions(join, ports) }, monitorSocketReady(name))
 	gens.beforeCreate = func(ctx context.Context) error { return c.clearAdminSocket(ctx, "mon."+name) }
 	if !retryBeforeCreate {
@@ -104,6 +103,10 @@ func (c *Container) replaceMonitor(ctx context.Context, handle *MonitorContainer
 		id, err = store.StartGeneration(ctx, gens, image)
 	} else {
 		id, err = store.ReplaceGeneration(ctx, gens, image)
+	}
+	// Only a container that was created armed arms the name.
+	if daemon.clock && gens.created[id] != nil {
+		c.recordClockArming(name)
 	}
 	next, err := t.recordMonitorReplacement(cur, store.Attachment, gens.created[id], image, err)
 	if err != nil {

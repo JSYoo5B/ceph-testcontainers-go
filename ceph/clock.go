@@ -372,24 +372,30 @@ func loadClockInterposer(ctx context.Context, settings options) (clockState, err
 // runs before the cluster is shared.
 func (c *Container) clockArmed(name string) bool { return c.clock.armed[name] }
 
-// armClock records that MON name is armed, after checking that the cluster
-// has an admitted interposer. The caller holds c.mu.
-func (c *Container) armClock(name string) error {
-	if c.clock.interposer == nil {
+// checkClockArming refuses WithClockInstrumentation on a cluster without an
+// admitted interposer. It changes nothing, so it runs before any work.
+func (c *Container) checkClockArming(daemon DaemonOptions) error {
+	if daemon.clock && c.clock.interposer == nil {
 		return invalidRequest("DaemonOptions.WithClockInstrumentation needs ClockConfig.WithHelperImage on the cluster")
 	}
-	c.clock.armed[name] = true
 	return nil
 }
+
+// recordClockArming records that MON name is armed once the cluster owns a
+// MON, or a new container of one, that was created armed. An operation that
+// fails before that leaves the name as it was. The caller holds c.mu and has
+// passed checkClockArming.
+func (c *Container) recordClockArming(name string) { c.clock.armed[name] = true }
 
 // disarmClock forgets MON name after its removal, so that a later MON of the
 // same name is armed only when asked. The caller holds c.mu.
 func (c *Container) disarmClock(name string) { delete(c.clock.armed, name) }
 
 // clockFiles copies the interposer and the owned timestamp file at +0 into
-// the container of MON name when it is armed.
-func (c *Container) clockFiles(name string) []testcontainers.ContainerCustomizer {
-	if !c.clockArmed(name) {
+// the container of MON name when the name is armed or this operation asks
+// for it (requested).
+func (c *Container) clockFiles(name string, requested bool) []testcontainers.ContainerCustomizer {
+	if !requested && !c.clockArmed(name) {
 		return nil
 	}
 	return []testcontainers.ContainerCustomizer{testcontainers.WithFiles(

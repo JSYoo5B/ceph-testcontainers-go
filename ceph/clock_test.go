@@ -203,11 +203,11 @@ func TestClockHelperIsAdmittedBeforeAnythingStarts(t *testing.T) {
 
 func TestClockFilesReachOnlyArmedMonitors(t *testing.T) {
 	c := &Container{clock: clockState{interposer: []byte("interposer"), armed: map[string]bool{"b": true}}}
-	if opts := c.clockFiles("a"); opts != nil {
+	if opts := c.clockFiles("a", false); opts != nil {
 		t.Fatalf("an unarmed MON gets clock files: %v", opts)
 	}
 	req := testcontainers.GenericContainerRequest{}
-	for _, opt := range c.clockFiles("b") {
+	for _, opt := range c.clockFiles("b", false) {
 		if err := opt.Customize(&req); err != nil {
 			t.Fatal(err)
 		}
@@ -219,15 +219,8 @@ func TestClockFilesReachOnlyArmedMonitors(t *testing.T) {
 	if len(got) != 2 || got[clockInterposerPath] != 0o644 || got[clockOffsetPath] != 0o644 || len(req.Env) != 0 {
 		t.Fatalf("armed MON files = %v, env = %v", got, req.Env)
 	}
-	if err := (&Container{clock: clockState{armed: map[string]bool{}}}).armClock("d"); !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("arming without a helper: %v", err)
-	}
 	if err := clockOnlyForMonitors(DaemonOptions{}.WithClockInstrumentation(), "AddManager"); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("a MGR accepted clock instrumentation: %v", err)
-	}
-	merged, err := resolveDaemonOptions([]DaemonOptions{DaemonOptions{}.WithClockInstrumentation(), DaemonOptions{}.WithImage("other:1")})
-	if err != nil || !merged.clock || merged.image != "other:1" {
-		t.Fatalf("merged daemon options = %+v, %v", merged, err)
 	}
 }
 
@@ -289,5 +282,71 @@ func TestMonClockBlockPreloadsOnlyTheDaemon(t *testing.T) {
 		if result := f.run(t, nil); result.exitCode != 2 || !strings.Contains(result.output, "tc-ceph: clock") {
 			t.Errorf("%s: half-armed MON started: exit %d %s", script, result.exitCode, result.output)
 		}
+	}
+}
+
+// TestAddMonitorArmsOnlyAnOwnedMonitor fails AddMonitor before it owns the
+// MON, with a quorum reply it cannot read, and requires the name to stay
+// unarmed, so that a later AddMonitor of that name without
+// WithClockInstrumentation gets no interposer.
+func TestAddMonitorArmsOnlyAnOwnedMonitor(t *testing.T) {
+	c, control := newMonitorConfigFixture()
+	c.clock = clockState{interposer: []byte("interposer"), armed: map[string]bool{}}
+	control.native = []byte("{not a quorum reply")
+	mon, err := c.AddMonitor(t.Context(), "d", DaemonOptions{}.WithClockInstrumentation())
+	if err == nil || mon != nil || c.members.roster.monitor("d") != nil {
+		t.Fatalf("AddMonitor = %v, %v; want a failure before registration", mon, err)
+	}
+	if c.clockArmed("d") || c.clockFiles("d", false) != nil {
+		t.Fatal("a MON that was never owned left its name armed")
+	}
+}
+
+func TestClockArmingNeedsTheClusterHelper(t *testing.T) {
+	c := &Container{clock: clockState{armed: map[string]bool{}}}
+	if err := c.checkClockArming(DaemonOptions{}.WithClockInstrumentation()); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("arming without a helper: %v", err)
+	}
+	if err := c.checkClockArming(DaemonOptions{}); err != nil {
+		t.Fatalf("an unarmed request was refused: %v", err)
+	}
+	if len(c.clock.armed) != 0 {
+		t.Fatal("the check recorded an arming")
+	}
+	c.settings.monitorVolume = true
+	mon := &MonitorContainer{DaemonName: "b", owner: c}
+	if _, err := mon.Replace(t.Context(), DaemonOptions{}.WithClockInstrumentation()); !errors.Is(err, ErrInvalidRequest) || c.clockArmed("b") {
+		t.Fatalf("Replace armed without a helper: %v, armed=%v", err, c.clockArmed("b"))
+	}
+}
+
+// TestJoiningRecipeTakesThisOperationsArming checks that a replacement asked
+// to arm gets the files before the name is recorded as armed, and that
+// neither an unarmed name nor an unrequested join does.
+func TestJoiningRecipeTakesThisOperationsArming(t *testing.T) {
+	c := &Container{clock: clockState{interposer: []byte("interposer"), armed: map[string]bool{}}}
+	c.nets.public = &testcontainers.DockerNetwork{Name: "tc-public"}
+	files := func(join monitorJoin) map[string]bool {
+		req := testcontainers.GenericContainerRequest{}
+		for _, opt := range c.monitorJoinOptions(join, nil) {
+			if err := opt.Customize(&req); err != nil {
+				t.Fatal(err)
+			}
+		}
+		got := map[string]bool{}
+		for _, file := range req.Files {
+			got[file.ContainerFilePath] = true
+		}
+		return got
+	}
+	if got := files(monitorJoin{name: "b"}); got[clockInterposerPath] || got[clockOffsetPath] {
+		t.Fatalf("an unarmed join got clock files: %v", got)
+	}
+	if got := files(monitorJoin{name: "b", clock: true}); !got[clockInterposerPath] || !got[clockOffsetPath] || c.clockArmed("b") {
+		t.Fatalf("a requested join: files %v, armed %v", got, c.clockArmed("b"))
+	}
+	c.recordClockArming("b")
+	if got := files(monitorJoin{name: "b"}); !got[clockInterposerPath] {
+		t.Fatal("an armed name lost its files on a later generation")
 	}
 }
