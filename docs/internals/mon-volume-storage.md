@@ -189,7 +189,7 @@ the start of the new one.
   running container after the ready check (`Observe`). If that observation
   fails the store is ready but cannot be replaced, and `ReplaceGeneration`
   refuses before it touches the old container.
-- A later generation is created, not started, for a copy of that endpoint. After
+- A later generation is created, without starting it, for a copy of that endpoint. After
   its ready check the bound endpoint is observed and must equal the recorded one.
 - In host mode no reservation can last for the MON's lifetime: the running MON
   owns its ports, and the old container has to be gone before anything can bind

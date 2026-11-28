@@ -240,7 +240,7 @@ Nothing in the workflows names a test.
    tags=<tags> <seconds>s`, so a job that its time limit cuts off shows how
    far it came and whether every build was slow. The builds are judged in
    their order: the first one that does not compile or differs is reported.
-   The builds that had not started by then are dropped, and the command
+   The builds that had yet to start by then are dropped, and the command
    waits for those already running before it reports.
 
 Each profile has a stable ID, `<category>-<batch>-<8 hex digits>`, such as

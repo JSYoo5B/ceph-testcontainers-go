@@ -1382,7 +1382,7 @@ def verify(catalog, plan, root=ROOT, optional=None):
     source. An optional batch compiles only with its own batch tag, so no
     other check builds it. The checks are judged in their order, so the
     first one that does not compile or differs is the one reported. The
-    builds that had not started by then are dropped, and those already
+    builds that had yet to start by then are dropped, and those already
     running have ended when this returns or raises."""
     packages = sorted({profile["package"] for profile in plan["include"]})
     bugs = tuple(plan.get("bug_compatibility", ()))
