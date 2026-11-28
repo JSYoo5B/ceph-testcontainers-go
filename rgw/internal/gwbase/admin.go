@@ -79,10 +79,13 @@ func adminRunFailure(report supervised.Report) error {
 	if !errors.As(err, &failure) {
 		return err
 	}
-	crash := fatalSignalReport(strings.Split(string(report.Stderr), "\n"))
-	output, events := "", ""
-	if crash != "" {
-		output, events = adminOutputShape(report.Stdout, report.StdoutTruncated), eventReport(report.Stderr)
+	// The report header is read once: it names the thread for both the
+	// crash summary and the event report.
+	signal, found := parseSignalReport(strings.Split(string(report.Stderr), "\n"), maxSignalFrames)
+	crash, output, events := "", "", ""
+	if found {
+		crash = signal.crash()
+		output, events = adminOutputShape(report.Stdout, report.StdoutTruncated), eventReport(signal.threadID, report.Stderr)
 	}
 	return redactAdminFailure(err, failure, crash, output, events)
 }
@@ -110,7 +113,9 @@ func redactAdminFailure(err error, failure *ceph.NativeFailure, details ...strin
 // its offset, or a bare symbol, most with their address.
 var (
 	fatalSignalHeader = regexp.MustCompile(`^\*\*\* Caught signal \(([A-Za-z][A-Za-z -]{0,39})\) \*\*$`)
-	fatalSignalThread = regexp.MustCompile(`^in thread [0-9a-fx]{1,18} thread_name:([!-~]{1,15})$`)
+	// The thread ID is hexadecimal, with or without "0x"; the dump of
+	// recent events spells it without.
+	fatalSignalThread = regexp.MustCompile(`^in thread (?:0x)?([0-9a-f]{1,16}) thread_name:([!-~]{1,15})$`)
 	backtraceFrame    = regexp.MustCompile(`^\d{1,3}: ([ -~]+?)(?: \[0x[0-9a-f]{1,16}\])?$`)
 	symbolFrame       = regexp.MustCompile(`^\(([ -~]+)\+(0x[0-9a-f]{1,16})\)$`)
 	fileFrame         = regexp.MustCompile(`^(?:/[!-~]*/)?([!-'*-.0-~]+\([!-'*-.0-~]*\+0x[0-9a-f]{1,16}\))$`)
@@ -149,6 +154,12 @@ func fatalSignalReport(lines []string) string {
 	if !ok {
 		return ""
 	}
+	return report.crash()
+}
+
+// crash is the fatalSignalReport text of r.
+func (r signalReport) crash() string {
+	report := r
 	text := "radosgw-admin reported fatal signal " + report.signal
 	if report.thread != "" {
 		text += " in thread " + report.thread
@@ -169,6 +180,13 @@ func fatalSignalReport(lines []string) string {
 func stopReport(stderr []byte) string {
 	lines := strings.Split(string(stderr), "\n")
 	report, ok := parseSignalReport(lines, maxStopFrames)
+	return report.stop(ok, lines)
+}
+
+// stop is the stopReport text of r, the report in lines with maxStopFrames
+// frames, which found says lines hold.
+func (r signalReport) stop(found bool, lines []string) string {
+	report, ok := r, found
 	switch {
 	case !ok:
 		return ""
@@ -184,11 +202,12 @@ func stopReport(stderr []byte) string {
 	return "when it was stopped, " + thread + " was in " + report.backtrace()
 }
 
-// signalReport is the first fatal signal report of a command's output.
+// signalReport is the first fatal signal report of a command's output: the
+// signal, the name and the ID of its thread, and its frames.
 type signalReport struct {
-	signal, thread string
-	frames         []string
-	extra          int
+	signal, thread, threadID string
+	frames                   []string
+	extra                    int
 }
 
 func (r signalReport) backtrace() string {
@@ -213,7 +232,7 @@ func parseSignalReport(lines []string, maxFrames int) (signalReport, bool) {
 	if start < 0 {
 		return signalReport{}, false
 	}
-	thread := ""
+	thread, threadID := "", ""
 	var frames []string
 	extra := 0
 	for i := start + 1; i < len(lines); i++ {
@@ -238,10 +257,10 @@ func parseSignalReport(lines []string, maxFrames int) (signalReport, bool) {
 			break
 		}
 		if match := fatalSignalThread.FindStringSubmatch(line); match != nil {
-			thread = match[1]
+			threadID, thread = match[1], match[2]
 		}
 	}
-	return signalReport{signal: signal, thread: thread, frames: frames, extra: extra}, true
+	return signalReport{signal: signal, thread: thread, threadID: threadID, frames: frames, extra: extra}, true
 }
 
 // backtraceFrameName shortens one frame: "(ns::f(args) const+0x1f)" to
@@ -394,7 +413,9 @@ func AdminReportFailure(report supervised.Report, limit int) error {
 	switch {
 	case report.TimedOut:
 		text := fmt.Sprintf("radosgw-admin still ran after %ds and was stopped", limit)
-		for _, detail := range []string{stopReport(report.Stderr), eventReport(report.Stderr)} {
+		lines := strings.Split(string(report.Stderr), "\n")
+		signal, found := parseSignalReport(lines, maxStopFrames)
+		for _, detail := range []string{signal.stop(found, lines), eventReport(signal.threadID, report.Stderr)} {
 			if detail != "" {
 				text += "; " + detail
 			}

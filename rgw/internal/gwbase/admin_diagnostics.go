@@ -76,9 +76,9 @@ func printable(text string, limit int) string {
 // The dump of recent events that Ceph's fatal signal handler writes to
 // standard error after its report: numbered lines, each with its time,
 // thread and level, and the message, which for an objecter starts with its
-// client's name. The report names the thread that took the signal.
+// client's name. The fatal signal report before it names the thread that
+// took the signal (parseSignalReport).
 var (
-	signalThread  = regexp.MustCompile(`(?m)^ *in thread ([0-9a-f]{1,16}) thread_name:`)
 	recentEvent   = regexp.MustCompile(`^ *-?\d{1,6}> \d{4}-\d\d-\d\dT(\d\d:\d\d:\d\d\.\d{3})\S* ([0-9a-f]{1,16}) +-?\d{1,2} (.*)$`)
 	objecterEvent = regexp.MustCompile(`^client\.([0-9?]{1,20})\.objecter (.*)$`)
 	// A request with its object, locator, operations, transaction ID and
@@ -129,9 +129,10 @@ const (
 	recentEventsEnd   = "--- logging levels ---"
 )
 
-// eventReport says what the thread that took the signal, which for a stopped
-// command is the thread that waited, asked of RADOS and did not get, from
-// the objecter's events in the first dump of recent events in stderr. A
+// eventReport says what thread, the thread that took the signal as the fatal
+// signal report names it (which for a stopped command is the thread that
+// waited), asked of RADOS and did not get, from the objecter's events in the
+// first dump of recent events in stderr. A
 // command has several RADOS clients, each with its own transaction IDs; the
 // report is about the one that the thread used last:
 //
@@ -154,15 +155,10 @@ const (
 // subsystems, whose text this package cannot vouch for, are only counted. Without an event of the
 // signal's thread the last maxThreadEvents events of all threads and clients
 // are shown. It returns "" when stderr holds no dump.
-func eventReport(stderr []byte) string {
+func eventReport(thread string, stderr []byte) string {
 	dump, found := parseEventDump(stderr)
 	if !found {
 		return ""
-	}
-	head, _, _ := strings.Cut(string(stderr), recentEventsBegin)
-	thread := ""
-	if match := signalThread.FindStringSubmatch(head); match != nil {
-		thread = match[1]
 	}
 	return dump.report(thread)
 }
