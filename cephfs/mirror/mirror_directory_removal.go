@@ -41,7 +41,7 @@ var errCephFSUncertainRemoval = errors.New("an uncertain native CephFS mirror di
 // finds the path gone from the policy completes the request.
 func uncertainRemoval(ctx context.Context, m *Container, directory string) error {
 	state := "unread"
-	if mapping, err := m.readCephFSObservedMapping(ctx, directory); err == nil {
+	if mapping, err := readDirectoryMapping(ctx, m.pair, directory); err == nil {
 		state = mapping.State
 	}
 	return &cephFSObservationError{message: fmt.Sprintf("%v: the native policy still tracks %s, %s", errCephFSUncertainRemoval, directory, state), cause: errCephFSUncertainRemoval}
@@ -171,7 +171,6 @@ func (r *DirectoryRemoval) resumeRetained(ctx context.Context) error {
 // owner, the daemon cohort is captured and confirmed, and a second read finds
 // the same policy and owner. It records the owner. Container.mu is held.
 func (r *DirectoryRemoval) preflight(ctx context.Context) error {
-	mirror := r.scope.mirror
 	if err := r.peerPolicy(ctx); err != nil {
 		return err
 	}
@@ -182,7 +181,7 @@ func (r *DirectoryRemoval) preflight(ctx context.Context) error {
 	if !present {
 		return cephFSObserveGuard("original CephFS directory policy is absent before removal")
 	}
-	mapping, err := mirror.readCephFSObservedMapping(ctx, r.directory)
+	mapping, err := readDirectoryMapping(ctx, r.scope.pair, r.directory)
 	if err != nil {
 		return err
 	}
@@ -203,7 +202,7 @@ func (r *DirectoryRemoval) preflight(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	mapping, err = mirror.readCephFSObservedMapping(ctx, r.directory)
+	mapping, err = readDirectoryMapping(ctx, r.scope.pair, r.directory)
 	if err != nil {
 		return err
 	}
@@ -320,7 +319,7 @@ func (r *DirectoryRemoval) resume(ctx context.Context) error {
 	if r.requestAttempted || r.scope.mirror.directories.releasePending(r.directory) {
 		return uncertainRemoval(ctx, r.scope.mirror, r.directory)
 	}
-	mapping, err := r.scope.mirror.readCephFSObservedMapping(ctx, r.directory)
+	mapping, err := readDirectoryMapping(ctx, r.scope.pair, r.directory)
 	if err != nil {
 		return err
 	}
@@ -347,7 +346,7 @@ func (r *DirectoryRemoval) resume(ctx context.Context) error {
 		r.forgetDesiredPolicy()
 		return ctx.Err()
 	}
-	mapping, err = r.scope.mirror.readCephFSObservedMapping(ctx, r.directory)
+	mapping, err = readDirectoryMapping(ctx, r.scope.pair, r.directory)
 	if err != nil {
 		return err
 	}
@@ -596,7 +595,7 @@ func (r *DirectoryRemoval) observeDaemon(ctx context.Context, w cephFSRemovalWit
 	if !registered {
 		return "session-changed", cephFSObserveGuard("CephFS directory release original peer command disappeared")
 	}
-	data, err := multicluster.Exec(ctx, w.daemon, "ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "peer", "status", fmt.Sprintf("%s@%d", r.scope.pair.sourceFilesystem, r.scope.pair.sourceFilesystemID), r.scope.peerID)
+	data, err := adminSocket(ctx, w.daemon, "fs", "mirror", "peer", "status", r.scope.pair.sessionName(), r.scope.peerID)
 	if err != nil {
 		return "unavailable", cephFSObserveQuery("read original CephFS directory release peer stats", err)
 	}

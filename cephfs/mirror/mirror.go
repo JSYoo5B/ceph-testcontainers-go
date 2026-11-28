@@ -402,20 +402,11 @@ func cephFSMirrorOwnedInstanceIDs(data []byte, sourceID string) (map[string]bool
 
 func (mirror *Container) loadFilesystemIdentity(ctx context.Context) error {
 	mirror.pair.identityConfirmed = false
-	data, err := mirror.pair.source.Ceph(ctx, "fs", "get", mirror.pair.sourceFilesystem, "--format", "json")
+	source, err := readFilesystemIdentity(ctx, mirror.pair.source, mirror.pair.sourceFilesystem, "inspect mirrored filesystem identity")
 	if err != nil {
-		return fmt.Errorf("inspect mirrored filesystem identity: %w", err)
+		return fmt.Errorf("inspect mirrored source filesystem identity: %w", err)
 	}
-	var filesystem struct {
-		ID     int `json:"id"`
-		MDSMap struct {
-			MetadataPool *int64 `json:"metadata_pool"`
-		} `json:"mdsmap"`
-	}
-	if err := json.Unmarshal(data, &filesystem); err != nil || filesystem.ID <= 0 || filesystem.MDSMap.MetadataPool == nil || *filesystem.MDSMap.MetadataPool < 0 {
-		return errors.New("source did not return mirrored filesystem ID and metadata pool")
-	}
-	data, err = mirror.pair.source.Ceph(ctx, "osd", "pool", "ls", "detail", "--format", "json")
+	data, err := mirror.pair.source.Ceph(ctx, "osd", "pool", "ls", "detail", "--format", "json")
 	if err != nil {
 		return fmt.Errorf("inspect mirrored filesystem metadata pool: %w", err)
 	}
@@ -426,71 +417,49 @@ func (mirror *Container) loadFilesystemIdentity(ctx context.Context) error {
 	if err := json.Unmarshal(data, &pools); err != nil {
 		return fmt.Errorf("decode mirrored filesystem metadata pools: %w", err)
 	}
+	poolName := ""
 	for _, pool := range pools {
-		if pool.ID != nil && *pool.ID == *filesystem.MDSMap.MetadataPool && pool.Name != "" {
-			mirror.pair.sourceFilesystemID, mirror.pair.metadataPool = filesystem.ID, pool.Name
-			mirror.pair.sourceMetadataPoolID = *filesystem.MDSMap.MetadataPool
-			if mirror.pair.destination != nil {
-				data, err := mirror.pair.destination.Ceph(ctx, "fs", "get", mirror.pair.destinationFilesystem, "--format", "json")
-				if err != nil {
-					return fmt.Errorf("inspect destination mirrored filesystem identity: %w", err)
-				}
-				var remote struct {
-					ID     int `json:"id"`
-					MDSMap struct {
-						MetadataPool *int64 `json:"metadata_pool"`
-					} `json:"mdsmap"`
-				}
-				if json.Unmarshal(data, &remote) != nil || remote.ID <= 0 || remote.MDSMap.MetadataPool == nil || *remote.MDSMap.MetadataPool < 0 {
-					return errors.New("destination did not return mirrored filesystem ID and metadata pool")
-				}
-				mirror.pair.destinationFilesystemID, mirror.pair.destinationMetadataPoolID = remote.ID, *remote.MDSMap.MetadataPool
-				mirror.pair.identityConfirmed = true
-			}
-			return nil
+		if pool.ID != nil && *pool.ID == source.metadataPool && pool.Name != "" {
+			poolName = pool.Name
+			break
 		}
 	}
-	return fmt.Errorf("mirrored filesystem metadata pool ID %d was not found in native pool listing", *filesystem.MDSMap.MetadataPool)
+	if poolName == "" {
+		return fmt.Errorf("mirrored filesystem metadata pool ID %d was not found in native pool listing", source.metadataPool)
+	}
+	mirror.pair.sourceFilesystemID, mirror.pair.metadataPool, mirror.pair.sourceMetadataPoolID = source.id, poolName, source.metadataPool
+	destination, err := readFilesystemIdentity(ctx, mirror.pair.destination, mirror.pair.destinationFilesystem, "inspect destination mirrored filesystem identity")
+	if err != nil {
+		return fmt.Errorf("inspect mirrored destination filesystem identity: %w", err)
+	}
+	mirror.pair.destinationFilesystemID, mirror.pair.destinationMetadataPoolID = destination.id, destination.metadataPool
+	mirror.pair.identityConfirmed = true
+	return nil
 }
 
 // ServiceDaemon's RADOS session and FSMirror's filesystem RADOS session have
 // different GIDs. Resolve each owned process through its exact admin-socket
 // rados_inst address and the native mirror index object's watcher list.
 func (mirror *Container) ownedFilesystemWatcherIDs(ctx context.Context) (map[string]bool, error) {
-	control, err := mirror.pair.source.ClientContainer(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("select CephFS source control handle: %w", err)
-	}
-	if control == nil {
-		return nil, errors.New("CephFS source control container is unavailable")
-	}
-	data, err := multicluster.Exec(ctx, control, "rados", "--pool", mirror.pair.metadataPool, "listwatchers", "cephfs_mirror")
-	if err != nil {
-		return nil, fmt.Errorf("list mirrored filesystem watchers: %w", err)
-	}
-	watchers, err := parseCephFSMirrorWatchers(data)
+	watchers, err := readWatchers(ctx, mirror.pair, "list mirrored filesystem watchers")
 	if err != nil {
 		return nil, err
 	}
 	ids := make(map[string]bool)
 	for _, daemon := range mirror.roster.daemons {
-		data, err := multicluster.Exec(ctx, daemon, "ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "status", fmt.Sprintf("%s@%d", mirror.pair.sourceFilesystem, mirror.pair.sourceFilesystemID))
+		session, err := readDaemonSession(ctx, daemon, mirror.pair, "inspect filesystem session for mirror daemon "+daemon.DaemonName)
 		if err != nil {
-			return nil, fmt.Errorf("inspect filesystem session for mirror daemon %s: %w", daemon.DaemonName, err)
+			return nil, err
 		}
-		var status struct {
-			RadosInstance string                     `json:"rados_inst"`
-			Peers         map[string]json.RawMessage `json:"peers"`
+		if session.failed {
+			return nil, fmt.Errorf("mirror daemon %s filesystem session is unavailable", daemon.DaemonName)
 		}
-		if err := json.Unmarshal(data, &status); err != nil {
-			return nil, fmt.Errorf("decode mirror daemon filesystem session: %w", err)
-		}
-		if _, exists := status.Peers[mirror.peer.id]; !exists {
+		if _, exists := session.peers[mirror.peer.id]; !exists {
 			return nil, fmt.Errorf("mirror daemon %s has not discovered its peer", daemon.DaemonName)
 		}
-		id := watchers[status.RadosInstance]
+		id := watchers[session.address]
 		if id == "" {
-			return nil, fmt.Errorf("mirror daemon %s filesystem session %q is not a native watcher", daemon.DaemonName, status.RadosInstance)
+			return nil, fmt.Errorf("mirror daemon %s filesystem session %q is not a native watcher", daemon.DaemonName, session.address)
 		}
 		if ids[id] {
 			return nil, fmt.Errorf("owned mirror daemons share filesystem watcher instance %s", id)
@@ -1193,28 +1162,11 @@ func (mirror *Container) nativePolicyDirectories(ctx context.Context) ([]string,
 }
 
 // nativePolicyState returns the state of directory in the native mirroring
-// policy, such as "mapped" or "unmapping", or an error matching
-// fs.ErrNotExist once the policy no longer tracks it. The null state that
-// v20.2.4 reports for a transient UNASSOCIATED directory is "unassociated".
+// policy, as readDirectoryMapping reads it, or an error matching
+// fs.ErrNotExist once the policy no longer tracks it.
 func (mirror *Container) nativePolicyState(ctx context.Context, directory string) (string, error) {
-	data, err := mirror.pair.source.Ceph(ctx, "fs", "snapshot", "mirror", "dirmap", mirror.pair.sourceFilesystem, directory)
-	if err != nil {
-		return "", fmt.Errorf("read CephFS mirror directory %q state: %w", directory, err)
-	}
-	var status struct {
-		State json.RawMessage `json:"state"`
-	}
-	if err := json.Unmarshal(data, &status); err != nil || len(status.State) == 0 {
-		return "", fmt.Errorf("source did not return the state of CephFS mirror directory %q", directory)
-	}
-	if string(status.State) == "null" {
-		return "unassociated", nil
-	}
-	var state string
-	if err := json.Unmarshal(status.State, &state); err != nil || state == "" {
-		return "", fmt.Errorf("source did not return the state of CephFS mirror directory %q", directory)
-	}
-	return state, nil
+	mapping, err := readDirectoryMapping(ctx, mirror.pair, directory)
+	return mapping.State, err
 }
 
 // waitNativePolicyIdle is the admission of a single native directory remove,
@@ -1360,27 +1312,11 @@ func (mirror *Container) PeerIDs(ctx context.Context) ([]string, error) {
 	return ids, nil
 }
 
-func (mirror *Container) peerRecords(ctx context.Context) (map[string]json.RawMessage, error) {
+func (mirror *Container) peerRecords(ctx context.Context) (map[string]cephFSPeerIdentity, error) {
 	if mirror.pair.source == nil {
 		return nil, errors.New("CephFS mirror is not initialized")
 	}
-	data, err := mirror.pair.source.Ceph(ctx, "fs", "snapshot", "mirror", "peer_list", mirror.pair.sourceFilesystem)
-	if err != nil {
-		return nil, fmt.Errorf("list CephFS mirror peers: %w", err)
-	}
-	var peers map[string]json.RawMessage
-	if err := json.Unmarshal(data, &peers); err != nil {
-		return nil, fmt.Errorf("decode CephFS mirror peers: %w", err)
-	}
-	if peers == nil {
-		return nil, errors.New("CephFS mirror peer list is not a JSON object")
-	}
-	for id := range peers {
-		if _, err := uuid.Parse(id); err != nil {
-			return nil, fmt.Errorf("invalid CephFS mirror peer UUID %q: %w", id, err)
-		}
-	}
-	return peers, nil
+	return readPeerList(ctx, mirror.pair, "list CephFS mirror peers")
 }
 
 // RemovePeer unregisters only the peer this mirror bootstrapped. It preserves
@@ -1543,7 +1479,7 @@ func (mirror *Container) createPeerBootstrapToken(ctx context.Context, expected 
 
 // Called under mirror.mu. A failed match retains the pending identity so a
 // later retry can recover, but never grants ownership of an unrelated peer.
-func (mirror *Container) reconcilePendingPeer(peers map[string]json.RawMessage) (string, error) {
+func (mirror *Container) reconcilePendingPeer(peers map[string]cephFSPeerIdentity) (string, error) {
 	id, err := matchPendingCephFSPeer(peers, mirror.peer.pendingImport)
 	if err != nil {
 		return "", err
@@ -1556,21 +1492,14 @@ func (mirror *Container) reconcilePendingPeer(peers map[string]json.RawMessage) 
 	return id, nil
 }
 
-func matchPendingCephFSPeer(peers map[string]json.RawMessage, expected *cephFSPeerIdentity) (string, error) {
+func matchPendingCephFSPeer(peers map[string]cephFSPeerIdentity, expected *cephFSPeerIdentity) (string, error) {
 	if expected == nil || expected.ClientName == "" || expected.SiteName == "" || expected.FilesystemName == "" {
 		return "", errors.New("no CephFS peer import is pending")
 	}
 	if len(peers) != 1 {
 		return "", fmt.Errorf("pending CephFS bootstrap has %d peers, want one", len(peers))
 	}
-	for id, raw := range peers {
-		if _, err := uuid.Parse(id); err != nil {
-			return "", fmt.Errorf("invalid pending CephFS peer UUID %q: %w", id, err)
-		}
-		var observed cephFSPeerIdentity
-		if err := json.Unmarshal(raw, &observed); err != nil {
-			return "", fmt.Errorf("decode pending CephFS peer identity: %w", err)
-		}
+	for id, observed := range peers {
 		if observed != *expected {
 			return "", errors.New("existing CephFS peer does not match this pending bootstrap destination")
 		}

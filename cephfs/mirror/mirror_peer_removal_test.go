@@ -570,8 +570,8 @@ func TestCephFSPeerRemovalProductionSupersedesReceiptAfterNewPeerReconcile(t *te
 	}
 	expected := r.scope.pair.peerIdentity()
 	m.peer.pendingImport = &expected
-	var peers map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(strings.Replace(peerRemovalManagerPeers(), cephFSObserverDraftPeer, peerRemovalNewPeer, 1)), &peers); err != nil {
+	peers, err := decodePeerList([]byte(strings.Replace(peerRemovalManagerPeers(), cephFSObserverDraftPeer, peerRemovalNewPeer, 1)))
+	if err != nil {
 		t.Fatal(err)
 	}
 	id, err := m.reconcilePendingPeer(peers)

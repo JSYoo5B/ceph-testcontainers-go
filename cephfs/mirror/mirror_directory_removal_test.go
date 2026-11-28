@@ -967,7 +967,7 @@ func TestRebalanceKeepsExplicitlyRemovedPathOutOfPolicy(t *testing.T) {
 			// be redistributed without resending it or adopting foreign policy.
 			s.removeError, s.applyRemoval = nil, true
 			s.directories = []string{"/owned", "/foreign", "/keep"}
-			s.states = map[string]string{"/foreign": `{"state":"mapped"}`, "/keep": `{"state":"mapped"}`}
+			s.states = map[string]string{"/foreign": `{"state":"mapped","instance_id":"4262"}`, "/keep": `{"state":"mapped","instance_id":"4262"}`}
 			m.registerDirectory("/keep", true)
 			if err := m.RebalanceDirectories(t.Context()); err != nil {
 				t.Fatal(err)

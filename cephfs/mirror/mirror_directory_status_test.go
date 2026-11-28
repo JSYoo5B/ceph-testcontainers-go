@@ -63,7 +63,7 @@ func (c *cephFSObserverDraftControl) Exec(ctx context.Context, args []string, op
 	var data string
 	switch {
 	case len(arguments) > 2 && slices.Equal(arguments[:2], []string{"fs", "get"}):
-		data = fmt.Sprintf(`{"id":%d,"mdsmap":{"metadata_pool":%d}}`, c.filesystemID, c.metadataPool)
+		data = fmt.Sprintf(`{"id":%d,"mdsmap":{"fs_name":%q,"metadata_pool":%d}}`, c.filesystemID, arguments[2], c.metadataPool)
 	case len(arguments) > 4 && slices.Equal(arguments[:4], []string{"fs", "snapshot", "mirror", "peer_list"}):
 		if c.peerQueryError != nil {
 			return 0, nil, c.peerQueryError

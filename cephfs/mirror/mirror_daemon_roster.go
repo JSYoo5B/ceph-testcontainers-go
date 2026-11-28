@@ -53,15 +53,14 @@ func (r *cephFSDaemonRoster) admit(name string) error {
 // socket, the peer network when the clusters use bridge mode, then the
 // constructor customizers and this daemon's own opts.
 func (r *cephFSDaemonRoster) customizers(source *ceph.Container, peerNetwork string, opts []testcontainers.ContainerCustomizer) []testcontainers.ContainerCustomizer {
-	const socket = "/var/run/ceph/cephfs-mirror.asok"
 	all := []testcontainers.ContainerCustomizer{
 		source.WithClient(),
 		testcontainers.WithFiles(testcontainers.ContainerFile{
 			Reader: bytes.NewReader(r.keyring), ContainerFilePath: "/etc/ceph/ceph.client." + r.sourceID + ".keyring", FileMode: 0o600,
 		}),
 		testcontainers.WithEntrypoint("cephfs-mirror"),
-		testcontainers.WithCmd("--id", r.sourceID, "-f", "--admin-socket", socket, "--cephfs-mirror-directory-scan-interval", "1"),
-		testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", socket}).WithStartupTimeout(2 * time.Minute)),
+		testcontainers.WithCmd("--id", r.sourceID, "-f", "--admin-socket", cephFSMirrorAdminSocket, "--cephfs-mirror-directory-scan-interval", "1"),
+		testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", cephFSMirrorAdminSocket}).WithStartupTimeout(2 * time.Minute)),
 	}
 	if peerNetwork != "" {
 		all = append(all, network.WithNetworkName(nil, peerNetwork))

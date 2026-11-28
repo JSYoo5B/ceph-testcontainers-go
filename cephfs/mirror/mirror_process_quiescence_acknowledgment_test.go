@@ -2,7 +2,6 @@ package mirror
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -418,7 +417,7 @@ func TestCephFSProcessQuiescenceAcknowledgmentLaterMembershipAndPeerGeneration(t
 		t.Fatal("failed fresh retry rolled back historical terminal decision")
 	}
 	m.peer.pendingImport = &cephFSPeerIdentity{"client.peer", "destination-site", "destination"}
-	peers := map[string]json.RawMessage{peerRemovalNewPeer: json.RawMessage(`{"client_name":"client.peer","site_name":"destination-site","fs_name":"destination"}`)}
+	peers := map[string]cephFSPeerIdentity{peerRemovalNewPeer: {ClientName: "client.peer", SiteName: "destination-site", FilesystemName: "destination"}}
 	if _, err := m.reconcilePendingPeer(peers); err != nil || m.ops.peerGeneration == r.scope.generation {
 		t.Fatal("new peer reconciliation failed to advance generation")
 	}

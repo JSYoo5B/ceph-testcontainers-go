@@ -420,7 +420,7 @@ func (control *cephFSMirrorNativeControlFake) Exec(ctx context.Context, argument
 			code, stderr = 2, []byte("Error ENOENT: "+args[5]+" is not tracked\n")
 		}
 	case len(args) >= 3 && args[0] == "fs" && args[1] == "get":
-		output = []byte(`{"id":1,"mdsmap":{"metadata_pool":7}}`)
+		output = []byte(fmt.Sprintf(`{"id":1,"mdsmap":{"fs_name":%q,"metadata_pool":7}}`, args[2]))
 	case len(args) >= 4 && reflect.DeepEqual(args[:4], []string{"osd", "pool", "ls", "detail"}):
 		output = []byte(`[{"pool_id":1,"pool_name":".mgr"},{"pool_id":7,"pool_name":"source-metadata"}]`)
 	case len(args) >= 2 && args[0] == "service" && args[1] == "dump":
@@ -434,9 +434,9 @@ func (control *cephFSMirrorNativeControlFake) Exec(ctx context.Context, argument
 		if !reflect.DeepEqual(args, []string{"ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "status", "source@1"}) {
 			return 0, nil, errors.New("incorrect mirror admin socket query")
 		}
-		output = []byte(`{"rados_inst":"172.20.0.8:0/1234","peers":{"owned-peer":{}},"snap_dirs":{"dir_count":0}}`)
+		output = []byte(`{"rados_inst":"172.20.0.8:0/1234","peers":{"` + cephFSObserverDraftPeer + `":{"remote":{"client_name":"client.peer","cluster_name":"destination","fs_name":"destination"}}},"snap_dirs":{"dir_count":0}}`)
 	case len(args) == 5 && reflect.DeepEqual(args, []string{"fs", "snapshot", "mirror", "daemon", "status"}):
-		output = []byte(`[{"daemon_id":4249,"filesystems":[{"name":"source","peers":[{"uuid":"owned-peer"}]}]}]`)
+		output = []byte(`[{"daemon_id":4249,"filesystems":[{"name":"source","peers":[{"uuid":"` + cephFSObserverDraftPeer + `"}]}]}]`)
 	case len(args) >= 6 && reflect.DeepEqual(args[:5], []string{"fs", "snapshot", "mirror", "show", "distribution"}):
 		output = []byte(`{"mapping":{"4262":"0 directories"}}`)
 	case len(args) >= 5 && reflect.DeepEqual(args[:4], []string{"fs", "snapshot", "mirror", "ls"}):
@@ -483,7 +483,7 @@ func TestCephFSMirrorNativeBarrierAndRebalanceUseRealJSONAndPrivateOwnership(t *
 			source: &ceph.Container{Container: control}, destination: &ceph.Container{Container: &cephFSObserverDraftControl{filesystemID: 2, metadataPool: 9}},
 			sourceFilesystem: "source", destinationFilesystem: "destination",
 		},
-		peer: cephFSMirrorPeer{id: "owned-peer"}, SourceFilesystem: "source", DestinationFilesystem: "destination",
+		peer: cephFSMirrorPeer{id: cephFSObserverDraftPeer}, SourceFilesystem: "source", DestinationFilesystem: "destination",
 		roster:      cephFSDaemonRoster{sourceID: "owned-auth", daemons: []*Daemon{{Container: control, DaemonName: "a"}}},
 		Directories: []string{"/owned", "/foreign"}, directories: cephFSDirectoryOwnership{owned: map[string]bool{"/owned": true}},
 	}

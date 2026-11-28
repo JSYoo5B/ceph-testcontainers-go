@@ -31,7 +31,7 @@ func (c *metadataCaptureControl) Exec(ctx context.Context, args []string, opts .
 		return 0, cephFSObserverDraftStream(c.pools), nil
 	}
 	if c.filesystem != "" && len(a) >= 2 && slices.Equal(a[:2], []string{"fs", "get"}) {
-		return 0, cephFSObserverDraftStream(c.filesystem), nil
+		return 0, cephFSObserverDraftStream(withFilesystemName(c.filesystem, a[2])), nil
 	}
 	return c.Container.Exec(ctx, args, opts...)
 }
