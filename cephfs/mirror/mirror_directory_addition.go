@@ -3,7 +3,6 @@ package mirror
 import (
 	"context"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -213,7 +212,7 @@ func (r *DirectoryAddition) pathPolicy(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	for path := range paths {
-		if path != r.directory && (path == "/" || r.directory == "/" || strings.HasPrefix(path, r.directory+"/") || strings.HasPrefix(r.directory, path+"/")) {
+		if path != r.directory && cephFSDirectoriesOverlap(path, r.directory) {
 			return false, cephFSObserveGuard("CephFS directory addition overlaps another native path")
 		}
 	}

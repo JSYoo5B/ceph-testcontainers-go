@@ -16,6 +16,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/google/uuid"
 	mobycl "github.com/moby/moby/client"
@@ -217,19 +218,16 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	if err != nil {
 		return nil, err
 	}
-	config, image := carrier.config, img
-	if _, err := multicluster.NormalizeInitialMirrorDaemonCount(config.DaemonCount, config.NoInitialDaemons); err != nil {
-		return nil, fmt.Errorf("CephFS %w", err)
+	image := img
+	config, err := normalizeCephFSMirrorConfig(carrier.config)
+	if err != nil {
+		return nil, err
 	}
 	if err := multicluster.ValidatePair(ctx, image, config.Source, config.Destination); err != nil {
 		return nil, err
 	}
 	if err := multicluster.RequireRoleImage(image, multicluster.RoleCephFS, config.Source, config.Destination); err != nil {
 		return nil, fmt.Errorf("configure CephFS mirror daemon image: %w", err)
-	}
-	config, err = normalizeCephFSMirrorConfig(config)
-	if err != nil {
-		return nil, err
 	}
 	if _, err := cephFSManagerCandidates(ctx, config.Source); err != nil {
 		return nil, err
@@ -569,6 +567,8 @@ func (mirror *Container) Daemons() []*Daemon {
 // directories and peer. It does not bootstrap a second peer. Constructor
 // customizers apply to every daemon, followed by the customizers supplied here.
 // A non-nil partial result remains owned and may be removed or terminated.
+// daemonName is 1 to 63 ASCII letters, digits, dots, underscores or hyphens,
+// in any position, and unique within the fixture.
 // Native peer discovery and assignment are asynchronous. Redistributing existing
 // directories depends on the native MGR; Ceph 20.2.4 raises a DirectoryState
 // error during live expansion. Use RebalanceDirectories to explicitly reconcile
@@ -1519,7 +1519,7 @@ func normalizeCephFSMirrorConfig(config Config) (Config, error) {
 	}
 	config.DaemonCount = count
 	for _, name := range []string{config.SourceFilesystem, config.DestinationFilesystem} {
-		if !validCephFSMirrorFilesystemName(name) {
+		if !naming.PoolResource.MatchString(name) {
 			return config, servicehook.Invalid(errors.New("source and destination CephFS names must use letters, digits, underscores, dots or hyphens, starting with a letter, digit or underscore"))
 		}
 	}
@@ -1540,7 +1540,7 @@ func normalizeCephFSMirrorConfig(config Config) (Config, error) {
 			return config, err
 		}
 		for _, previous := range directories {
-			if directory == previous || directory == "/" || previous == "/" || strings.HasPrefix(directory, previous+"/") || strings.HasPrefix(previous, directory+"/") {
+			if cephFSDirectoriesOverlap(directory, previous) {
 				return config, servicehook.Invalid(fmt.Errorf("CephFS mirror directories %q and %q overlap", previous, directory))
 			}
 		}
@@ -1550,14 +1550,9 @@ func normalizeCephFSMirrorConfig(config Config) (Config, error) {
 	return config, nil
 }
 
-func validCephFSMirrorFilesystemName(name string) bool {
-	if name == "" || name[0] == '.' || name[0] == '-' {
-		return false
-	}
-	for _, character := range name {
-		if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '.' || character == '_' || character == '-') {
-			return false
-		}
-	}
-	return true
+// cephFSDirectoriesOverlap reports two normalized paths that Ceph's
+// directory policy cannot hold together: the same path, the root with any
+// path, or one path inside the other.
+func cephFSDirectoriesOverlap(a, b string) bool {
+	return a == b || a == "/" || b == "/" || strings.HasPrefix(a, b+"/") || strings.HasPrefix(b, a+"/")
 }

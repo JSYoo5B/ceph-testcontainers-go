@@ -716,3 +716,16 @@ func TestCephFSMirrorRebalanceHonorsCancellationWhileWaitingForAnIdlePolicy(t *t
 		t.Fatalf("cancellation during the idle wait: %v, actions %v", err, model.actions)
 	}
 }
+
+// TestAddDaemonAdmitsDotsAndALeadingHyphen runs dotted, leading-hyphen and
+// plain names through the admission of AddDaemon, which runs before any
+// container starts.
+func TestAddDaemonAdmitsDotsAndALeadingHyphen(t *testing.T) {
+	m, _, _, _, _ := newPeerRemovalFixture()
+	for name, admitted := range map[string]bool{"standby": true, "a.b": true, ".a": true, "-a": true, "a": false, "": false, "a b": false, "a/b": false} {
+		err := m.roster.admit(name)
+		if (err == nil) != admitted || (err != nil && !errors.Is(err, ceph.ErrInvalidRequest)) {
+			t.Errorf("admit(%q): %v", name, err)
+		}
+	}
+}
