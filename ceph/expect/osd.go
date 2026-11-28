@@ -3,6 +3,7 @@ package expect
 import (
 	"fmt"
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/expectfmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -88,9 +89,6 @@ type OSDEvaluation struct {
 	Matched     bool
 }
 
-// osdEvaluationShown bounds the mismatches that String lists.
-const osdEvaluationShown = 8
-
 // String summarizes the expectation and at most eight mismatches.
 func (e OSDEvaluation) String() string {
 	ids := make([]string, len(e.Expectation.Select))
@@ -103,20 +101,7 @@ func (e OSDEvaluation) String() string {
 		b.WriteString(" exact")
 	}
 	fmt.Fprintf(&b, " in %d observed: ", len(e.Observed))
-	if e.Matched {
-		b.WriteString("match")
-		return b.String()
-	}
-	for i, m := range e.Mismatches {
-		if i == osdEvaluationShown {
-			fmt.Fprintf(&b, "; %d more", len(e.Mismatches)-i)
-			break
-		}
-		if i > 0 {
-			b.WriteString("; ")
-		}
-		b.WriteString(m.String())
-	}
+	expectfmt.WriteMismatches(&b, e.Matched, e.Mismatches)
 	return b.String()
 }
 

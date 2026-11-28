@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/expectfmt"
 	"github.com/google/uuid"
 )
 
@@ -149,9 +150,6 @@ type HealthEvaluation struct {
 	Matched     bool
 }
 
-// healthEvaluationShown bounds the mismatches that String lists.
-const healthEvaluationShown = 8
-
 // String summarizes the expectation and at most eight mismatches.
 func (e HealthEvaluation) String() string {
 	var b strings.Builder
@@ -179,20 +177,7 @@ func (e HealthEvaluation) String() string {
 		b.WriteString(" exact")
 	}
 	fmt.Fprintf(&b, " in %s with %d checks, %d mutes: ", e.Observed.Status, len(e.Observed.Checks), len(e.Observed.Mutes))
-	if e.Matched {
-		b.WriteString("match")
-		return b.String()
-	}
-	for i, m := range e.Mismatches {
-		if i == healthEvaluationShown {
-			fmt.Fprintf(&b, "; %d more", len(e.Mismatches)-i)
-			break
-		}
-		if i > 0 {
-			b.WriteString("; ")
-		}
-		b.WriteString(m.String())
-	}
+	expectfmt.WriteMismatches(&b, e.Matched, e.Mismatches)
 	return b.String()
 }
 

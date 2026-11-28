@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/expectfmt"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 )
 
@@ -72,7 +73,7 @@ type UserUsageMismatch struct {
 
 // String names the reason and the evaluated values.
 func (m UserUsageMismatch) String() string {
-	return fmt.Sprintf("%s: want %s, observed %s", m.Reason, quoteEmpty(m.Want), quoteEmpty(m.Observed))
+	return fmt.Sprintf("%s: want %s, observed %s", m.Reason, expectfmt.QuoteEmpty(m.Want), expectfmt.QuoteEmpty(m.Observed))
 }
 
 // UserUsageEvaluation is the result of evaluating one observation.
@@ -96,20 +97,7 @@ func (e UserUsageEvaluation) String() string {
 		fmt.Fprintf(&b, " tenant=%s", w.Tenant)
 	}
 	fmt.Fprintf(&b, " want scope=%s owner=%s objects=%d size=%d: ", w.Scope, w.OwnerID, w.Objects, w.SizeBytes)
-	if e.Matched {
-		b.WriteString("match")
-		return b.String()
-	}
-	for i, m := range e.Mismatches {
-		if i == evaluationShown {
-			fmt.Fprintf(&b, "; %d more", len(e.Mismatches)-i)
-			break
-		}
-		if i > 0 {
-			b.WriteString("; ")
-		}
-		b.WriteString(m.String())
-	}
+	expectfmt.WriteMismatches(&b, e.Matched, e.Mismatches)
 	return b.String()
 }
 
@@ -195,14 +183,4 @@ func (e UserUsage) mismatches(observed rgw.UserUsage) []UserUsageMismatch {
 	compare(UserUsageMismatchObjects, strconv.FormatUint(e.Objects, 10), strconv.FormatUint(observed.NumObjects, 10))
 	compare(UserUsageMismatchSize, strconv.FormatUint(e.SizeBytes, 10), strconv.FormatUint(observed.SizeBytes, 10))
 	return result
-}
-
-// evaluationShown bounds the mismatches that an evaluation's String lists.
-const evaluationShown = 8
-
-func quoteEmpty(s string) string {
-	if s == "" {
-		return `""`
-	}
-	return s
 }

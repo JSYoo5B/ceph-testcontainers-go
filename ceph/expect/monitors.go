@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/expectfmt"
 )
 
 // Monitors states the monmap membership and quorum a test expects in one
@@ -108,9 +109,6 @@ type MonitorEvaluation struct {
 	Matched     bool
 }
 
-// monitorEvaluationShown bounds the mismatches that String lists.
-const monitorEvaluationShown = 8
-
 // String summarizes the expectation, the observed membership and at most
 // eight mismatches.
 func (e MonitorEvaluation) String() string {
@@ -136,20 +134,7 @@ func (e MonitorEvaluation) String() string {
 		members[i] = mon.Name
 	}
 	fmt.Fprintf(&b, " in monmap [%s] quorum [%s]: ", strings.Join(members, " "), strings.Join(e.Observed.QuorumNames, " "))
-	if e.Matched {
-		b.WriteString("match")
-		return b.String()
-	}
-	for i, m := range e.Mismatches {
-		if i == monitorEvaluationShown {
-			fmt.Fprintf(&b, "; %d more", len(e.Mismatches)-i)
-			break
-		}
-		if i > 0 {
-			b.WriteString("; ")
-		}
-		b.WriteString(m.String())
-	}
+	expectfmt.WriteMismatches(&b, e.Matched, e.Mismatches)
 	return b.String()
 }
 

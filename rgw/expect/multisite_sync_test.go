@@ -139,10 +139,10 @@ func TestMultisiteDataSyncResultSharesNoSlice(t *testing.T) {
 
 func TestMultisiteDataSyncSummaryBoundsMismatches(t *testing.T) {
 	e := MultisiteDataSyncEvaluation{Expectation: MultisiteDataSync{Zone: "b", Source: "a", State: MultisiteDataSyncCaughtUp}}
-	for range evaluationShown + 1 {
+	for range 8 + 1 {
 		e.Mismatches = append(e.Mismatches, MultisiteDataSyncMismatch{Reason: MultisiteDataSyncMismatchBehind, Want: "0", Observed: "1"})
 	}
-	if s := e.String(); strings.Count(s, "behind-shards:") != evaluationShown || !strings.HasSuffix(s, "; 1 more") {
+	if s := e.String(); strings.Count(s, "behind-shards:") != 8 || !strings.HasSuffix(s, "; 1 more") {
 		t.Fatalf("summary: %q", s)
 	}
 }
