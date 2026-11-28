@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming-review/v2",
   "package": "cephfs/expect",
   "declarations_sha256": "eb1b24291fe5b147ce7d5842f4f709e6c1dd3d0847566db660ad4c315e69782f",
-  "members_sha256": "06ecdd9c2670fb7de62f2103239b4f717096f99639d336e7df765d281016a118",
+  "members_sha256": "b6ffc209d6de7f705fcc0734f65970879ac5e076bca54046ae2f7bbf39fafa6f",
   "declarations": 24,
   "members": 28,
   "review": "api-naming.md",
