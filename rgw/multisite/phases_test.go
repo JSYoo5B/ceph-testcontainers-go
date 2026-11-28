@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -53,41 +54,99 @@ func (c *rgwScriptCLI) Exec(ctx context.Context, args []string, opts ...tcexec.P
 }
 
 func newPhaseFixture(source, destination *rgwScriptCLI) *Fixture {
-	f := newPairFixture(Config{Realm: "realm", Zonegroup: "us", SourceZone: "a", DestinationZone: "b", destinationZonegroup: "us"})
+	f := newPairFixture(realmSpec{Realm: "realm", Zonegroup: "us", SourceZone: "a", DestinationZone: "b", destinationZonegroup: "us"})
 	f.realm.sourceClient, f.realm.destinationClient = source, destination
 	f.realm.systemAccess, f.realm.systemSecret = "ACCESS", "SECRET"
 	return f
 }
 
-func TestRGWPairConfigFillsDefaultsAndRefusesMisreadNames(t *testing.T) {
-	config, err := completePairConfig(Config{}, "abc")
+func TestRGWPairSpecFillsDefaultsAndMapsBothZonesToItsZonegroup(t *testing.T) {
+	source, destination := &ceph.Container{}, &ceph.Container{}
+	spec, err := pairSpec(Config{Source: source, Destination: destination, SetupImage: "setup"}, "abc")
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := Config{Realm: "tc-multicluster-abc", Zonegroup: "us-east-1", SourceZone: "tc-primary-abc", DestinationZone: "tc-secondary-abc", destinationZonegroup: "us-east-1"}
-	if config != want {
-		t.Fatalf("defaults = %+v, want %+v", config, want)
+	want := realmSpec{Source: source, Destination: destination, Realm: "tc-multicluster-abc", Zonegroup: "us-east-1", SourceZone: "tc-primary-abc",
+		DestinationZone: "tc-secondary-abc", destinationZonegroup: "us-east-1", SetupImage: "setup", suffix: "abc"}
+	if !reflect.DeepEqual(spec, want) {
+		t.Fatalf("defaults = %+v, want %+v", spec, want)
 	}
-	kept, err := completePairConfig(Config{Realm: "r", Zonegroup: "g", SourceZone: "a", DestinationZone: "b", destinationZonegroup: "eu"}, "abc")
-	if err != nil || kept.destinationZonegroup != "eu" || kept.Realm != "r" {
+	kept, err := pairSpec(Config{Realm: "r", Zonegroup: "g", SourceZone: "a", DestinationZone: "b"}, "abc")
+	if err != nil || kept.Realm != "r" || kept.Zonegroup != "g" || kept.destinationZonegroup != "g" || kept.SourceZone != "a" || kept.DestinationZone != "b" || len(kept.more) != 0 {
 		t.Fatalf("explicit names were replaced: %+v, %v", kept, err)
 	}
-	for _, config := range []Config{
-		{Realm: " realm"}, {Zonegroup: "-group"}, {SourceZone: "a\nb"}, {DestinationZone: "b\x00"},
-		{SourceZone: "same", DestinationZone: "same"},
-	} {
-		if _, err := completePairConfig(config, "abc"); err == nil {
-			t.Fatalf("%+v was accepted", config)
+	if _, err := pairSpec(Config{SourceZone: "same", DestinationZone: "same"}, "abc"); !errors.Is(err, ceph.ErrInvalidRequest) {
+		t.Fatalf("equal zones: %v", err)
+	}
+}
+
+func TestRGWTopologySpecKeepsNamedZonesAndMapsTheFirstTwoToThePair(t *testing.T) {
+	a, b, c := &ceph.Container{}, &ceph.Container{}, &ceph.Container{}
+	spec, err := topologySpec(TopologyConfig{Zones: []ZoneConfig{{Name: "a", Cluster: a}, {Name: "b", Cluster: b}, {Name: "c", Cluster: c}}, MetadataMaster: "b", SetupImage: "setup"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Source != b || spec.SourceZone != "b" || spec.Destination != a || spec.DestinationZone != "a" || spec.Zonegroup != "us-east-1" ||
+		spec.destinationZonegroup != "us-east-1" || spec.SetupImage != "setup" || len(spec.more) != 1 || spec.more[0].Name != "c" || spec.more[0].Cluster != c ||
+		spec.Realm != "tc-multicluster-"+spec.suffix || spec.suffix == "" {
+		t.Fatalf("topology spec %+v", spec)
+	}
+	groups, err := topologySpec(TopologyConfig{Realm: "r", Zonegroups: []ZonegroupConfig{{Name: "us", Zones: []ZoneConfig{{Name: "a"}}}, {Name: "eu", Zones: []ZoneConfig{{Name: "b"}}}}})
+	if err != nil || groups.Realm != "r" || groups.Zonegroup != "us" || groups.destinationZonegroup != "eu" || len(groups.more) != 0 {
+		t.Fatalf("zonegroup spec %+v, %v", groups, err)
+	}
+	// Unlike Config, a topology names every zone.
+	if _, err := topologySpec(TopologyConfig{Zones: []ZoneConfig{{}, {Name: "b"}}}); !errors.Is(err, ceph.ErrInvalidRequest) {
+		t.Fatalf("an unnamed zone: %v", err)
+	}
+}
+
+// TestRGWMultisiteRefusesMisreadNamesBeforeAnyCommand puts each misread name
+// in every name of both carriers. Run refuses it before it inspects a cluster
+// or runs a command, so the fake clusters record nothing.
+func TestRGWMultisiteRefusesMisreadNamesBeforeAnyCommand(t *testing.T) {
+	cli := &rgwScriptCLI{}
+	cluster := testhelper.TestCluster(cli, testhelper.TestConfig{})
+	for _, name := range []string{"a\tb", "a\x01b", "-a", " a", "a "} {
+		configs := map[string]Option{
+			"Realm":           WithConfig(Config{Source: cluster, Destination: cluster, Realm: name}),
+			"Zonegroup":       WithConfig(Config{Source: cluster, Destination: cluster, Zonegroup: name}),
+			"SourceZone":      WithConfig(Config{Source: cluster, Destination: cluster, SourceZone: name}),
+			"DestinationZone": WithConfig(Config{Source: cluster, Destination: cluster, DestinationZone: name}),
 		}
+		two := func(first string) []ZoneConfig {
+			return []ZoneConfig{{Name: first, Cluster: cluster}, {Name: "b", Cluster: cluster}}
+		}
+		for field, config := range map[string]TopologyConfig{
+			"Realm":                {Zones: two("a"), Realm: name},
+			"Zonegroup":            {Zones: two("a"), Zonegroup: name},
+			"MetadataMaster":       {Zones: two("a"), MetadataMaster: name},
+			"ZoneConfig.Name":      {Zones: two(name)},
+			"ZoneConfig.Zonegroup": {Zones: []ZoneConfig{{Name: "a", Zonegroup: name, Cluster: cluster}, {Name: "b", Cluster: cluster}}},
+			"ZonegroupConfig.Name": {Zonegroups: []ZonegroupConfig{{Name: name, Zones: two("a")}}},
+			"MasterZone":           {Zonegroups: []ZonegroupConfig{{Name: "us", MasterZone: name, Zones: two("a")}}},
+			"MasterZonegroup":      {Zonegroups: []ZonegroupConfig{{Name: "us", Zones: two("a")}}, MasterZonegroup: name},
+		} {
+			configs["TopologyConfig."+field] = WithTopology(config)
+		}
+		for field, option := range configs {
+			f, err := Run(t.Context(), "image", option)
+			if f != nil || !errors.Is(err, ceph.ErrInvalidRequest) {
+				t.Errorf("%s %q: fixture %v, error %v", field, name, f, err)
+			}
+		}
+	}
+	if len(cli.ops) != 0 {
+		t.Fatalf("commands ran before the names were refused: %q", cli.ops)
 	}
 }
 
 func TestRGWPairFixtureRecordsEachZonegroupMaster(t *testing.T) {
-	same := newPairFixture(Config{Zonegroup: "us", SourceZone: "a", DestinationZone: "b", destinationZonegroup: "us"})
+	same := newPairFixture(realmSpec{Zonegroup: "us", SourceZone: "a", DestinationZone: "b", destinationZonegroup: "us"})
 	if len(same.topology.groupMasters) != 1 || same.topology.groupMasters["us"] != "a" || same.realm.zoneGroupName("b") != "us" || !same.topology.bootstrapStagingPending {
 		t.Fatalf("one zonegroup: masters %v", same.topology.groupMasters)
 	}
-	split := newPairFixture(Config{Zonegroup: "us", SourceZone: "a", DestinationZone: "b", destinationZonegroup: "eu"})
+	split := newPairFixture(realmSpec{Zonegroup: "us", SourceZone: "a", DestinationZone: "b", destinationZonegroup: "eu"})
 	if split.topology.groupMasters["us"] != "a" || split.topology.groupMasters["eu"] != "b" || split.realm.zoneGroupName("b") != "eu" {
 		t.Fatalf("two zonegroups: masters %v", split.topology.groupMasters)
 	}
@@ -465,7 +524,7 @@ func TestRGWMetadataBootstrapWaitsOnlyForRunningSecondaries(t *testing.T) {
 
 func TestRGWZoneLinkInterruptionRequiresAnOwnedBridgeZone(t *testing.T) {
 	probe := &clustertest.NativeCallCounter{}
-	f := &Fixture{realm: rgwRealmAccess{sourceClient: probe, destinationClient: probe, config: Config{SourceZone: "a", DestinationZone: "b"}}}
+	f := &Fixture{realm: rgwRealmAccess{sourceClient: probe, destinationClient: probe, config: realmSpec{SourceZone: "a", DestinationZone: "b"}}}
 	if _, err := f.InterruptZoneLink(t.Context(), "a"); err == nil || !strings.Contains(err.Error(), "bridge") {
 		t.Fatalf("a host-mode fixture interrupted a zone link: %v", err)
 	}
@@ -687,3 +746,4 @@ func TestRGWBucketInstanceMatchesOnlyItsExactNativeIdentity(t *testing.T) {
 		t.Fatal("trailing native output was accepted")
 	}
 }
+

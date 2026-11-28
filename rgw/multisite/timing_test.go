@@ -130,7 +130,7 @@ func TestTimingProfileVerifiesNativeVersionAndOwnedProcessInputs(t *testing.T) {
 }
 
 func TestTimingProfilePartialGatewayRemainsOwnedAfterVerificationFailure(t *testing.T) {
-	f := &Fixture{realm: rgwRealmAccess{config: Config{Timing: TimingProfile{IncrementalSync: true}}}}
+	f := &Fixture{realm: rgwRealmAccess{config: realmSpec{Timing: TimingProfile{IncrementalSync: true}}}}
 	ctr := &timingGateway{version: "ceph version 19.2.5 (build) squid (stable)"}
 	gateway := &rgw.Gateway{Container: ctr}
 	start := func(context.Context, rgw.Config, ...testcontainers.ContainerCustomizer) (*rgw.Gateway, error) {
@@ -195,8 +195,8 @@ func TestTimingProfileSyncLeasePeriodIsValidatedBeforeAnythingStarts(t *testing.
 			t.Fatalf("period %s: %v", test.period, err)
 		}
 	}
-	// runPair refuses the profile before it looks at a cluster.
-	f, err := runPair(t.Context(), "image", Config{Timing: TimingProfile{SyncLeasePeriod: 90 * time.Millisecond}})
+	// The realm builder refuses the profile before it looks at a cluster.
+	f, err := Run(t.Context(), "image", WithConfig(Config{Timing: TimingProfile{SyncLeasePeriod: 90 * time.Millisecond}}))
 	if f != nil || !errors.Is(err, ceph.ErrInvalidRequest) || !strings.Contains(err.Error(), "sync lease period") {
 		t.Fatalf("fixture %v, error %v", f, err)
 	}

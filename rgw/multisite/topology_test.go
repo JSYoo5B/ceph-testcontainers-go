@@ -37,7 +37,7 @@ func TestRGWSetupImageRejectsMissingOrBlankSelection(t *testing.T) {
 func TestRGWCommittedPeriodRequiresActualPeerEndpoints(t *testing.T) {
 	fixture := &Fixture{
 		RealmID: "realm-id", SourceZoneID: "source-id", DestinationZoneID: "destination-id",
-		realm: rgwRealmAccess{config: Config{Zonegroup: "us-east-1", SourceZone: "primary", DestinationZone: "secondary"}, sourceURL: "http://127.0.0.1:42345", destinationURL: "http://127.0.0.1:42346"}}
+		realm: rgwRealmAccess{config: realmSpec{Zonegroup: "us-east-1", SourceZone: "primary", DestinationZone: "secondary"}, sourceURL: "http://127.0.0.1:42345", destinationURL: "http://127.0.0.1:42346"}}
 	const committed = `{"realm_id":"realm-id","master_zone":"source-id","period_map":{"zonegroups":[{"name":"us-east-1","master_zone":"source-id","endpoints":["http://127.0.0.1:42345"],"zones":[{"id":"source-id","name":"primary","endpoints":["http://127.0.0.1:42345"]},{"id":"destination-id","name":"secondary","endpoints":["http://127.0.0.1:42346"]}]}]}}`
 	check := func(data string) error {
 		period, err := decodeRGWTopologyPeriod([]byte(data))
@@ -65,7 +65,7 @@ func TestRGWCommittedPeriodRequiresActualPeerEndpoints(t *testing.T) {
 }
 
 func TestRGWTopologyRequiresEveryZoneIdentityAndEndpoint(t *testing.T) {
-	fixture := &Fixture{RealmID: "realm", realm: rgwRealmAccess{config: Config{Zonegroup: "group"}}}
+	fixture := &Fixture{RealmID: "realm", realm: rgwRealmAccess{config: realmSpec{Zonegroup: "group"}}}
 	states := []*rgwZoneState{
 		{Zone: Zone{Name: "a", ID: "id-a", PeerEndpoint: "http://a:7480"}},
 		{Zone: Zone{Name: "b", ID: "id-b", PeerEndpoint: "http://b:7480"}},
@@ -124,7 +124,7 @@ func TestRGWTopologyPeriodRefusesMalformedMembers(t *testing.T) {
 }
 
 func TestRGWZonePreflightAndTerminationRetainOwnership(t *testing.T) {
-	fixture := &Fixture{realm: rgwRealmAccess{config: Config{SourceZone: "a", DestinationZone: "b"}}, topology: rgwZoneTopology{additional: map[string]*rgwZoneState{"c": {Zone: Zone{Name: "c", ID: "id-c"}}}}}
+	fixture := &Fixture{realm: rgwRealmAccess{config: realmSpec{SourceZone: "a", DestinationZone: "b"}}, topology: rgwZoneTopology{additional: map[string]*rgwZoneState{"c": {Zone: Zone{Name: "c", ID: "id-c"}}}}}
 	if zone, err := fixture.AddZone(t.Context(), "image", ZoneConfig{Name: "--invalid"}); err == nil || zone != nil {
 		t.Fatal("unsafe zone name was accepted")
 	}

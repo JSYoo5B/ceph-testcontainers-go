@@ -5,14 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/mutation"
-	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
-	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
 	"slices"
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/mutation"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/google/uuid"
@@ -77,73 +79,36 @@ type rgwZoneState struct {
 	client  testcontainers.Container
 }
 
-// runTopology implements Run with WithTopology. A non-nil result on error owns
-// partial resources and needs cleanup.
-func runTopology(ctx context.Context, image string, config TopologyConfig, opts ...testcontainers.ContainerCustomizer) (*Fixture, error) {
-	zones, err := prepareRGWTopology(ctx, image, config)
-	if err != nil {
-		return nil, err
+// topologySpec translates a WithTopology realm: the zones in order with the
+// metadata master first, each assigned its zonegroup, and the realm name,
+// generated when the configuration leaves it empty. Every name is validated
+// before any command.
+func topologySpec(config TopologyConfig) (realmSpec, error) {
+	suffix := generatedSuffix()
+	realm := config.Realm
+	if realm == "" {
+		realm = "tc-multicluster-" + suffix
 	}
-	for _, zone := range zones {
-		if err := ensureFreshRGWCluster(ctx, zone.Cluster); err != nil {
-			return nil, err
-		}
+	if !validRGWZoneName(realm) {
+		return realmSpec{}, servicehook.Invalid(errors.New("invalid RGW realm name"))
 	}
-	f, err := runPair(ctx, image, Config{
-		Source: zones[0].Cluster, Destination: zones[1].Cluster,
-		SourceZone: zones[0].Name, DestinationZone: zones[1].Name,
-		Realm: config.Realm, Zonegroup: zones[0].Zonegroup, SetupImage: config.SetupImage,
-		destinationZonegroup: zones[1].Zonegroup, Timing: config.Timing,
-	}, opts...)
-	if err != nil {
-		return f, err
-	}
-	if len(zones) > 2 {
-		// The outer constructor still owns fresh initialization and has not
-		// exposed f. Additional remote commits need a final master-local
-		// staging snapshot of the complete graph before returning it.
-		f.topology.bootstrapStagingPending = true
-	}
-	for _, zone := range zones[2:] {
-		f.topologyMu.Lock()
-		_, exists := f.topology.groupIDs[zone.Zonegroup]
-		_, err := f.addZone(ctx, image, zone, !exists, opts...)
-		f.topologyMu.Unlock()
-		if err != nil {
-			return f, err
-		}
-	}
-	if len(zones) > 2 {
-		if err := f.canonicalizeBootstrapStaging(ctx); err != nil {
-			return f, err
-		}
-	}
-	return f, nil
-}
-
-func prepareRGWTopology(ctx context.Context, image string, config TopologyConfig) ([]ZoneConfig, error) {
 	zones, err := normalizeRGWTopology(config)
 	if err != nil {
-		return nil, err
+		return realmSpec{}, err
 	}
-	for i, zone := range zones {
-		for j := range i {
-			if err := multicluster.ValidatePair(ctx, image, zones[j].Cluster, zone.Cluster); err != nil {
-				return nil, fmt.Errorf("RGW zones %s/%s: %w", zones[j].Name, zone.Name, err)
-			}
-		}
-		if err := multicluster.RequireRoleImage(image, multicluster.RoleRGW, zone.Cluster); err != nil {
-			return nil, fmt.Errorf("RGW zone %s gateway image: %w", zone.Name, err)
-		}
-	}
-	return zones, nil
+	return realmSpec{
+		Source: zones[0].Cluster, Destination: zones[1].Cluster,
+		Realm: realm, Zonegroup: zones[0].Zonegroup, SourceZone: zones[0].Name, DestinationZone: zones[1].Name,
+		destinationZonegroup: zones[1].Zonegroup, SetupImage: config.SetupImage, Timing: config.Timing,
+		more: zones[2:], suffix: suffix,
+	}, nil
 }
 
 func normalizeRGWTopology(config TopologyConfig) ([]ZoneConfig, error) {
 	var err error
 	if len(config.Zonegroups) > 0 {
 		if len(config.Zones) > 0 || config.Zonegroup != "" || config.MetadataMaster != "" {
-			return nil, multisiteInvalid(errors.New("RGW topology must use either Zones or Zonegroups"))
+			return nil, servicehook.Invalid(errors.New("RGW topology must use either Zones or Zonegroups"))
 		}
 		config.Zones, config.MetadataMaster, err = flattenRGWZonegroups(config.Zonegroups, config.MasterZonegroup)
 	} else {
@@ -168,7 +133,7 @@ func flattenRGWZonegroups(groups []ZonegroupConfig, masterGroup string) ([]ZoneC
 	seen := make(map[string]bool)
 	for _, group := range groups {
 		if !validRGWZoneName(group.Name) || seen[group.Name] || len(group.Zones) == 0 {
-			return nil, "", multisiteInvalid(errors.New("RGW zonegroups require unique valid names and at least one zone"))
+			return nil, "", servicehook.Invalid(errors.New("RGW zonegroups require unique valid names and at least one zone"))
 		}
 		seen[group.Name] = true
 		ordered, master, err := rgwZonegroupZones(group)
@@ -183,7 +148,7 @@ func flattenRGWZonegroups(groups []ZonegroupConfig, masterGroup string) ([]ZoneC
 		}
 	}
 	if masterName == "" {
-		return nil, "", multisiteInvalid(errors.New("RGW master zonegroup must name a configured group"))
+		return nil, "", servicehook.Invalid(errors.New("RGW master zonegroup must name a configured group"))
 	}
 	return zones, masterName, nil
 }
@@ -198,14 +163,14 @@ func rgwZonegroupZones(group ZonegroupConfig) ([]ZoneConfig, string, error) {
 	}
 	index := slices.IndexFunc(ordered, func(zone ZoneConfig) bool { return zone.Name == master })
 	if index < 0 {
-		return nil, "", multisiteInvalid(errors.New("RGW zonegroup master must name a zone in that group"))
+		return nil, "", servicehook.Invalid(errors.New("RGW zonegroup master must name a zone in that group"))
 	}
 	selected := ordered[index]
 	ordered = slices.Delete(ordered, index, index+1)
 	ordered = append([]ZoneConfig{selected}, ordered...)
 	for i := range ordered {
 		if ordered[i].Zonegroup != "" && ordered[i].Zonegroup != group.Name {
-			return nil, "", multisiteInvalid(errors.New("RGW zone has conflicting zonegroup"))
+			return nil, "", servicehook.Invalid(errors.New("RGW zone has conflicting zonegroup"))
 		}
 		ordered[i].Zonegroup = group.Name
 	}
@@ -216,18 +181,18 @@ func rgwZonegroupZones(group ZonegroupConfig) ([]ZoneConfig, string, error) {
 // zonegroup.
 func flatRGWZones(config TopologyConfig) ([]ZoneConfig, error) {
 	if config.MasterZonegroup != "" {
-		return nil, multisiteInvalid(errors.New("MasterZonegroup requires Zonegroups"))
+		return nil, servicehook.Invalid(errors.New("MasterZonegroup requires Zonegroups"))
 	}
 	if config.Zonegroup == "" {
 		config.Zonegroup = "us-east-1"
 	}
 	if !validRGWZoneName(config.Zonegroup) {
-		return nil, multisiteInvalid(errors.New("invalid RGW zonegroup name"))
+		return nil, servicehook.Invalid(errors.New("invalid RGW zonegroup name"))
 	}
 	zones := slices.Clone(config.Zones)
 	for i := range zones {
 		if zones[i].Zonegroup != "" && zones[i].Zonegroup != config.Zonegroup {
-			return nil, multisiteInvalid(errors.New("flat RGW topology uses one zonegroup; use Zonegroups for multiple groups"))
+			return nil, servicehook.Invalid(errors.New("flat RGW topology uses one zonegroup; use Zonegroups for multiple groups"))
 		}
 		zones[i].Zonegroup = config.Zonegroup
 	}
@@ -239,7 +204,7 @@ func flatRGWZones(config TopologyConfig) ([]ZoneConfig, error) {
 // reordering the other sites.
 func orderRGWZones(zones []ZoneConfig, master string) ([]ZoneConfig, error) {
 	if len(zones) < 2 {
-		return nil, multisiteInvalid(errors.New("RGW multisite topology requires at least two zones"))
+		return nil, servicehook.Invalid(errors.New("RGW multisite topology requires at least two zones"))
 	}
 	zones = slices.Clone(zones)
 	if master == "" {
@@ -248,19 +213,19 @@ func orderRGWZones(zones []ZoneConfig, master string) ([]ZoneConfig, error) {
 	masterIndex := -1
 	for i, zone := range zones {
 		if !validRGWZoneName(zone.Name) {
-			return nil, multisiteInvalid(errors.New("invalid RGW zone name"))
+			return nil, servicehook.Invalid(errors.New("invalid RGW zone name"))
 		}
 		if zone.Name == master {
 			masterIndex = i
 		}
 		for j := range i {
 			if zones[j].Name == zone.Name {
-				return nil, multisiteInvalid(fmt.Errorf("duplicate RGW zone %s", zone.Name))
+				return nil, servicehook.Invalid(fmt.Errorf("duplicate RGW zone %s", zone.Name))
 			}
 		}
 	}
 	if masterIndex < 0 {
-		return nil, multisiteInvalid(errors.New("RGW metadata master must name a configured zone"))
+		return nil, servicehook.Invalid(errors.New("RGW metadata master must name a configured zone"))
 	}
 	selected := zones[masterIndex]
 	zones = append(slices.Delete(zones, masterIndex, masterIndex+1), ZoneConfig{})
@@ -516,7 +481,7 @@ func (f *Fixture) additionMaster(ctx context.Context, name string) (*rgwZoneStat
 	for _, group := range period.PeriodMap.Zonegroups {
 		for _, zone := range group.Zones {
 			if zone.Name == name {
-				return nil, multisiteInvalid(fmt.Errorf("RGW zone %s already exists in the committed period", name))
+				return nil, servicehook.Invalid(fmt.Errorf("RGW zone %s already exists in the committed period", name))
 			}
 		}
 	}
