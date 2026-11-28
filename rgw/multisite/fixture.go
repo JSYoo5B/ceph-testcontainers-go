@@ -126,15 +126,15 @@ type rgwRealmAccess struct {
 
 // rgwZoneTopology is the realm topology beyond the original pair: the added
 // zones, the removals in progress, each zonegroup's native ID and master
-// zone, the gateways whose period reload was interrupted, and whether the
-// pair's bootstrap staging period still needs canonicalizing. It is guarded
+// zone, and whether the pair's bootstrap staging period still needs
+// canonicalizing. An interrupted gateway reload is recorded with the
+// gateway's cluster, as every RGW restart is (gwbase.RestartTarget). It is guarded
 // by Fixture.topologyMu, or owned by setup before the fixture is shared.
 type rgwZoneTopology struct {
 	additional              map[string]*rgwZoneState
 	removed                 map[string]*rgwZoneRemoval
 	groupIDs                map[string]string
 	groupMasters            map[string]string
-	reloadNeeded            map[string]*zoneReload
 	bootstrapStagingPending bool
 }
 

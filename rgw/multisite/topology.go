@@ -11,7 +11,6 @@ import (
 	"unicode"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/mutation"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
@@ -319,9 +318,12 @@ func (f *Fixture) ZoneAdmin(ctx context.Context, name string, args ...string) ([
 // every registered zone's identity and endpoint, and refreshes the period in
 // all sites. Existing running gateways restart to load the final period,
 // retaining their listener ports and storage; fenced gateways stay stopped
-// unless the fixture owes a start to that same container and process generation
-// after an interrupted reload. Retry waits for the original Stop completion.
-// A lost Docker Stop response retains the pending reload until disposal.
+// unless a start is owed to that same container and process generation after
+// an interrupted restart, which a retry settles first: it waits for the
+// original Stop to return, refuses while the original generation still runs,
+// and starts that generation once it has stopped. The restart is the one that
+// placement activation and TLS replacement use, so a restart one of them left
+// unfinished on the gateway is settled the same way.
 // The new gateway starts with its committed endpoint and skips this reload.
 // Running secondaries finish initial metadata full sync before reload. Complete
 // any external master transition first, or keep the previous master fenced.
@@ -550,13 +552,6 @@ func (r *rgwRealmAccess) committedPeriod(ctx context.Context, zone *rgwZoneState
 	return decodeRGWTopologyPeriod(data)
 }
 
-// zoneReload identifies the process whose stop belongs to this fixture.
-type zoneReload struct {
-	containerID, originalStart string
-	startConfirmed             bool
-	stop                       mutation.Fence
-}
-
 func (t *rgwZoneTopology) reloadZoneGateways(ctx context.Context, states []*rgwZoneState, skip func(*rgwZoneState) bool) error {
 	for _, zone := range states {
 		// A newly added zone already loaded its committed endpoint.
@@ -570,81 +565,37 @@ func (t *rgwZoneTopology) reloadZoneGateways(ctx context.Context, states []*rgwZ
 	return nil
 }
 
+// reloadZoneGateway restarts the running gateway of zone so that it loads
+// the committed period, through the restart protocol that every RGW restart
+// of the container shares. It holds the topology mutex of the zone's cluster
+// while it does. A restart that an earlier reload of this fixture left
+// unfinished is settled first and needs no second restart; one that another
+// requester (a placement, a TLS replacement) left unfinished is settled and
+// followed by this reload's own restart, unless settling it started the
+// gateway now. A stopped gateway stays stopped.
 func (t *rgwZoneTopology) reloadZoneGateway(ctx context.Context, zone *rgwZoneState) error {
-	gateway := zone.Gateway
-	id := gateway.GetContainerID()
-	record := t.reloadNeeded[zone.Name]
-	if record != nil {
-		if err := record.stop.Wait(ctx); err != nil {
-			return fmt.Errorf("settle zone %s reload Stop before inspecting its generation: %w", zone.Name, err)
-		}
+	if err := gwbase.LockCluster(ctx, zone.cluster); err != nil {
+		return err
 	}
-	status, err := gateway.State(ctx)
-	if err != nil || status == nil || status.Paused || status.Restarting || id == "" || status.StartedAt == "" {
+	defer servicehook.Unlock(zone.cluster)
+	target := gwbase.RestartTarget{Cluster: zone.cluster, Container: zone.Gateway.Container}
+	resumed, err := target.Resume(ctx)
+	if err != nil {
+		return fmt.Errorf("settle the pending restart of zone %s before its period reload: %w", zone.Name, err)
+	}
+	if resumed.Started || resumed.Running && resumed.Owner == t {
+		return nil
+	}
+	status, err := target.Container.State(ctx)
+	if err != nil || status == nil || status.Paused || status.Restarting {
 		return fmt.Errorf("inspect zone %s before period reload: unusable gateway state: %v", zone.Name, err)
 	}
-	if record != nil {
-		if id != record.containerID {
-			delete(t.reloadNeeded, zone.Name)
-			return fmt.Errorf("zone %s gateway was replaced during reload; leaving its current state intact", zone.Name)
-		}
-		if !status.Running && (status.StartedAt != record.originalStart || record.startConfirmed) {
-			delete(t.reloadNeeded, zone.Name)
-			return fmt.Errorf("zone %s was stopped outside the pending reload; leaving it stopped", zone.Name)
-		}
-		if status.Running {
-			if status.StartedAt == record.originalStart {
-				return fmt.Errorf("zone %s original generation still runs after an unconfirmed stop; retry after it settles", zone.Name)
-			}
-			// A new running generation has loaded the committed period.
-			delete(t.reloadNeeded, zone.Name)
-			return nil
-		}
-	} else {
-		if !status.Running {
-			return nil
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if t.reloadNeeded == nil {
-			t.reloadNeeded = make(map[string]*zoneReload)
-		}
-		record = &zoneReload{containerID: id, originalStart: status.StartedAt}
-		t.reloadNeeded[zone.Name] = record
-		stop := 3 * time.Second
-		stopTarget := gateway.Container
-		err := record.stop.Record(mutation.Run(ctx, time.Minute, func(stopCtx context.Context) (bool, error) {
-			err := stopTarget.Stop(stopCtx, &stop)
-			return err == nil, err
-		}))
-		if err != nil {
-			if !mutation.Uncertain(err) {
-				// The caller canceled before the callback was dispatched.
-				delete(t.reloadNeeded, zone.Name)
-			}
-			return fmt.Errorf("stop zone %s before period reload: %w", zone.Name, err)
-		}
+	if !status.Running {
+		return nil
 	}
-	// Start targets a container ID. Recheck the stopped generation before
-	// dispatch, including after a successful Stop reply.
-	status, err = gateway.State(ctx)
-	if err != nil || status == nil || status.Running || status.Paused || status.Restarting {
-		return fmt.Errorf("confirm stopped zone %s before reload Start: %v", zone.Name, err)
-	}
-	if gateway.GetContainerID() != record.containerID || status.StartedAt != record.originalStart {
-		delete(t.reloadNeeded, zone.Name)
-		return fmt.Errorf("zone %s generation changed before reload Start; leaving it stopped", zone.Name)
-	}
-	if err := gateway.Start(ctx); err != nil {
+	if err := target.Restart(ctx, gwbase.Restart{Owner: t}); err != nil {
 		return fmt.Errorf("restart zone %s after period reload: %w", zone.Name, err)
 	}
-	record.startConfirmed = true
-	status, err = gateway.State(ctx)
-	if err != nil || status == nil || !status.Running || status.Paused || status.Restarting || status.StartedAt == record.originalStart {
-		return fmt.Errorf("confirm restarted zone %s after period reload: %v", zone.Name, err)
-	}
-	delete(t.reloadNeeded, zone.Name)
 	return nil
 }
 

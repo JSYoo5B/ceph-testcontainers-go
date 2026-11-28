@@ -97,8 +97,6 @@ type tlsListener struct {
 	mu      sync.Mutex
 	config  *TLSConfig
 	pending *tlsInstallation
-	// stopStart is protected by the owning cluster's topology mutex.
-	stopStart *string
 }
 
 type tlsInstallation struct {
@@ -229,39 +227,29 @@ func (g *Gateway) ReplaceTLS(ctx context.Context, config TLSConfig) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(cluster))
 	defer cancel()
-	return replaceTLS(ctx, owned.Container, owned.tls, next)
+	return replaceTLS(ctx, cluster, owned.Container, owned.tls, next)
 }
 
 // replaceTLS installs next in the running gateway container ctr, whose
-// expected material listener holds, and restarts it.
-func replaceTLS(ctx context.Context, ctr testcontainers.Container, listener *tlsListener, next *TLSConfig) error {
+// expected material listener holds, and restarts it through the restart
+// protocol that every RGW restart of the container shares. A restart that an
+// earlier call left unfinished is settled first: when settling it started
+// the gateway with next already installed, the replacement is complete.
+func replaceTLS(ctx context.Context, cluster *ceph.Container, ctr testcontainers.Container, listener *tlsListener, next *TLSConfig) error {
+	target := gwbase.RestartTarget{Cluster: cluster, Container: ctr}
+	resumed, err := target.Resume(ctx)
+	if err != nil {
+		return fmt.Errorf("settle the pending RGW restart before replacing its TLS certificate: %w", err)
+	}
+	if resumed.Started && resumed.Owner == listener && bytes.Equal(rgwTLSFileContent(next), rgwTLSFileContent(listener.material())) {
+		return nil
+	}
 	state, err := ctr.State(ctx)
 	if err != nil {
 		return fmt.Errorf("inspect RGW before replacing its TLS certificate: %w", err)
 	}
-	invalidState := servicehook.Invalid(errors.New("RGW gateway is not running; its TLS certificate is replaced only in a running gateway"))
-	if state == nil || state.Paused || state.Restarting {
-		return invalidState
-	}
-	if listener.stopStart != nil {
-		same := state.StartedAt == *listener.stopStart
-		if same && state.Running {
-			return errors.New("earlier RGW TLS stop is unconfirmed; retry after the original gateway generation stops")
-		}
-		if same && !state.Running {
-			if !bytes.Equal(rgwTLSFileContent(next), rgwTLSFileContent(listener.material())) {
-				return errors.New("restart RGW with its installed TLS material before requesting different material")
-			}
-			if err := ctr.Start(ctx); err != nil {
-				return fmt.Errorf("restart RGW with installed TLS material: %w", err)
-			}
-			listener.stopStart = nil
-			return nil
-		}
-		listener.stopStart = nil
-	}
-	if !state.Running {
-		return invalidState
+	if state == nil || !state.Running || state.Paused || state.Restarting {
+		return servicehook.Invalid(errors.New("RGW gateway is not running; its TLS certificate is replaced only in a running gateway"))
 	}
 	if err := listener.reconcile(ctx); err != nil {
 		return err
@@ -269,14 +257,7 @@ func replaceTLS(ctx context.Context, ctr testcontainers.Container, listener *tls
 	if err := installTLSFile(ctx, ctr, listener, next); err != nil {
 		return err
 	}
-	originalStart := state.StartedAt
-	listener.stopStart = &originalStart
-	grace := 3 * time.Second
-	if err := ctr.Stop(ctx, &grace); err != nil {
-		return fmt.Errorf("stop RGW outcome is unconfirmed; new TLS material stays installed: %w", err)
-	}
-	listener.stopStart = nil
-	if err := ctr.Start(ctx); err != nil {
+	if err := target.Restart(ctx, gwbase.Restart{Owner: listener}); err != nil {
 		return fmt.Errorf("restart RGW with the replaced TLS certificate, which stays installed: %w", err)
 	}
 	return nil
