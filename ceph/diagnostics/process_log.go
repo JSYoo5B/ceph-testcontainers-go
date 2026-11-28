@@ -83,8 +83,10 @@ type LogSource struct {
 // process logged when it started (ceph version ..., process ceph-mgr, pid
 // N), or, for a process that a respawn began and that failed before it
 // logged one, the last line of the process it replaced (mgr respawn
-// exe_path ...). Without either, Start is zero, Status is LogStartNotFound
-// and Lines are the lines since the container started, bounded alike.
+// exe_path ...). Without either, Start is zero and Lines are the lines since
+// the container started, bounded alike; Status is then LogStartNotFound,
+// unless the container's run changed during the read, which LogChanged
+// reports first.
 type ProcessLog struct {
 	LogSource
 	Start LogLine   `json:"start"`
@@ -101,12 +103,17 @@ type ProcessLog struct {
 // key, so the line that the replaced process logs right before it executes
 // the new one also starts a process. The read takes the lines since the
 // container's current run started and keeps those from the last such line
-// on. Status reports what the result covers: LogComplete, or LogTruncated
-// past LogConfig.MaxBytes, LogStartNotFound without a start, and LogChanged
-// when the container's run changed during the read.
-// The lines are redacted as Redact does, with the private key blocks that
-// span lines masked whole; an oracle that needs the raw bytes reads the
-// container's Logs itself.
+// on. Status reports what the result covers, in this order: LogChanged when
+// the container's run changed during the read, LogStartNotFound without a
+// start, LogTruncated when text of the window was lost (past
+// LogConfig.MaxBytes, a line cut at 64 KiB, or a line without a valid
+// timestamp), and otherwise LogComplete.
+// The lines are redacted as Redact does. A private key block that spans
+// lines is followed on its own stream, stdout or stderr, and masked whole;
+// an end whose beginning the read did not see masks every earlier line of
+// its stream since the stream's previous end, and a known secret split by
+// the 64 KiB cut is masked too. An oracle that needs the raw bytes reads
+// the container's Logs itself.
 //
 // The read is bounded by ctx and the bytes it reads; nothing outlives the
 // call. It reads a stopped container's last run as well. It never parses
