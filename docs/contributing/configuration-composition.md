@@ -248,11 +248,17 @@ point as every module, `Run(ctx, img string, opts ...testcontainers.ContainerCus
   cephfs-mirror or gateway daemons) and is required. It is never derived from
   the clusters.
 - The fixture configuration is a plain `Config` struct carried by exactly one
-  `WithConfig` option (multisite: `WithConfig` or `WithTopology`). The option's
-  `Customize` does nothing. `Run` refuses a missing carrier and a second one
-  before it queries any cluster (`multicluster.SplitConfig`). The carrier copies
-  the slices of its config.
-- The other customizers reach the daemon containers, as before.
+  `WithConfig` option. The option's `Customize` does nothing. `Run` refuses a
+  missing carrier and a second one before it queries any cluster
+  (`multicluster.SplitConfig`). The carrier copies the slices of its config.
+- `rgw/multisite` is a released exception to the one-carrier rule, kept under
+  the [compatibility policy](releasing.md#stable-versions-and-public-apis): `WithConfig` carries a two-zone
+  `Config` with generated realm and zone names, and `WithTopology` carries a
+  `TopologyConfig` of any shape with named zones. Both translate their carrier
+  into one internal input of one realm builder, each with its own defaults
+  and zone mapping. It is not a pattern for new fixtures, which have one
+  carrier.
+- The other customizers reach the daemon containers.
 
 ## Client entry points stay separate
 
