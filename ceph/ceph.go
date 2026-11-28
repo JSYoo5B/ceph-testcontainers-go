@@ -265,11 +265,12 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	}
 	ctx, cancel := context.WithTimeout(ctx, settings.startupTimeout)
 	defer cancel()
-	clock, err := loadClockInterposer(ctx, settings)
+	owner := uuid.NewString()
+	clock, err := loadClockInterposer(ctx, settings, owner)
 	if err != nil {
 		return nil, err
 	}
-	c, err := newCluster(ctx, settings)
+	c, err := newCluster(ctx, settings, owner)
 	if c != nil {
 		c.clock = clock
 	}
@@ -295,7 +296,7 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 // host network), its startup identity and its shared run directory. A
 // returned cluster owns whatever was created, also with an error, so that
 // Terminate removes it. Run is its only caller.
-func newCluster(ctx context.Context, settings options) (*Container, error) {
+func newCluster(ctx context.Context, settings options, owner string) (*Container, error) {
 	var err error
 	var nw *testcontainers.DockerNetwork
 	if settings.hostNetwork {
@@ -305,7 +306,6 @@ func newCluster(ctx context.Context, settings options) (*Container, error) {
 	} else {
 		nw, err = dockerbridge.NewFamily(ctx, settings.bridgeFamily())
 	}
-	owner := uuid.NewString()
 	c := &Container{settings: settings, nets: networkState{public: nw}, startup: newStartupIdentity(owner)}
 	if err != nil {
 		if nw == nil {

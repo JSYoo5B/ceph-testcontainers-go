@@ -208,11 +208,25 @@ func TestClockConfigRefusalWritesNothing(t *testing.T) {
 	}
 }
 
+// TestClockHelperContainerCarriesTheClusterLabel checks that the helper
+// container is labelled for the cluster that creates it.
+func TestClockHelperContainerCarriesTheClusterLabel(t *testing.T) {
+	req := testcontainers.GenericContainerRequest{}
+	for _, opt := range clockHelperRequest("owner-1") {
+		if err := opt.Customize(&req); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if req.Labels[clusterOwnerLabel] != "owner-1" || req.Started {
+		t.Fatalf("helper request labels = %v, started = %v", req.Labels, req.Started)
+	}
+}
+
 func TestClockHelperIsAdmittedBeforeAnythingStarts(t *testing.T) {
 	restore := clockHelperFiles
 	t.Cleanup(func() { clockHelperFiles = restore })
 	good := clockTestELF(elf.EM_X86_64, map[string]elf.SectionIndex{"clock_gettime": 1})
-	clockHelperFiles = func(context.Context, string) ([]byte, []byte, error) {
+	clockHelperFiles = func(context.Context, string, string) ([]byte, []byte, error) {
 		return clockTestManifest(t, good, func(m map[string]any) { m["interposer"].(map[string]any)["intercept_syscall"] = true }), good, nil
 	}
 	c, err := Run(t.Context(), DefaultImage, WithClockConfig(ClockConfig{}.WithHelperImage("helper:v1").WithMonitors("a")))
@@ -223,14 +237,14 @@ func TestClockHelperIsAdmittedBeforeAnythingStarts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	clockHelperFiles = func(context.Context, string) ([]byte, []byte, error) {
+	clockHelperFiles = func(context.Context, string, string) ([]byte, []byte, error) {
 		return clockTestManifest(t, good, nil), good, nil
 	}
-	state, err := loadClockInterposer(t.Context(), settings)
+	state, err := loadClockInterposer(t.Context(), settings, "owner")
 	if err != nil || !state.armed["a"] || !bytes.Equal(state.interposer, good) || state.identity.HelperImage != "helper:v1" {
 		t.Fatalf("admitted helper: %+v, %v", state.identity, err)
 	}
-	none, err := loadClockInterposer(t.Context(), options{})
+	none, err := loadClockInterposer(t.Context(), options{}, "owner")
 	if err != nil || none.interposer != nil || len(none.armed) != 0 || none.identity != (ClockInterposer{}) {
 		t.Fatalf("a cluster without a helper loaded one: %+v, %v", none, err)
 	}
