@@ -359,3 +359,42 @@ func TestAdminCrashHasNoErrno(t *testing.T) {
 		t.Fatalf("a failed radosgw-admin: %v", err)
 	}
 }
+
+// TestRedactionShowsOnlyEventsThatNameNoKeyObject is a table over the
+// classifier alone: which event texts are shown and what replaces the
+// others.
+func TestRedactionShowsOnlyEventsThatNameNoKeyObject(t *testing.T) {
+	const keyObject, unknown = "an event of a key object", "an event whose text may name an object"
+	r := newRedaction([]dumpEvent{
+		{client: "1", text: "_op_submit oid PRIVATEACCESSKEY '@5;users.keys' '@5;users.keys' [read 0~0] tid 7 osd.0"},
+		{client: "1", text: "_op_submit oid bucket.index '@3' '@3' [read 0~0] tid 8 osd.0"},
+	})
+	for _, c := range []struct{ client, text, want string }{
+		{"1", "_send_op 8 to 3.1 on osd.0", ""},
+		{"1", "tid 8 on osd.0 is laggy", ""},
+		{"1", "tick", ""},
+		{"1", "_op_submit oid bucket.index '@3' '@3' [read 0~0] tid 8 osd.0", ""},
+		{"1", "ms_dispatch2 0x osd_op_reply(8 bucket.index [read 0~0] v0'0 uv0 ondisk = 0)", ""},
+		{"1", "8\t3.1\tosd.0\tbucket.index\t[read 0~0]", ""},
+		// A key namespace, a key object's name or a key object's
+		// transaction is never shown.
+		{"1", "_op_submit oid OTHERKEY '@5;users.swift' '@5;users.swift' [read 0~0] tid 9 osd.0", keyObject},
+		{"1", "_calc_target epoch 5 base PRIVATEACCESSKEY @5;users.keys precalc_pgid 0", keyObject},
+		{"1", "laggy tid 2 for PRIVATEACCESSKEY", keyObject},
+		{"1", "ms_dispatch2 0x osd_op_reply(7 SOMEKEY [read 0~0] v0'0 uv0 ondisk = 0)", keyObject},
+		// A transaction of another client is another request.
+		{"2", "ms_dispatch2 0x osd_op_reply(8 bucket.index [read 0~0] v0'0 uv0 ondisk = 0)", "an event of request 8, which was submitted before these events"},
+		{"1", "ms_dispatch2 0x osd_op_reply(3 something [read 0~0] v0'0 uv0 ondisk = 0)", "an event of request 3, which was submitted before these events"},
+		// Any other shape may hold an object name.
+		{"1", "list_nobjects pool 3 nspace", unknown},
+		{"1", "handle_osd_backoff something", unknown},
+	} {
+		want := c.want
+		if want == "" {
+			want = c.text
+		}
+		if got := r.shown(dumpEvent{client: c.client, text: c.text}); got != want {
+			t.Errorf("%q: shown as %q, want %q", c.text, got, want)
+		}
+	}
+}
