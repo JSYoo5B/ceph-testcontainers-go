@@ -15,9 +15,9 @@ import (
 func mdsBaseline() cephfs.FilesystemStatus {
 	return cephfs.FilesystemStatus{
 		FilesystemName: "tc-cephfs", FilesystemID: 1, MaxMDS: 1,
-		Active:        []cephfs.MDSStatus{{Name: "a", Rank: 0, GID: 4100, State: "up:active", Owned: true}},
-		Standby:       []cephfs.MDSStatus{{Name: "b", Rank: -1, GID: 4200, State: "up:standby", Owned: true}},
-		StandbyReplay: []cephfs.MDSStatus{{Name: "c", Rank: 0, GID: 4300, State: "up:standby-replay", Owned: true}},
+		Active:        []cephfs.MDSDaemonStatus{{Name: "a", Rank: 0, GID: 4100, State: "up:active", Owned: true}},
+		Standby:       []cephfs.MDSDaemonStatus{{Name: "b", Rank: -1, GID: 4200, State: "up:standby", Owned: true}},
+		StandbyReplay: []cephfs.MDSDaemonStatus{{Name: "c", Rank: 0, GID: 4300, State: "up:standby-replay", Owned: true}},
 	}
 }
 
@@ -44,7 +44,7 @@ func TestMDSExpectationMatchesPinnedBaseline(t *testing.T) {
 func TestMDSExpectationStandbySelectorsRequireDistinctDaemons(t *testing.T) {
 	for _, replay := range []bool{false, true} {
 		observed := cephfs.FilesystemStatus{FilesystemName: "tc-cephfs", FilesystemID: 1, MaxMDS: 1}
-		list := []cephfs.MDSStatus{
+		list := []cephfs.MDSDaemonStatus{
 			{Name: "a", Rank: -1, GID: 7, State: "up:standby", Owned: true},
 			{Name: "b", Rank: -1, GID: 9, State: "up:standby", Owned: true},
 		}
@@ -85,12 +85,12 @@ func TestMDSExpectationStandbySelectorsRequireDistinctDaemons(t *testing.T) {
 func TestMDSExpectationReportsEachFieldFromTheEvaluatedObservation(t *testing.T) {
 	observed := cephfs.FilesystemStatus{
 		FilesystemName: "tc-cephfs", FilesystemID: 2, MaxMDS: 3,
-		Active: []cephfs.MDSStatus{
+		Active: []cephfs.MDSDaemonStatus{
 			{Name: "x", Rank: 0, GID: 4900, State: "up:active", Owned: false}, // an external daemon took rank 0
 			{Name: "d", Rank: 2, GID: 4400, State: "up:active", Owned: true},  // not selected
 		},
-		Standby:       []cephfs.MDSStatus{{Name: "b", Rank: -1, GID: 4201, State: "up:standby", Owned: true}}, // restarted
-		StandbyReplay: []cephfs.MDSStatus{{Name: "e", Rank: 0, GID: 4500, State: "up:standby-replay", Owned: true}},
+		Standby:       []cephfs.MDSDaemonStatus{{Name: "b", Rank: -1, GID: 4201, State: "up:standby", Owned: true}}, // restarted
+		StandbyReplay: []cephfs.MDSDaemonStatus{{Name: "e", Rank: 0, GID: 4500, State: "up:standby-replay", Owned: true}},
 	}
 	e := mdsPinned()
 	e.MaxMDS = 2
@@ -155,8 +155,8 @@ func TestMDSExpectationTakeoverAndRestartAreNotGIDs(t *testing.T) {
 	}
 	// The daemon a came back under its old GID: replaced in place it is not.
 	sameGID := cephfs.FilesystemStatus{FilesystemID: 1, MaxMDS: 1,
-		Active:  []cephfs.MDSStatus{{Name: "b", Rank: 0, GID: 4200, State: "up:active", Owned: true}},
-		Standby: []cephfs.MDSStatus{{Name: "a", Rank: -1, GID: 4100, State: "up:standby", Owned: true}}}
+		Active:  []cephfs.MDSDaemonStatus{{Name: "b", Rank: 0, GID: 4200, State: "up:active", Owned: true}},
+		Standby: []cephfs.MDSDaemonStatus{{Name: "a", Rank: -1, GID: 4100, State: "up:standby", Owned: true}}}
 	got, err = takeover.Evaluate(sameGID)
 	if err != nil || len(got.Mismatches) != 1 || got.Mismatches[0].Reason != MDSMismatchUnchanged || got.Mismatches[0].List != MDSListStandby {
 		t.Fatalf("restart under the old GID: %+v %v", got, err)
@@ -183,7 +183,7 @@ func TestMDSExpectationFilesystemIDPinsTheRecreatedFilesystem(t *testing.T) {
 }
 
 func TestMDSExpectationExactAndAllRanksActive(t *testing.T) {
-	twoRanks := cephfs.FilesystemStatus{FilesystemID: 1, MaxMDS: 2, Active: []cephfs.MDSStatus{
+	twoRanks := cephfs.FilesystemStatus{FilesystemID: 1, MaxMDS: 2, Active: []cephfs.MDSDaemonStatus{
 		{Name: "a", Rank: 0, GID: 4100, State: "up:active", Owned: true},
 		{Name: "b", Rank: 1, GID: 4200, State: "up:active", Owned: true},
 	}}
@@ -254,7 +254,7 @@ func TestMDSExpectationRefusesMalformedObservations(t *testing.T) {
 		"unowned standby":   func(s *cephfs.FilesystemStatus) { s.StandbyReplay[0].Owned = false },
 		"negative rank":     func(s *cephfs.FilesystemStatus) { s.Active[0].Rank = -1 },
 		"repeated rank": func(s *cephfs.FilesystemStatus) {
-			s.Active = append(s.Active, cephfs.MDSStatus{Name: "z", GID: 9, State: "up:active"})
+			s.Active = append(s.Active, cephfs.MDSDaemonStatus{Name: "z", GID: 9, State: "up:active"})
 		},
 		"name in two lists":  func(s *cephfs.FilesystemStatus) { s.Standby[0].Name = "a" },
 		"gid in two entries": func(s *cephfs.FilesystemStatus) { s.StandbyReplay[0].GID = 4200 },
