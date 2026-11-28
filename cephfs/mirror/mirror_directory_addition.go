@@ -158,9 +158,12 @@ func (r *DirectoryAddition) checkHandle(retained bool) error {
 
 // Observe only one strict native ls authority, bracketed with original peer/FS
 // identities. No watcher or daemon cohort is needed for policy registration.
+// Three passes read the same answer: a path read may invoke user transport
+// code, so local authority and the original native scope are confirmed again
+// before each read and once more before reporting or publishing success.
 func (r *DirectoryAddition) observe(ctx context.Context, retained bool) (bool, error) {
 	var before bool
-	for pass := 0; pass < 2; pass++ {
+	for pass := range 3 {
 		if err := r.checkHandle(retained); err != nil {
 			return false, err
 		}
@@ -180,25 +183,6 @@ func (r *DirectoryAddition) observe(ctx context.Context, retained bool) (bool, e
 		} else if current != before {
 			return false, cephFSObserveQuery("CephFS directory addition policy changed during observation", nil)
 		}
-	}
-	// The final path read may invoke user transport code; confirm local authority
-	// and original native scope again before reporting or publishing success.
-	if err := r.checkHandle(retained); err != nil {
-		return false, err
-	}
-	present, fsPresent, err := r.scope.policy(ctx)
-	if err != nil {
-		return false, err
-	}
-	if !present || !fsPresent {
-		return false, cephFSObserveGuard("CephFS directory addition original peer changed during observation")
-	}
-	after, err := r.pathPolicy(ctx)
-	if err != nil {
-		return false, err
-	}
-	if after != before {
-		return false, cephFSObserveQuery("CephFS directory addition policy changed during observation", nil)
 	}
 	if err := r.checkHandle(retained); err != nil {
 		return false, err
