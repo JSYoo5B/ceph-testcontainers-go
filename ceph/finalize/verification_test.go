@@ -19,6 +19,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/evidence"
 	"github.com/containerd/errdefs"
 	dockercontainer "github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/system"
@@ -548,7 +549,7 @@ func TestVerificationMatchesBeyondTheFindingText(t *testing.T) {
 func TestVerificationCutLineIsAGap(t *testing.T) {
 	fx := newVerifyFixture()
 	v := fx.activate(t)
-	fx.line("mon", 2*time.Minute, strings.Repeat("x", maxVerificationLine+16)+" log_channel(cluster) log [ERR] : lost")
+	fx.line("mon", 2*time.Minute, strings.Repeat("x", evidence.MaxLogLine+16)+" log_channel(cluster) log [ERR] : lost")
 	report := fx.evaluate(t, v)
 	if report.Logs.Outcome != VerificationIncomplete || !strings.Contains(gapReasons(report.Logs), "longer than") {
 		t.Fatalf("logs %s: %s", report.Logs.Outcome, gapReasons(report.Logs))
