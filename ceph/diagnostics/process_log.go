@@ -209,40 +209,13 @@ func processBoundary(text string) bool {
 	return processStartLine.MatchString(text) || processRespawnLine.MatchString(text)
 }
 
-// containerRun is a container's current run as one inspection reports it.
-type containerRun struct {
-	startedAt string
-	started   time.Time
-	running   bool
-	tty       bool
-	// rotates is set when the log driver can drop the oldest lines: any
-	// driver but json-file, or json-file with a max-size.
-	rotates bool
-}
-
-func inspectRun(ctx context.Context, docker diagnosticsDocker, id string) (containerRun, error) {
-	inspection, err := docker.ContainerInspect(ctx, id, dockerclient.ContainerInspectOptions{})
-	if err != nil {
-		return containerRun{}, err
+// inspectRun inspects a container's current run, which must have started.
+func inspectRun(ctx context.Context, docker diagnosticsDocker, id string) (evidence.ContainerRun, error) {
+	run, err := evidence.InspectRun(ctx, docker, id)
+	if err == nil && run.Started.IsZero() {
+		err = fmt.Errorf("the container has not started (start time %q)", run.StartedAt)
 	}
-	ctr := inspection.Container
-	var run containerRun
-	if ctr.State != nil {
-		run.startedAt, run.running = ctr.State.StartedAt, ctr.State.Running
-	}
-	started, err := time.Parse(time.RFC3339Nano, run.startedAt)
-	if err != nil || started.IsZero() || started.Year() < 2 {
-		return containerRun{}, fmt.Errorf("the container has not started (start time %q)", run.startedAt)
-	}
-	run.started = started.UTC()
-	if ctr.Config != nil {
-		run.tty = ctr.Config.Tty
-	}
-	if ctr.HostConfig != nil {
-		size := ctr.HostConfig.LogConfig.Config["max-size"]
-		run.rotates = ctr.HostConfig.LogConfig.Type != "json-file" || size != "" && size != "-1"
-	}
-	return run, nil
+	return run, err
 }
 
 // readProcessLog reads member's latest process log. keep selects the lines
@@ -255,7 +228,7 @@ func readProcessLog(ctx context.Context, docker diagnosticsDocker, member eviden
 		return nil, fmt.Errorf("inspect %s.%s: %w", member.Role, member.Name, err)
 	}
 	w := &logWindow{max: config.MaxBytes, process: true, keep: keep}
-	if err := streamLog(ctx, docker, id, before.started, before.tty, w.add); err != nil {
+	if err := streamLog(ctx, docker, id, before.Started, before.TTY, w.add); err != nil {
 		return nil, fmt.Errorf("read the log of %s.%s: %w", member.Role, member.Name, err)
 	}
 	after, err := inspectRun(ctx, docker, id)
@@ -263,10 +236,10 @@ func readProcessLog(ctx context.Context, docker diagnosticsDocker, member eviden
 		return nil, fmt.Errorf("inspect %s.%s again: %w", member.Role, member.Name, err)
 	}
 	result := &ProcessLog{LogSource: LogSource{Role: member.Role, Name: member.Name, ContainerID: id,
-		ContainerStartedAt: before.started, Running: before.running, Since: before.started}}
+		ContainerStartedAt: before.Started, Running: before.Running, Since: before.Started}}
 	lines := w.result(redact)
 	switch {
-	case after.startedAt != before.startedAt || after.running != before.running:
+	case after.StartedAt != before.StartedAt || after.Running != before.Running:
 		result.Status = LogChanged
 	case !w.started:
 		result.Status = LogStartNotFound

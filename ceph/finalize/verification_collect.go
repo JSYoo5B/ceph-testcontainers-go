@@ -12,7 +12,6 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics"
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/evidence"
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/evidencehook"
-	"github.com/containerd/errdefs"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -107,41 +106,16 @@ func dockerClock(ctx context.Context, docker verificationDocker, timeout time.Du
 }
 
 // inspectGeneration identifies a container's current generation. A removed
-// container returns errVerificationRemoved.
+// container returns evidence.ErrContainerRemoved.
 func inspectGeneration(ctx context.Context, docker verificationDocker, id string, timeout time.Duration) (*verificationGeneration, error) {
-	if id == "" {
-		return nil, errors.New("the container was not created")
-	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	inspection, err := docker.ContainerInspect(ctx, id, mobycl.ContainerInspectOptions{})
-	switch {
-	case errdefs.IsNotFound(err):
-		return nil, errVerificationRemoved
-	case err != nil || ctx.Err() != nil:
-		return nil, errors.Join(err, ctx.Err())
+	run, err := evidence.InspectRun(ctx, docker, id)
+	if err := errors.Join(err, ctx.Err()); err != nil {
+		return nil, err
 	}
-	ctr := inspection.Container
-	generation := &verificationGeneration{image: ctr.Image, restartCount: ctr.RestartCount}
-	if ctr.State != nil {
-		generation.startedAt, generation.state = ctr.State.StartedAt, string(ctr.State.Status)
-	}
-	if ctr.Config != nil {
-		generation.tty = ctr.Config.Tty
-	}
-	if ctr.HostConfig != nil {
-		generation.logDriver = ctr.HostConfig.LogConfig.Type
-		if size := ctr.HostConfig.LogConfig.Config["max-size"]; size != "" && size != "-1" {
-			generation.logRotation = size
-		}
-	}
-	if generation.startedAt == "" {
-		return nil, errors.New("the Docker engine reported no start time")
-	}
-	return generation, nil
+	return &verificationGeneration{run}, nil
 }
-
-var errVerificationRemoved = errors.New("the container was removed")
 
 // recordVerificationBaseline inspects the selected containers, reads their
 // crash directories and then reads the engine's clock, so that a crash
@@ -322,18 +296,15 @@ func (w verificationWindow) observeSource(ctx context.Context, target verificati
 		return nil
 	case !generation.same(target.generation):
 		reason := fmt.Sprintf("restarted since the activation (started %s, %d restarts; at activation %s, %d restarts); only the selected generation is covered",
-			generation.startedAt, generation.restartCount, target.generation.startedAt, target.generation.restartCount)
+			generation.StartedAt, generation.RestartCount, target.generation.StartedAt, target.generation.RestartCount)
 		w.logGap(target.source, reason)
 		w.crashGap(target.source, reason)
 		return nil
 	}
-	source.State = generation.state
-	switch {
-	case generation.logDriver != "json-file":
-		w.logGap(target.source, fmt.Sprintf("log driver %q is not covered; only json-file without rotation is", generation.logDriver))
-	case generation.logRotation != "":
-		w.logGap(target.source, fmt.Sprintf("the json-file driver rotates at max-size %s and can drop lines", generation.logRotation))
-	default:
+	source.State = generation.State
+	if loss := generation.LogLoss(); loss != "" {
+		w.logGap(target.source, loss)
+	} else {
 		var keep func(verificationLogLine)
 		if w.config.ArchiveLogs {
 			keep = func(line verificationLogLine) {
@@ -341,7 +312,7 @@ func (w verificationWindow) observeSource(ctx context.Context, target verificati
 				w.o.lines = append(w.o.lines, line)
 			}
 		}
-		read, lines, err := readVerificationLogs(ctx, w.docker, target, generation.tty, w.baseline.start, w.o.end, w.config, evidence.LogLineRedactor(w.secrets, w.redact), func(e verificationEvent) {
+		read, lines, err := readVerificationLogs(ctx, w.docker, target, generation.TTY, w.baseline.start, w.o.end, w.config, evidence.LogLineRedactor(w.secrets, w.redact), func(e verificationEvent) {
 			w.o.logs = append(w.o.logs, e)
 		}, keep)
 		source.LogBytes, source.LogLines = read, lines
@@ -366,7 +337,7 @@ func confirmVerificationGeneration(ctx context.Context, docker verificationDocke
 		return err
 	}
 	if !generation.same(target.generation) {
-		return fmt.Errorf("container generation changed during evidence collection (started %s, %d restarts; at activation %s, %d restarts)", generation.startedAt, generation.restartCount, target.generation.startedAt, target.generation.restartCount)
+		return fmt.Errorf("container generation changed during evidence collection (started %s, %d restarts; at activation %s, %d restarts)", generation.StartedAt, generation.RestartCount, target.generation.StartedAt, target.generation.RestartCount)
 	}
 	return nil
 }
@@ -377,8 +348,8 @@ func (w verificationWindow) sourceOf(target verificationTarget) VerificationSour
 	source := VerificationSource{Source: target.source, Role: target.Role, Name: target.Name, ContainerID: target.id, BaselineCrashes: []string{}}
 	source.Role, source.Name, source.Source = w.redact(source.Role), w.redact(source.Name), w.redact(source.Source)
 	if target.generation != nil {
-		source.ImageID, source.StartedAt, source.RestartCount = target.generation.image, target.generation.startedAt, target.generation.restartCount
-		source.LogDriver = target.generation.logDriver
+		source.ImageID, source.StartedAt, source.RestartCount = target.generation.Image, target.generation.StartedAt, target.generation.RestartCount
+		source.LogDriver = target.generation.LogDriver
 	}
 	for id := range target.crashes {
 		source.BaselineCrashes = append(source.BaselineCrashes, w.redact(id))

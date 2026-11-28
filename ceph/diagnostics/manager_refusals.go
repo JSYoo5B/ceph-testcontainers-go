@@ -124,16 +124,16 @@ func readMonitorRefusals(ctx context.Context, docker diagnosticsDocker, member e
 	if err != nil {
 		return MonitorRefusals{}, fmt.Errorf("inspect mon.%s: %w", member.Name, err)
 	}
-	source := LogSource{Role: member.Role, Name: member.Name, ContainerID: id, ContainerStartedAt: run.started, Running: run.running, Since: process.Since}
+	source := LogSource{Role: member.Role, Name: member.Name, ContainerID: id, ContainerStartedAt: run.Started, Running: run.Running, Since: process.Since}
 	w := &logWindow{max: config.MaxBytes, keep: func(text string) bool {
 		_, ok := monitorRefusal(text, entity)
 		return ok
 	}}
-	if err := streamLog(ctx, docker, id, process.Since, run.tty, w.add); err != nil {
+	if err := streamLog(ctx, docker, id, process.Since, run.TTY, w.add); err != nil {
 		return MonitorRefusals{}, fmt.Errorf("read the log of mon.%s: %w", member.Name, err)
 	}
 	switch {
-	case process.Start.Text == "" || run.rotates:
+	case process.Start.Text == "" || run.LogLoss() != "":
 		source.Status = LogStartNotFound
 	case w.truncated():
 		source.Status = LogTruncated

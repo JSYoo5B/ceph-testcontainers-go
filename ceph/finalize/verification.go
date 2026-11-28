@@ -783,16 +783,15 @@ type verificationTarget struct {
 	crashes map[string]bool
 }
 
+// verificationGeneration is the run of a container that a verification
+// selected; it is the same generation as long as its start time and
+// restart count are.
 type verificationGeneration struct {
-	image, startedAt, state string
-	restartCount            int
-	tty                     bool
-	logDriver               string
-	logRotation             string
+	evidence.ContainerRun
 }
 
 func (g *verificationGeneration) same(other *verificationGeneration) bool {
-	return g != nil && other != nil && g.startedAt == other.startedAt && g.restartCount == other.restartCount
+	return g != nil && other != nil && g.StartedAt == other.StartedAt && g.RestartCount == other.RestartCount
 }
 
 // verificationObservation is what one evaluation observed.
