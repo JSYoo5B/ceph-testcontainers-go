@@ -7,6 +7,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -19,6 +20,9 @@ type metadataCaptureControl struct {
 }
 
 func (c *metadataCaptureControl) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if clustertest.Supervised(args) {
+		return clustertest.Supervise(ctx, args, opts, c.Exec)
+	}
 	a := args
 	if len(a) > 3 && a[0] == "ceph" && a[1] == "--connect-timeout" {
 		a = a[3:]

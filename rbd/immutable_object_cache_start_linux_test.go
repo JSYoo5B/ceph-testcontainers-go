@@ -279,12 +279,15 @@ type delayedCacheReservation struct {
 func (c *delayedCacheReservation) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
 	switch args[2] {
 	case supervised.Script:
-		if args[10] != c.delay || c.saved != nil {
-			return c.fakeCacheClient.Exec(ctx, args, opts...)
+		if args[10] == c.delay && c.saved == nil {
+			c.saved = append([]string(nil), args...)
+			c.marker = filepath.Join(c.root, filepath.Base(clustertest.ExecEnv(opts, supervised.MarkerVariable)))
+			return 0, nil, context.Canceled
 		}
-		c.saved = append([]string(nil), args...)
-		c.marker = filepath.Join(c.root, filepath.Base(clustertest.ExecEnv(opts, supervised.MarkerVariable)))
-		return 0, nil, context.Canceled
+		if args[10] == "inspect" || args[10] == "release-reservation" || args[10] == "forget-reservation" || args[10] == "unclaim" {
+			return clustertest.Supervise(ctx, args, opts, c.Exec)
+		}
+		return c.fakeCacheClient.Exec(ctx, args, opts...)
 	case supervised.CancelScript:
 		if c.failCancel {
 			c.failCancel = false

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -48,6 +49,9 @@ func (control *cephFSRefreshControl) CopyToContainer(ctx context.Context, data [
 }
 
 func (control *cephFSRefreshControl) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if clustertest.Supervised(args) {
+		return clustertest.Supervise(ctx, args, opts, control.Exec)
+	}
 	if err := ctx.Err(); err != nil {
 		return 0, nil, err
 	}

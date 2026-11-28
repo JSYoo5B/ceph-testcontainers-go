@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -140,29 +139,17 @@ func CommandArgs(scope NativeScope, args ...string) []string {
 	return append(argv, args...)
 }
 
-// SupervisedCommand runs radosgw-admin in the exact native scope and returns
-// a NativeCommandUnstoppedError when the process may still run after dispatch.
-func (c *Core) SupervisedCommand(ctx context.Context, scope NativeScope, args ...string) ([]byte, error) {
-	return c.supervised(ctx, c.Container(), CommandArgs(scope, args...))
-}
-
 // Command runs radosgw-admin in the gateway container in the exact native
-// scope. A failure is redacted. It is called with the owning cluster's mutex
-// held.
+// scope, as AdminCommand does: supervised, with a redacted failure. It is
+// called with the owning cluster's mutex held.
 func (c *Core) Command(ctx context.Context, scope NativeScope, args ...string) ([]byte, error) {
 	return c.CommandIn(ctx, c.Container(), scope, args...)
 }
 
-// CommandIn executes the exact-scope command through an admitted admin container.
+// CommandIn runs the exact-scope command as Command does, in target, an
+// admitted admin container.
 func (c *Core) CommandIn(ctx context.Context, target testcontainers.Container, scope NativeScope, args ...string) ([]byte, error) {
-	data, err := servicehook.Command(ctx, target, CommandArgs(scope, args...)...)
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, fmt.Errorf("RGW admin command: %w", ctx.Err())
-		}
-		return nil, clusterutil.Quiet(errors.New("RGW admin command failed; native output is redacted"), err)
-	}
-	return data, nil
+	return c.supervised(ctx, target, CommandArgs(scope, args...))
 }
 
 // DecodeObject decodes one native JSON object with numbers preserved and

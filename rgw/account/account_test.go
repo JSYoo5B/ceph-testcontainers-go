@@ -91,7 +91,7 @@ func TestAccountFreshQuotaAndNonpurgeLifecycle(t *testing.T) {
 	}
 	f.FailRemove = true
 	var refusal *ceph.NativeFailure
-	if err := a.Remove(t.Context()); !errors.As(err, &refusal) || refusal.ExitCode != 13 || refusal.Reason != "" || err.Error() != "RGW admin command failed; native output is redacted" {
+	if err := a.Remove(t.Context()); !errors.As(err, &refusal) || refusal.ExitCode != 13 || refusal.Reason != "" || err.Error() != "radosgw-admin exited 13; native output is redacted" {
 		t.Fatalf("nonempty account removal returned %v, want a redacted admin command failure", err)
 	}
 	if _, err := ownedRoot(t, g, root); err != nil {

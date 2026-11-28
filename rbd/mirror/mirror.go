@@ -436,7 +436,7 @@ func (m *Container) AddDaemon(ctx context.Context, name string, opts ...testcont
 	var daemon *Daemon
 	if ctr != nil {
 		daemon = &Daemon{Container: ctr, DaemonName: name, ClientName: clientName, owner: m, receiverHandle: ctr, receiverContainerID: ctr.GetContainerID(), receiverClientName: clientName, receiverDaemonName: name, receiverStartupConfirmed: err == nil}
-		m.owned.AddContainer(daemon)
+		m.owned.AddOwned(daemon, m.pair.config.Destination, ctr)
 		if m.roster.add(daemon) {
 			m.Container = daemon
 		}
@@ -693,6 +693,15 @@ func matchingRBDMirrorPeer(info []byte, site, fsid, mirrorUUID string) (rbdMirro
 // SourceRBD executes the RBD CLI in this link's source setup client. Arguments
 // are passed without shell interpolation; use --format json for state queries.
 //
+// The command runs under the process supervisor that RunNativeCommand uses.
+// The supervisor stops it shortly before ctx's deadline, and keeps at most
+// 16 MiB of its standard output; a command that it stopped or that wrote more
+// returns an error that wraps ceph.ErrNativeCommandIncomplete. A nonzero exit
+// is a *ceph.NativeFailure. A call whose ctx ends stops the command before it
+// returns, and a stop that cannot be confirmed returns a
+// *ceph.NativeCommandUnstoppedError, whose Stop retries it, as does Terminate
+// of the source cluster.
+//
 //purpose:native
 func (m *Container) SourceRBD(ctx context.Context, args ...string) ([]byte, error) {
 	if m == nil {
@@ -703,6 +712,8 @@ func (m *Container) SourceRBD(ctx context.Context, args ...string) ([]byte, erro
 
 // DestinationRBD executes the RBD CLI in the destination setup client. It can
 // promote/demote images, request resync, and inspect or remove explicit peers.
+// It has the stop and limit contract of SourceRBD; Terminate of the
+// destination cluster retries an unconfirmed stop.
 //
 //purpose:native
 func (m *Container) DestinationRBD(ctx context.Context, args ...string) ([]byte, error) {

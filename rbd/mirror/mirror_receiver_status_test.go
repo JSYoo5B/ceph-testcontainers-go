@@ -45,7 +45,10 @@ type receiverTestClient struct {
 	imageCalls int
 }
 
-func (c *receiverTestClient) Exec(ctx context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+func (c *receiverTestClient) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if clustertest.Supervised(args) {
+		return clustertest.Supervise(ctx, args, opts, c.Exec)
+	}
 	c.calls = append(c.calls, slices.Clone(args))
 	if c.hook != nil {
 		c.hook(ctx, args)
@@ -136,7 +139,10 @@ func (d *receiverTestDaemon) State(ctx context.Context) (*container.State, error
 	state := d.state
 	return &state, nil
 }
-func (d *receiverTestDaemon) Exec(ctx context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+func (d *receiverTestDaemon) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if clustertest.Supervised(args) {
+		return clustertest.Supervise(ctx, args, opts, d.Exec)
+	}
 	d.statusCalls++
 	if d.hook != nil {
 		d.hook(ctx, d.statusCalls)

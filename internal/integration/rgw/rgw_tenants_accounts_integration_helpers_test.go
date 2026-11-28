@@ -205,7 +205,7 @@ func testRGWTenantsAndAccounts(t *testing.T, options ...testcontainers.Container
 	}
 	rgwAccountWaitAggregateQuotaDenied(t, ctx, gateway, owned, rootClients[1], accountBucketB)
 	var refusal *ceph.NativeFailure
-	if err := owned.Remove(ctx); !errors.As(err, &refusal) || refusal.ExitCode == 0 || refusal.Reason != "" || err.Error() != "RGW admin command failed; native output is redacted" {
+	if err := owned.Remove(ctx); !errors.As(err, &refusal) || refusal.ExitCode == 0 || refusal.Reason != "" || refusal.Errno != "ENOTEMPTY" || !strings.HasSuffix(err.Error(), "; native output is redacted") {
 		t.Fatalf("nonempty account removal returned %v", err)
 	}
 	if actual := rootClients[0].Request(t, ctx, http.MethodGet, accountBucketA+"/one", nil, http.StatusOK); !bytes.Equal(actual, accountPayload) {

@@ -6,12 +6,14 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"io"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
@@ -145,7 +147,10 @@ type rgwLifecycleCLI struct {
 	terminateError     error
 }
 
-func (c *rgwLifecycleCLI) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+func (c *rgwLifecycleCLI) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if clustertest.Supervised(args) {
+		return clustertest.Supervise(ctx, args, opts, c.Exec)
+	}
 	c.calls = append(c.calls, slices.Clone(args))
 	cmd := strings.Join(args, " ")
 	data := ""

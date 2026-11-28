@@ -7,13 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"io"
 	"reflect"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/moby/moby/api/pkg/stdcopy"
@@ -88,7 +89,10 @@ func syncTestCommand(args []string, words ...string) bool {
 	}
 	return false
 }
-func (c *rgwSyncCLI) Exec(ctx context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+func (c *rgwSyncCLI) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if clustertest.Supervised(args) {
+		return clustertest.Supervise(ctx, args, opts, c.Exec)
+	}
 	if c.onExec != nil {
 		c.onExec(ctx, args)
 	}

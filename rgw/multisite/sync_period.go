@@ -1,14 +1,13 @@
 package multisite
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"reflect"
 	"time"
 
-	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
 )
 
 // Apply publishes only this owned zonegroup policy change, pulls the
@@ -180,39 +179,14 @@ func (f *Fixture) importSyncPeriod(ctx context.Context, master *rgwZoneState, st
 	return nil
 }
 
-// Get the exact native staging object. errno 2 with empty stdout denotes a
-// missing object; malformed output and all other failures remain failures.
+// syncStagingPeriod reads the realm's staging period in the master zone's CLI
+// client, nil when there is none, as gwbase.StagingPeriod does.
 func (f *Fixture) syncStagingPeriod(ctx context.Context, master *rgwZoneState) (map[string]any, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	id := f.RealmID + ":staging"
-	argv := []string{"radosgw-admin", "--conf", "/etc/ceph/ceph.conf", "--keyring", "/etc/ceph/ceph.client.admin.keyring",
-		"--realm-id", f.RealmID, "--zonegroup-id", f.topology.groupIDs[master.Zonegroup], "--zone-id", master.ID,
-		"--format", "json", "period", "get", "--period", id, "--epoch", "1"}
-	code, reader, err := master.client.Exec(ctx, argv)
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		return nil, errors.New("RGW staging read failed; output is redacted")
-	}
-	var stdout, stderr bytes.Buffer
-	if _, err := stdcopy.StdCopy(&stdout, &stderr, reader); err != nil {
-		return nil, errors.New("RGW staging stream failed; output is redacted")
-	}
-	if code == 2 && stdout.Len() == 0 {
-		return nil, nil
-	}
-	if code != 0 {
-		return nil, errors.New("RGW staging read failed; output is redacted")
-	}
-	period, err := syncJSON(stdout.Bytes())
-	if err != nil {
-		return nil, err
-	}
-	if period["id"] != id || period["realm_id"] != f.RealmID {
-		return nil, errors.New("RGW staging native realm identity differs")
-	}
-	return period, nil
+	return gwbase.StagingPeriod(ctx, nil, master.client, f.zoneScope(master, master.Zonegroup))
+}
+
+// zoneScope is the native scope, by IDs, of zone in zonegroup group of the
+// fixture's realm.
+func (f *Fixture) zoneScope(zone *rgwZoneState, group string) gwbase.NativeScope {
+	return gwbase.NativeScope{RealmID: f.RealmID, GroupID: f.topology.groupIDs[group], ZoneID: zone.ID}
 }

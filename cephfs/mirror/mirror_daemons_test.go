@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
@@ -396,7 +397,10 @@ type cephFSMirrorNativeControlFake struct {
 
 func (control *cephFSMirrorNativeControlFake) IsRunning() bool        { return true }
 func (control *cephFSMirrorNativeControlFake) GetContainerID() string { return "native-control" }
-func (control *cephFSMirrorNativeControlFake) Exec(ctx context.Context, arguments []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+func (control *cephFSMirrorNativeControlFake) Exec(ctx context.Context, arguments []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if clustertest.Supervised(arguments) {
+		return clustertest.Supervise(ctx, arguments, opts, control.Exec)
+	}
 	if err := ctx.Err(); err != nil {
 		return 0, nil, err
 	}

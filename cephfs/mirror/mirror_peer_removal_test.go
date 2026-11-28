@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
@@ -44,7 +45,10 @@ type peerRemovalControlFake struct {
 	hook                        func(*peerRemovalControlFake, []string)
 }
 
-func (f *peerRemovalControlFake) Exec(ctx context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+func (f *peerRemovalControlFake) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if clustertest.Supervised(args) {
+		return clustertest.Supervise(ctx, args, opts, f.Exec)
+	}
 	if err := ctx.Err(); err != nil {
 		return 0, nil, err
 	}
@@ -120,7 +124,10 @@ func (f *peerRemovalDaemonFake) Terminate(context.Context, ...testcontainers.Ter
 	f.terminated++
 	return nil
 }
-func (f *peerRemovalDaemonFake) Exec(ctx context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+func (f *peerRemovalDaemonFake) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if clustertest.Supervised(args) {
+		return clustertest.Supervise(ctx, args, opts, f.Exec)
+	}
 	if err := ctx.Err(); err != nil {
 		return 0, nil, err
 	}

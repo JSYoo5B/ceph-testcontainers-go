@@ -31,7 +31,10 @@ type rgwScriptCLI struct {
 	ops     []string
 }
 
-func (c *rgwScriptCLI) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+func (c *rgwScriptCLI) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if clustertest.Supervised(args) {
+		return clustertest.Supervise(ctx, args, opts, c.Exec)
+	}
 	op := strings.Join(args, " ")
 	if i := slices.Index(args, "--osd-pool-default-pgp-num"); i >= 0 && i+2 <= len(args) {
 		op = strings.Join(args[i+2:], " ")

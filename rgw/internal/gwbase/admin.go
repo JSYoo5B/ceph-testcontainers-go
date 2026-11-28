@@ -8,11 +8,11 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"time"
 	"unicode"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/testcontainers/testcontainers-go"
@@ -64,24 +64,12 @@ func ValidateAdminArgs(args []string) error {
 	return nil
 }
 
-// RedactAdminFailure hides the native output of a failed radosgw-admin
-// command, which can include secret keys, and keeps the classification of err,
-// including the *ceph.NativeFailure exit code and errno, which its text also
-// names. When the command reported a fatal signal, the text also names the
-// signal, the thread and the first backtrace frames, read from the
-// already redacted and bounded Reason, and the failure has no errno. Other errors are returned unchanged.
-func RedactAdminFailure(err error) error {
-	var failure *ceph.NativeFailure
-	if !errors.As(err, &failure) {
-		return err
-	}
-	reason, cut := strings.CutSuffix(failure.Reason, "...")
-	return redactAdminFailure(err, failure, fatalSignalReport(strings.Split(reason, "; "), cut))
-}
-
-// adminRunFailure describes a radosgw-admin run that exited nonzero as
-// RedactAdminFailure does, reading a fatal signal report from its whole
-// standard error. With such a report it also describes the shape of its
+// adminRunFailure describes a radosgw-admin run that exited nonzero without
+// its native output, which can include secret keys: the *ceph.NativeFailure
+// exit code and errno, which its text also names. When the command reported
+// a fatal signal, read from its whole standard error, the text also names the
+// signal, the thread and the first backtrace frames, and the failure has no
+// errno. With such a report it also describes the shape of its
 // standard output, but never its content, which tells a command that crashed
 // after it wrote its result from one that crashed before, and what the
 // crashed thread had asked of RADOS (eventReport).
@@ -91,7 +79,7 @@ func adminRunFailure(report supervised.Report) error {
 	if !errors.As(err, &failure) {
 		return err
 	}
-	crash := fatalSignalReport(strings.Split(string(report.Stderr), "\n"), false)
+	crash := fatalSignalReport(strings.Split(string(report.Stderr), "\n"))
 	output, events := "", ""
 	if crash != "" {
 		output, events = adminOutputShape(report.Stdout, report.StdoutTruncated), eventReport(report.Stderr)
@@ -123,7 +111,6 @@ func redactAdminFailure(err error, failure *ceph.NativeFailure, details ...strin
 var (
 	fatalSignalHeader = regexp.MustCompile(`^\*\*\* Caught signal \(([A-Za-z][A-Za-z -]{0,39})\) \*\*$`)
 	fatalSignalThread = regexp.MustCompile(`^in thread [0-9a-fx]{1,18} thread_name:([!-~]{1,15})$`)
-	frameNumber       = regexp.MustCompile(`^\d{1,3}(?::|$)`)
 	backtraceFrame    = regexp.MustCompile(`^\d{1,3}: ([ -~]+?)(?: \[0x[0-9a-f]{1,16}\])?$`)
 	symbolFrame       = regexp.MustCompile(`^\(([ -~]+)\+(0x[0-9a-f]{1,16})\)$`)
 	fileFrame         = regexp.MustCompile(`^(?:/[!-~]*/)?([!-'*-.0-~]+\([!-'*-.0-~]*\+0x[0-9a-f]{1,16}\))$`)
@@ -135,7 +122,7 @@ var (
 )
 
 // incompleteFrame stands for a frame that is not one of the complete shapes,
-// as the end of a bounded Reason can be, and ends the backtrace.
+// as a line that stderr's end cut short can be, and ends the backtrace.
 const incompleteFrame = "an incomplete frame"
 
 const (
@@ -145,11 +132,6 @@ const (
 	// command that waits for RADOS spends about eight frames in the C
 	// library and librados before the first RGW function.
 	maxStopFrames = 16
-	// stopSignal is the signal that stops a command at the supervisor's own
-	// limit, SIGABRT: Ceph's handler of it writes the fatal signal report of
-	// the thread that took it, the main thread of a Ceph command, whose
-	// other threads block signals.
-	stopSignal = 6
 	// maxFrameBytes bounds one frame.
 	maxFrameBytes = 120
 	// maxFrameGap is how many lines (the thread, the version and blank
@@ -161,10 +143,9 @@ const (
 // signal, the thread and at most maxSignalFrames frames, each a function name
 // with its offset, a file name with its offset or a bare symbol, never an
 // address, a directory or an argument list. It returns "" when lines hold no
-// report. Frames are names from the binary, not data of the request. When cut
-// is true the last line was cut short, and a frame there is incomplete.
-func fatalSignalReport(lines []string, cut bool) string {
-	report, ok := parseSignalReport(lines, cut, maxSignalFrames)
+// report. Frames are names from the binary, not data of the request.
+func fatalSignalReport(lines []string) string {
+	report, ok := parseSignalReport(lines, maxSignalFrames)
 	if !ok {
 		return ""
 	}
@@ -178,20 +159,21 @@ func fatalSignalReport(lines []string, cut bool) string {
 	return text + ", backtrace " + report.backtrace()
 }
 
-// stopReport says where a command that the supervisor stopped with stopSignal
-// was: the thread that took the signal and its first frames, read from the
+// stopReport says where a command that the supervisor stopped with
+// multicluster.DeadlineSignal was: the thread that took the signal and its
+// first frames, read from the
 // fatal signal report in the command's standard error as fatalSignalReport
 // reads it. It returns "" when stderr holds no report with a backtrace, as
 // for a command that the signal could not reach in time. A report of another
 // signal is of a crash that the stop found, and is described as one.
 func stopReport(stderr []byte) string {
 	lines := strings.Split(string(stderr), "\n")
-	report, ok := parseSignalReport(lines, false, maxStopFrames)
+	report, ok := parseSignalReport(lines, maxStopFrames)
 	switch {
 	case !ok:
 		return ""
 	case report.signal != "Aborted":
-		return fatalSignalReport(lines, false)
+		return fatalSignalReport(lines)
 	case len(report.frames) == 0:
 		return ""
 	}
@@ -219,7 +201,7 @@ func (r signalReport) backtrace() string {
 
 // parseSignalReport reads the first fatal signal report in lines, keeping at
 // most maxFrames frames, under the rules of fatalSignalReport.
-func parseSignalReport(lines []string, cut bool, maxFrames int) (signalReport, bool) {
+func parseSignalReport(lines []string, maxFrames int) (signalReport, bool) {
 	start := -1
 	signal := ""
 	for i, line := range lines {
@@ -237,12 +219,6 @@ func parseSignalReport(lines []string, cut bool, maxFrames int) (signalReport, b
 	for i := start + 1; i < len(lines); i++ {
 		line := strings.TrimSpace(lines[i])
 		if len(frames) == 0 && i-start > maxFrameGap {
-			break
-		}
-		if cut && i == len(lines)-1 {
-			if (len(frames) > 0 || frameNumber.MatchString(line)) && len(frames) < maxFrames {
-				frames = append(frames, incompleteFrame)
-			}
 			break
 		}
 		if match := backtraceFrame.FindStringSubmatch(line); match != nil {
@@ -378,25 +354,44 @@ func (c *Core) supervisedPrefix(ctx context.Context, target testcontainers.Conta
 	if servicehook.DiagnosticHandle(target) == nil {
 		return nil, false, servicehook.Invalid(errors.New("RGW gateway is no longer owned by this cluster"))
 	}
-	limit := adminLimit(ctx)
-	report, err := servicehook.RunOwnedRoleCommand(supervised.WithDeadlineSignal(ctx, stopSignal), c.cluster, target, "radosgw-admin", limit, maxBytes, diagnosticArgv(argv)...)
-	var unstopped *ceph.NativeCommandUnstoppedError
+	return AdminPrefix(ctx, c.cluster, target, maxBytes, argv)
+}
+
+// RunAdmin runs the scoped radosgw-admin command line argv, from AdminArgv
+// or CommandArgs, in target, a gateway of owner or a setup client that a
+// fixture recorded for owner, through multicluster.Run: the supervisor stops
+// it with multicluster.DeadlineSignal at multicluster.Limit(ctx), when ctx
+// ends first it is stopped before RunAdmin returns, and a stop that cannot be
+// confirmed returns a *ceph.NativeCommandUnstoppedError. It keeps at most
+// maxBytes bytes of standard output (0 for all). The report is returned for
+// a caller that classifies the exit status itself, and never in an error.
+func RunAdmin(ctx context.Context, owner *ceph.Container, target testcontainers.Container, maxBytes int, argv []string) (supervised.Report, int, error) {
+	limit := multicluster.Limit(ctx)
+	report, err := multicluster.Run(ctx, multicluster.Command{Owner: owner, Target: target, Label: "radosgw-admin", StdoutLimit: maxBytes, Limit: limit, Argv: diagnosticArgv(argv)})
+	return report, limit, err
+}
+
+// AdminPrefix runs argv as RunAdmin does and returns its standard output and
+// whether it wrote more than maxBytes. A command that the supervisor stopped
+// is an ErrNativeFailure that says where it was, and a nonzero exit is
+// reported by adminRunFailure, without the native output.
+func AdminPrefix(ctx context.Context, owner *ceph.Container, target testcontainers.Container, maxBytes int, argv []string) ([]byte, bool, error) {
+	report, limit, err := RunAdmin(ctx, owner, target, maxBytes, argv)
+	if err != nil {
+		return nil, false, err
+	}
+	if err := AdminReportFailure(report, limit); err != nil {
+		return nil, false, err
+	}
+	return report.Stdout, report.StdoutTruncated, nil
+}
+
+// AdminReportFailure classifies a RunAdmin report with limit seconds, as
+// AdminPrefix does: nil for a command that exited 0, an ErrNativeFailure that
+// says where it was for one that the supervisor stopped, and adminRunFailure
+// for a nonzero exit.
+func AdminReportFailure(report supervised.Report, limit int) error {
 	switch {
-	case errors.As(err, &unstopped):
-		// Its Stop, or Terminate, confirms the stop later.
-		return nil, false, err
-	case err != nil && ctx.Err() != nil:
-		return nil, false, fmt.Errorf("radosgw-admin: the call ended before the command, which was stopped: %w", ctx.Err())
-	case errors.Is(err, ceph.ErrImageCapability):
-		return nil, false, err
-	case err != nil:
-		var exit *supervised.ExitError
-		if errors.As(err, &exit) && exit.Code == supervised.LaunchFailedExit {
-			return nil, false, &ceph.OperationError{Kind: ceph.ErrImageCapability, Op: "radosgw-admin", Capability: "radosgw-admin",
-				Err: errors.New("the gateway image cannot run radosgw-admin")}
-		}
-		// The command may have run: its outcome is unknown.
-		return nil, false, servicehook.ClassifyExec(ctx, err)
 	case report.TimedOut:
 		text := fmt.Sprintf("radosgw-admin still ran after %ds and was stopped", limit)
 		for _, detail := range []string{stopReport(report.Stderr), eventReport(report.Stderr)} {
@@ -404,27 +399,37 @@ func (c *Core) supervisedPrefix(ctx context.Context, target testcontainers.Conta
 				text += "; " + detail
 			}
 		}
-		return nil, false, &ceph.OperationError{Kind: ceph.ErrNativeFailure, Op: "radosgw-admin", Err: errors.New(text)}
+		return &ceph.OperationError{Kind: ceph.ErrNativeFailure, Op: "radosgw-admin", Err: errors.New(text)}
 	case report.ExitCode != 0:
-		return nil, false, adminRunFailure(report)
+		return adminRunFailure(report)
 	}
-	return report.Stdout, report.StdoutTruncated, nil
+	return nil
 }
 
-// adminLimit is how long radosgw-admin may run before the gateway's
-// supervisor stops it on its own: the call's bound less a margin for stopping
-// it and returning, so that a command that runs too long is reported as such,
-// with where it was (stopReport), within the bound. Without a bound, it is 0. A call whose context ends first
-// stops the command itself.
-func adminLimit(ctx context.Context) int {
-	deadline, ok := ctx.Deadline()
-	if !ok {
-		return 0
+// StagingPeriod reads the staging period of scope's realm, the exact object
+// <realm ID>:staging at epoch 1, which avoids a separate latest-epoch lookup,
+// in target as RunAdmin does. It returns nil when there is none: radosgw-admin
+// exits 2, with no output, only for a missing object. Every other failure is
+// a failure, never an empty staging area, and is reported as by AdminPrefix,
+// without the native output. A period of another realm is refused.
+func StagingPeriod(ctx context.Context, owner *ceph.Container, target testcontainers.Container, scope NativeScope) (map[string]any, error) {
+	id := scope.RealmID + ":staging"
+	report, limit, err := RunAdmin(ctx, owner, target, 0, CommandArgs(scope, "period", "get", "--period", id, "--epoch", "1"))
+	if err != nil {
+		return nil, err
 	}
-	remaining := time.Until(deadline)
-	limit := remaining - 15*time.Second
-	if limit < remaining/2 {
-		limit = remaining / 2
+	if !report.TimedOut && report.ExitCode == 2 && len(report.Stdout) == 0 {
+		return nil, nil
 	}
-	return max(1, int(limit/time.Second))
+	if err := AdminReportFailure(report, limit); err != nil {
+		return nil, err
+	}
+	period, err := DecodeObject(report.Stdout)
+	if err != nil {
+		return nil, err
+	}
+	if period["id"] != id || period["realm_id"] != scope.RealmID {
+		return nil, errors.New("RGW staging period identity differs from the owned realm")
+	}
+	return period, nil
 }

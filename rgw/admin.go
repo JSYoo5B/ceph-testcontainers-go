@@ -493,7 +493,7 @@ func (u *User) Remove(ctx context.Context) error {
 	if _, err := g.OwnedUser(ctx, user); err != nil {
 		return err
 	}
-	_, commandErr := g.SupervisedUserCommand(ctx, user, "user", "rm", "--uid", user.ID)
+	_, commandErr := g.UserCommand(ctx, user, "user", "rm", "--uid", user.ID)
 	if errors.As(commandErr, &user.State.UnstoppedRemove) {
 		return commandErr
 	}

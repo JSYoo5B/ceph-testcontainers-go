@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/mutation"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -24,7 +25,12 @@ type syncWriterBoundary struct {
 	calls         atomic.Int32
 }
 
-func (c *syncWriterBoundary) Exec(ctx context.Context, _ []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+func (c *syncWriterBoundary) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	return clustertest.Supervise(ctx, args, opts, c.write)
+}
+
+// write is the native write of a supervised call.
+func (c *syncWriterBoundary) write(ctx context.Context, _ []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
 	c.calls.Add(1)
 	if c.accepted != nil {
 		c.accepted()
@@ -101,6 +107,9 @@ type delayedPolicyCLI struct {
 }
 
 func (c *delayedPolicyCLI) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if clustertest.Supervised(args) {
+		return clustertest.Supervise(ctx, args, opts, c.Exec)
+	}
 	if syncTestCommand(args, "sync", "group", "modify") && c.cancel != nil {
 		cancel := c.cancel
 		c.cancel = nil

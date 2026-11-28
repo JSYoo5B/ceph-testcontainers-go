@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 )
 
@@ -347,15 +346,11 @@ func TestAdminRunFailureEndsWithTheObjecterEvents(t *testing.T) {
 func TestAdminCrashHasNoErrno(t *testing.T) {
 	const reply = "   -1> 2026-11-21T23:51:00.294+0000 ffff9a39ac40 10 client.71152.objecter ms_dispatch2 0xaaaaf6aa39b0 osd_op_reply(1 default.realm [read 0~0] v0'0 uv0 ondisk = -2 ((2) No such file or directory))\n"
 	crashed := "*** Caught signal (Segmentation fault) **\n in thread ffff99b8ac40 thread_name:msgr-worker-1\n 1: main()\n" + recentEventsBegin + "\n" + reply
-	for name, err := range map[string]error{
-		"the whole standard error": adminRunFailure(supervised.Report{ExitCode: 139, Stderr: []byte(crashed)}),
-		"the bounded reason":       RedactAdminFailure(servicehook.NativeFailure("radosgw-admin", 139, nil, []byte(crashed))),
-	} {
-		var failure *ceph.NativeFailure
-		if !errors.As(err, &failure) || failure.ExitCode != 139 || failure.Errno != "" || errors.Is(err, fs.ErrNotExist) ||
-			!strings.HasPrefix(err.Error(), "radosgw-admin exited 139; radosgw-admin reported fatal signal Segmentation fault in thread msgr-worker-1") {
-			t.Errorf("%s: a crashed radosgw-admin: %v", name, err)
-		}
+	crash := adminRunFailure(supervised.Report{ExitCode: 139, Stderr: []byte(crashed)})
+	var failure *ceph.NativeFailure
+	if !errors.As(crash, &failure) || failure.ExitCode != 139 || failure.Errno != "" || errors.Is(crash, fs.ErrNotExist) ||
+		!strings.HasPrefix(crash.Error(), "radosgw-admin exited 139; radosgw-admin reported fatal signal Segmentation fault in thread msgr-worker-1") {
+		t.Errorf("a crashed radosgw-admin: %v", crash)
 	}
 	// The same line as the last word of a command that exited by itself
 	// stays its errno.

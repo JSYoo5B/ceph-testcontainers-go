@@ -8,10 +8,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"io"
 	"strings"
 	"testing"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -24,10 +26,17 @@ func TestCephFSMirrorSessionBoundaryReadsBothExecEncodings(t *testing.T) {
 	binary.BigEndian.PutUint32(header[4:], uint32(len(session)))
 	framed.Write(header[:])
 	framed.WriteString(session)
-	for _, raw := range [][]byte{[]byte(session), framed.Bytes()} {
+	envelope, _ := json.Marshal(map[string]any{"schema_version": 1, "stdout": []byte(session), "stderr": []byte{}, "exit_code": 0})
+	replay := []string{"ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "peer", "status", "filesystem@1", "peer"}
+	supervisedReplay := append([]string{"python3", "-c", supervised.Script, "16777216", "-1", "inf"}, replay...)
+	for _, reply := range []struct {
+		raw  []byte
+		args []string
+	}{{[]byte(session), replay}, {framed.Bytes(), replay}, {envelope, supervisedReplay}} {
+		raw := reply.raw
 		before := bytes.Clone(raw)
 		boundary := &cephFSMirrorSessionBoundary{Container: cephFSBoundaryReply{raw: raw}, fired: true}
-		code, reader, readErr := boundary.Exec(t.Context(), []string{"ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "peer", "status", "filesystem@1", "peer"})
+		code, reader, readErr := boundary.Exec(t.Context(), reply.args)
 		if readErr != nil || code != 0 || !boundary.replayObserved {
 			t.Fatalf("replay capture failed: code=%d error=%v", code, readErr)
 		}

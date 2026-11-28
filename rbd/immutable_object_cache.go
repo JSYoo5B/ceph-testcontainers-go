@@ -1155,12 +1155,12 @@ func (l *ImmutableObjectCacheLease) cleanupOp(ctx context.Context, op string, ar
 	return immutableObjectCacheOutput{op: op, out: report.Stdout}, nil
 }
 
+// runImmutableCacheCommand runs argv in the caller's client as every cache
+// command runs: through the fixture's supervised runner, with limit seconds
+// (0 for the runner's default) and at most stdoutLimit bytes of output (0 for
+// all).
 func runImmutableCacheCommand(ctx context.Context, client testcontainers.Container, label string, limit, stdoutLimit int, argv ...string) (supervised.Report, error) {
-	report, err := supervised.RunRoleCommand(ctx, client, label, limit, stdoutLimit, argv...)
-	if supervised.MissingPython(err) {
-		return supervised.Report{}, &ceph.OperationError{Kind: ceph.ErrImageCapability, Op: label, Capability: "python3", Err: err}
-	}
-	return report, err
+	return multicluster.Run(ctx, multicluster.Command{Target: client, Label: label, Limit: limit, StdoutLimit: stdoutLimit, Argv: argv})
 }
 
 // immutableObjectCacheOp runs one operation of immutableObjectCacheScript and

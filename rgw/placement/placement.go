@@ -1,7 +1,6 @@
 package placement
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -18,7 +17,6 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
-	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -406,7 +404,7 @@ func apply(ctx context.Context, g *gwbase.Core, p *Placement) error {
 type periodWriters map[string]*ceph.NativeCommandUnstoppedError
 
 func (w periodWriters) run(ctx context.Context, g *gwbase.Core, scope gwbase.NativeScope, operation string) ([]byte, error) {
-	data, err := g.SupervisedCommand(ctx, scope, "period", operation)
+	data, err := g.Command(ctx, scope, "period", operation)
 	var pending *ceph.NativeCommandUnstoppedError
 	if errors.As(err, &pending) {
 		w[scope.RealmID] = pending
@@ -509,35 +507,14 @@ func (p *Placement) committedChange(current, target map[string]any) error {
 }
 
 // checkStagingPeriod refuses to overwrite a staging period that holds policy
-// other than target. It reads the exact staging object directly: --epoch avoids
-// a separate latest-epoch lookup. The native CLI returns errno 2 only for a
-// missing object; other failures must never be interpreted as an empty staging
-// area or leak native credentials.
+// other than target. A missing staging period is an empty staging area.
 func checkStagingPeriod(ctx context.Context, g *gwbase.Core, scope gwbase.NativeScope, current, target map[string]any) error {
-	stagingID := scope.RealmID + ":staging"
-	code, reader, err := g.Container().Exec(ctx, gwbase.CommandArgs(scope, "period", "get", "--period", stagingID, "--epoch", "1"))
+	pending, err := gwbase.StagingPeriod(ctx, g.Cluster(), g.Container(), scope)
 	if err != nil {
-		if ctx.Err() != nil {
-			return fmt.Errorf("read RGW staging period: %w", ctx.Err())
-		}
-		return errors.New("read RGW staging period failed; native output is redacted")
+		return fmt.Errorf("read RGW staging period: %w", err)
 	}
-	var stdout, stderr bytes.Buffer
-	if _, err := stdcopy.StdCopy(&stdout, &stderr, reader); err != nil {
-		return errors.New("decode RGW staging period stream; native output is redacted")
-	}
-	if code != 0 && (code != 2 || stdout.Len() != 0) {
-		return errors.New("read RGW staging period failed; native output is redacted")
-	}
-	if code != 0 {
+	if pending == nil {
 		return nil
-	}
-	pending, err := gwbase.DecodeObject(stdout.Bytes())
-	if err != nil {
-		return err
-	}
-	if pending["id"] != stagingID || pending["realm_id"] != scope.RealmID {
-		return errors.New("RGW staging period identity differs from the owned realm")
 	}
 	if !reflect.DeepEqual(periodPolicy(current), periodPolicy(pending)) {
 		if err := periodChange(current, pending, scope.GroupID, target); err != nil {

@@ -40,6 +40,27 @@ func (r *Resources) AddContainer(ctr testcontainers.Container) {
 	}})
 }
 
+// AddOwned records ctr, a setup client or daemon that runs native commands
+// for owner, for termination, and makes Run track the commands run through
+// ctr or one of its other handles, such as the inner container of a daemon
+// type that embeds it, as owner's until the termination ran.
+func (r *Resources) AddOwned(ctr testcontainers.Container, owner *ceph.Container, handles ...testcontainers.Container) {
+	if ctr == nil {
+		return
+	}
+	handles = append([]testcontainers.Container{ctr}, handles...)
+	own(owner, handles)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.actions = append(r.actions, cleanupAction{name: "terminate container", cleanup: func(ctx context.Context, opts ...testcontainers.TerminateOption) error {
+		err := IgnoreMissing(ctr.Terminate(ctx, opts...))
+		if err == nil {
+			forget(handles)
+		}
+		return err
+	}})
+}
+
 // IgnoreMissing treats missing resources as already cleaned up. A joined error is harmless only
 // when every non-nil child is missing: errors.Is alone could hide a real failure
 // alongside a not-found error. Inspect wrappers for joins before classifying
@@ -201,7 +222,7 @@ func RunClient(ctx context.Context, image string, cluster *ceph.Container, peerN
 	var ctr testcontainers.Container
 	if created != nil {
 		ctr = created
-		owned.AddContainer(ctr)
+		owned.AddOwned(ctr, cluster)
 	}
 	if ctr == nil && err == nil {
 		return nil, errors.New("run multicluster CLI client returned no container")
@@ -210,19 +231,6 @@ func RunClient(ctx context.Context, image string, cluster *ceph.Container, peerN
 		return ctr, fmt.Errorf("run multicluster CLI client: %w", err)
 	}
 	return ctr, nil
-}
-
-// Exec runs args in ctr and returns stdout. It classifies failures as the
-// module's own commands do: a nonzero exit is a *ceph.NativeFailure.
-func Exec(ctx context.Context, ctr testcontainers.Container, args ...string) ([]byte, error) {
-	if len(args) == 0 {
-		return nil, invalid(errors.New("empty multicluster command"))
-	}
-	out, err := servicehook.Command(ctx, ctr, args...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
 }
 
 // CephBefore reports whether cluster's recorded release is older than major.

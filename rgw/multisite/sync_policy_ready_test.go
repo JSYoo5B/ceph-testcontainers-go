@@ -77,6 +77,9 @@ func policyImportStderr(data string) io.Reader {
 }
 
 func (c *rgwPolicyImportCLI) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if clustertest.Supervised(args) {
+		return clustertest.Supervise(ctx, args, opts, c.Exec)
+	}
 	if c.onExec != nil {
 		c.onExec(ctx, args)
 	}
@@ -563,7 +566,7 @@ func TestRGWNativeFailureKeepsNoOutput(t *testing.T) {
 		},
 	} {
 		set()
-		_, err := syncNativeExecMode(t.Context(), cli, false, args...)
+		_, err := syncNativeExecMode(t.Context(), cli, false, args)
 		if err == nil {
 			t.Fatalf("%s: no failure", name)
 		}

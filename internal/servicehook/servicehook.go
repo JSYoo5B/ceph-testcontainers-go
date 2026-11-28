@@ -228,7 +228,8 @@ func ResolvePool(c *ceph.Container, config ceph.PoolConfig) ceph.PoolConfig {
 // standard output (0 for all) as supervised.RunRoleCommand does, and tracks
 // it until it is known to have ended: when ctx ends first the command is
 // stopped before RunOwnedRoleCommand returns, and a stop that cannot be confirmed
-// returns a *ceph.NativeCommandUnstoppedError.
+// returns a *ceph.NativeCommandUnstoppedError. A nil c runs it in a container
+// that no cluster owns: only the error's Stop retries an unconfirmed stop.
 func RunOwnedRoleCommand(ctx context.Context, c *ceph.Container, target testcontainers.Container, label string, limit, stdoutLimit int, argv ...string) (supervised.Report, error) {
 	return get().RunOwnedRoleCommand(ctx, c, target, label, limit, stdoutLimit, argv...)
 }
