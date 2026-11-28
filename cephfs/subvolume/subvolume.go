@@ -456,38 +456,31 @@ func (group *Group) Remove(ctx context.Context) error {
 		return err
 	}
 	defer done()
-	if group.identity.Removed {
-		return nil
-	}
-	if err := pinOverridesOf(fs).allowRemoval(group.identity); err != nil {
-		return err
-	}
-	if group.identity.FilesystemID != fsID {
-		return servicehook.Invalid(errors.New("CephFS filesystem was replaced outside this fixture; refusing removal"))
-	}
-	if group.identity.removalAttempted {
-		names, err := fs.Volumes().SubvolumeGroupNames(ctx)
-		if err != nil {
-			return err
-		}
-		if !slices.Contains(names, group.identity.Name) {
-			group.identity.Removed = true
+	identity := group.identity
+	return removal{
+		name: identity.Name, removed: &identity.Removed, attempted: &identity.removalAttempted,
+		check: func() error {
+			if err := pinOverridesOf(fs).allowRemoval(identity); err != nil {
+				return err
+			}
+			if identity.FilesystemID != fsID {
+				return servicehook.Invalid(errors.New("CephFS filesystem was replaced outside this fixture; refusing removal"))
+			}
 			return nil
-		}
-	}
-	info, err := fs.Volumes().SubvolumeGroupInfo(ctx, group.identity.Name)
-	if err != nil {
-		return err
-	}
-	if err := group.identity.CheckIdentity(fsID, info.Path, info.CreatedAt); err != nil {
-		return err
-	}
-	group.identity.removalAttempted = true
-	if _, err := fs.Cluster().Ceph(ctx, "fs", "subvolumegroup", "rm", fs.Name(), group.identity.Name); err != nil {
-		return err
-	}
-	group.identity.Removed = true
-	return nil
+		},
+		list: func() ([]string, error) { return fs.Volumes().SubvolumeGroupNames(ctx) },
+		verify: func() error {
+			info, err := fs.Volumes().SubvolumeGroupInfo(ctx, identity.Name)
+			if err != nil {
+				return err
+			}
+			return identity.CheckIdentity(fsID, info.Path, info.CreatedAt)
+		},
+		remove: func() error {
+			_, err := fs.Cluster().Ceph(ctx, "fs", "subvolumegroup", "rm", fs.Name(), identity.Name)
+			return err
+		},
+	}.reconcile()
 }
 
 // Remove removes this owned directory tree and its contents without --force or
@@ -508,42 +501,35 @@ func (subvolume *Subvolume) Remove(ctx context.Context) error {
 		return err
 	}
 	defer done()
-	if subvolume.identity.Removed {
-		return nil
-	}
-	if err := pinOverridesOf(fs).allowRemoval(subvolume.identity); err != nil {
-		return err
-	}
-	for authorization := range subvolume.identity.authorizations {
-		if !authorization.deauthorized {
-			return errors.New("subvolume has an owned or partial authorization; deauthorize it before removing data")
-		}
-	}
-	if subvolume.identity.FilesystemID != fsID {
-		return servicehook.Invalid(errors.New("CephFS filesystem was replaced outside this fixture; refusing removal"))
-	}
-	if subvolume.identity.removalAttempted {
-		names, err := fs.Volumes().SubvolumeNames(ctx, subvolume.identity.Group)
-		if err != nil {
-			return err
-		}
-		if !slices.Contains(names, subvolume.identity.Name) {
-			subvolume.identity.Removed = true
+	identity := subvolume.identity
+	return removal{
+		name: identity.Name, removed: &identity.Removed, attempted: &identity.removalAttempted,
+		check: func() error {
+			if err := pinOverridesOf(fs).allowRemoval(identity); err != nil {
+				return err
+			}
+			for authorization := range identity.authorizations {
+				if !authorization.deauthorized {
+					return errors.New("subvolume has an owned or partial authorization; deauthorize it before removing data")
+				}
+			}
+			if identity.FilesystemID != fsID {
+				return servicehook.Invalid(errors.New("CephFS filesystem was replaced outside this fixture; refusing removal"))
+			}
 			return nil
-		}
-	}
-	info, err := fs.Volumes().SubvolumeInfo(ctx, subvolume.identity.Name, subvolume.identity.Group)
-	if err != nil {
-		return err
-	}
-	if err := subvolume.identity.CheckIdentity(fsID, info.Path, info.CreatedAt); err != nil {
-		return err
-	}
-	args := fsbase.AppendGroup([]string{"fs", "subvolume", "rm", fs.Name(), subvolume.identity.Name}, subvolume.identity.Group)
-	subvolume.identity.removalAttempted = true
-	if _, err := fs.Cluster().Ceph(ctx, args...); err != nil {
-		return err
-	}
-	subvolume.identity.Removed = true
-	return nil
+		},
+		list: func() ([]string, error) { return fs.Volumes().SubvolumeNames(ctx, identity.Group) },
+		verify: func() error {
+			info, err := fs.Volumes().SubvolumeInfo(ctx, identity.Name, identity.Group)
+			if err != nil {
+				return err
+			}
+			return identity.CheckIdentity(fsID, info.Path, info.CreatedAt)
+		},
+		remove: func() error {
+			args := fsbase.AppendGroup([]string{"fs", "subvolume", "rm", fs.Name(), identity.Name}, identity.Group)
+			_, err := fs.Cluster().Ceph(ctx, args...)
+			return err
+		},
+	}.reconcile()
 }

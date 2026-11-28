@@ -373,3 +373,16 @@ func TestOutsidePinValueReleasesOnlyItsOwnRemovalGuard(t *testing.T) {
 		t.Fatal("pin entries remain after removal")
 	}
 }
+
+func TestCephFSPinRestoreUnavailableHandleIsInvalidRequest(t *testing.T) {
+	fs, _, _, _ := cephFSPinFixture()
+	for name, change := range map[string]*PinOverrideHandle{
+		"nil":          nil,
+		"zero":         {},
+		"missingState": {filesystem: fs.Core},
+	} {
+		if err := change.Restore(t.Context()); !errors.Is(err, ceph.ErrInvalidRequest) || err.Error() != "CephFS pin override is unavailable" {
+			t.Fatalf("%s handle Restore = %v, want ErrInvalidRequest", name, err)
+		}
+	}
+}

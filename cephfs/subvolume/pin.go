@@ -118,7 +118,7 @@ func (volume *Subvolume) OverridePin(ctx context.Context, setting PinSetting) (*
 	if err != nil {
 		return nil, err
 	}
-	return temporaryPin(ctx, fs, pinTarget{identity: volume.identity}, setting)
+	return overridePin(ctx, fs, pinTarget{identity: volume.identity}, setting)
 }
 
 // OverridePin changes one owned group's local policy field.
@@ -129,7 +129,7 @@ func (group *Group) OverridePin(ctx context.Context, setting PinSetting) (*PinOv
 	if err != nil {
 		return nil, err
 	}
-	return temporaryPin(ctx, fs, pinTarget{identity: group.identity, group: true}, setting)
+	return overridePin(ctx, fs, pinTarget{identity: group.identity, group: true}, setting)
 }
 
 func readOwnedPinPolicy(ctx context.Context, fs *fsbase.Core, target pinTarget) (*PinPolicy, error) {
@@ -153,7 +153,7 @@ func readOwnedPinPolicy(ctx context.Context, fs *fsbase.Core, target pinTarget) 
 	return policy, err
 }
 
-func temporaryPin(ctx context.Context, fs *fsbase.Core, target pinTarget, setting PinSetting) (*PinOverrideHandle, error) {
+func overridePin(ctx context.Context, fs *fsbase.Core, target pinTarget, setting PinSetting) (*PinOverrideHandle, error) {
 	if err := validatePinSetting(setting); err != nil {
 		return nil, err
 	}
@@ -220,7 +220,7 @@ func temporaryPin(ctx context.Context, fs *fsbase.Core, target pinTarget, settin
 //purpose:condition,lifetime
 func (change *PinOverrideHandle) Restore(ctx context.Context) error {
 	if change == nil || change.filesystem == nil || change.filesystem.Cluster() == nil || change.state == nil {
-		return errors.New("CephFS pin override is unavailable")
+		return servicehook.Invalid(errors.New("CephFS pin override is unavailable"))
 	}
 	fs := change.filesystem
 	var restored bool

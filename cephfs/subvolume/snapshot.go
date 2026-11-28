@@ -290,36 +290,26 @@ func (snapshot *Snapshot) Remove(ctx context.Context) error {
 	}
 	defer done()
 	identity := snapshot.identity
-	if identity.removed {
-		return nil
-	}
-	if err := checkSnapshotSubvolume(ctx, fs, fsID, identity.subvolume); err != nil {
-		return err
-	}
-	if identity.removalAttempted {
-		names, err := snapshotNames(ctx, fs.Volumes(), identity.subvolume)
-		if err != nil {
-			return err
-		}
-		if !slices.Contains(names, identity.name) {
-			identity.removed = true
+	return removal{
+		name: identity.name, removed: &identity.removed, attempted: &identity.removalAttempted,
+		check: func() error { return checkSnapshotSubvolume(ctx, fs, fsID, identity.subvolume) },
+		list:  func() ([]string, error) { return snapshotNames(ctx, fs.Volumes(), identity.subvolume) },
+		verify: func() error {
+			info, err := checkSnapshotIdentity(ctx, fs, fsID, identity)
+			if err != nil {
+				return err
+			}
+			if info.HasPendingClones || info.OrphanClonesCount > 0 {
+				return servicehook.Invalid(errors.New("subvolume snapshot has pending or orphan clones; refusing removal"))
+			}
 			return nil
-		}
-	}
-	info, err := checkSnapshotIdentity(ctx, fs, fsID, identity)
-	if err != nil {
-		return err
-	}
-	if info.HasPendingClones || info.OrphanClonesCount > 0 {
-		return servicehook.Invalid(errors.New("subvolume snapshot has pending or orphan clones; refusing removal"))
-	}
-	args := fsbase.AppendGroup([]string{"fs", "subvolume", "snapshot", "rm", fs.Name(), identity.subvolume.Name, identity.name}, identity.subvolume.Group)
-	identity.removalAttempted = true
-	if _, err := fs.Cluster().Ceph(ctx, args...); err != nil {
-		return err
-	}
-	identity.removed = true
-	return nil
+		},
+		remove: func() error {
+			args := fsbase.AppendGroup([]string{"fs", "subvolume", "snapshot", "rm", fs.Name(), identity.subvolume.Name, identity.name}, identity.subvolume.Group)
+			_, err := fs.Cluster().Ceph(ctx, args...)
+			return err
+		},
+	}.reconcile()
 }
 
 // Clone submits an asynchronous copy to a fresh subvolume.

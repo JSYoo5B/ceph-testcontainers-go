@@ -80,7 +80,7 @@ func TestCephFSSubvolumeContextCanceledFreeAdmissionHasNoEffects(t *testing.T) {
 }
 
 func TestCephFSContextPinAdmissionDeadline(t *testing.T) {
-	for _, operation := range []string{"read", "temporary", "restore"} {
+	for _, operation := range []string{"read", "override", "restore"} {
 		for _, gate := range []string{"setup", "owner", "control"} {
 			t.Run(operation+"/"+gate, func(t *testing.T) {
 				fs, control, volume, _ := cephFSPinFixture()
@@ -100,7 +100,7 @@ func TestCephFSContextPinAdmissionDeadline(t *testing.T) {
 					case "read":
 						_, err := volume.PinPolicy(ctx)
 						return err
-					case "temporary":
+					case "override":
 						_, err := volume.OverridePin(ctx, PinSetting{Type: PinDistributed, Value: 1})
 						return err
 					default:
