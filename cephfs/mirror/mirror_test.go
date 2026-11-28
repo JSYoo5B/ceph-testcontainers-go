@@ -96,17 +96,17 @@ func TestCephFSMirrorPendingImportIdentity(t *testing.T) {
 	}
 	// The state transition must retain an uncertain import after mismatch, then
 	// assign only the server UUID and clear the pending flag on exact recovery.
-	mirror := &Container{pendingPeerImport: &expected}
+	mirror := &Container{peer: cephFSMirrorPeer{pendingImport: &expected}}
 	if _, err := mirror.reconcilePendingPeer(map[string]json.RawMessage{serverUUID: json.RawMessage(`{"client_name":"client.foreign"}`)}); err == nil {
 		t.Fatal("recovered a foreign peer")
 	}
-	if mirror.pendingPeerImport == nil || mirror.peerID != "" {
+	if mirror.peer.pendingImport == nil || mirror.peer.id != "" {
 		t.Fatal("failed reconciliation changed peer ownership")
 	}
 	if _, err := mirror.reconcilePendingPeer(valid); err != nil {
 		t.Fatal(err)
 	}
-	if mirror.peerID != serverUUID || mirror.pendingPeerImport != nil {
+	if mirror.peer.id != serverUUID || mirror.peer.pendingImport != nil {
 		t.Fatal("successful reconciliation did not settle peer ownership")
 	}
 }

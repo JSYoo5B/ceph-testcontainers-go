@@ -31,7 +31,7 @@ func (r *PeerRemoval) AcknowledgeProcessQuiescence(ctx context.Context) (Process
 		present, fsPresent, err := r.scope.policy(ctx)
 		return !present && !fsPresent && err == nil, err
 	}, func() bool { return r.completed }, func() {
-		r.scope.mirror.peerID = ""
+		r.scope.mirror.peer.id = ""
 		r.processQuiescenceAcknowledged = true
 	})
 }

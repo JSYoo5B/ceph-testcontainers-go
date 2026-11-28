@@ -30,10 +30,10 @@ func (daemon *Daemon) InterruptPeerLink(ctx context.Context) (*fault.NetworkInte
 		return nil, err
 	}
 	defer m.mu.Unlock()
-	if m.closed || m.destination == nil {
+	if m.closed || m.pair.destination == nil {
 		return nil, errors.New("peer interruption requires a live bridge CephFS mirror")
 	}
-	facts, err := ceph.FactsOf(m.destination)
+	facts, err := ceph.FactsOf(m.pair.destination)
 	if err != nil {
 		return nil, err
 	}

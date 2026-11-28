@@ -102,8 +102,8 @@ func newCephFSRefreshFixture() (*Container, *cephFSRefreshControl, *cephFSRefres
 	mirror, source, destination, _, _ := newCephFSObserverDraft()
 	sourceControl := &cephFSRefreshControl{cephFSObserverDraftControl: source, config: fmt.Sprintf(`{"fsid":%q,"key":"fixture-private-key","mon_host":"v2:old:3300","unknown":{"large":9007199254740993},"extension":[null,true]}`, cephFSRefreshDestinationFSID)}
 	destinationControl := &cephFSRefreshControl{cephFSObserverDraftControl: destination, fsid: cephFSRefreshDestinationFSID}
-	mirror.source = &ceph.Container{Container: sourceControl}
-	mirror.destination = &ceph.Container{Container: destinationControl}
+	mirror.pair.source = &ceph.Container{Container: sourceControl}
+	mirror.pair.destination = &ceph.Container{Container: destinationControl}
 	mirror.roster.daemons = []*Daemon{
 		{Container: &cephFSMirrorDaemonFake{id: "a"}, DaemonName: "a"},
 		{Container: &cephFSMirrorDaemonFake{id: "b"}, DaemonName: "b"},
@@ -146,7 +146,7 @@ func TestCephFSRefreshLocalCurrentOwnershipPartialRetryAndNoRuntimeChanges(t *te
 	if err := mirror.refreshMonitorConfig(t.Context(), refresh); err != nil || writes["a"] != 1 || writes["b"] != 1 || writes["removed"] != 0 {
 		t.Fatalf("archive retry repeated successful writes or skipped failed member: %v %v", writes, err)
 	}
-	if a.Container.(*cephFSMirrorDaemonFake).terminateCalls != 0 || b.Container.(*cephFSMirrorDaemonFake).terminateCalls != 0 || removed.terminateCalls != 0 || mirror.peerID != cephFSObserverDraftPeer {
+	if a.Container.(*cephFSMirrorDaemonFake).terminateCalls != 0 || b.Container.(*cephFSMirrorDaemonFake).terminateCalls != 0 || removed.terminateCalls != 0 || mirror.peer.id != cephFSObserverDraftPeer {
 		t.Fatal("refresh changed process lifetime or peer identity")
 	}
 }
@@ -169,7 +169,7 @@ func TestCephFSRefreshLocalIdentityAndContextGuards(t *testing.T) {
 			case "closed":
 				mirror.closed = true
 			case "partial":
-				mirror.destinationFilesystemID = 0
+				mirror.pair.destinationFilesystemID = 0
 			}
 			calls := 0
 			err := mirror.refreshMonitorConfig(t.Context(), func(context.Context, testcontainers.Container) error { calls++; return nil })
@@ -237,7 +237,7 @@ func TestCephFSRefreshPeerPreservesExactOwnedConfigurationAndUUID(t *testing.T) 
 		t.Fatal(err)
 	}
 	before["mon_host"], _ = json.Marshal(cephFSRefreshAddresses)
-	if !cephFSBootstrapFieldsEqual(before, after) || source.writes != 1 || mirror.peerID != cephFSObserverDraftPeer || mirror.pendingPeerImport != nil || len(source.mutations) != 0 {
+	if !cephFSBootstrapFieldsEqual(before, after) || source.writes != 1 || mirror.peer.id != cephFSObserverDraftPeer || mirror.peer.pendingImport != nil || len(source.mutations) != 0 {
 		t.Fatal("refresh changed fields besides owned peer mon_host")
 	}
 	if err := mirror.refreshPeerMonitorConfig(t.Context(), cephFSRefreshCurrentAddresses); err != nil || source.writes != 1 {
@@ -291,7 +291,7 @@ func TestCephFSRefreshPeerLostWriteReadbackAndIdentityDrift(t *testing.T) {
 				}
 			}
 			err := mirror.refreshPeerMonitorConfig(t.Context(), addresses)
-			if err == nil || source.writes != 1 || mirror.peerID != cephFSObserverDraftPeer || strings.Contains(err.Error(), "fixture-private-key") || strings.Contains(err.Error(), queryErr.Error()) {
+			if err == nil || source.writes != 1 || mirror.peer.id != cephFSObserverDraftPeer || strings.Contains(err.Error(), "fixture-private-key") || strings.Contains(err.Error(), queryErr.Error()) {
 				t.Fatalf("unconfirmed refresh accepted/leaked or replaced peer: %v", err)
 			}
 			if fault == "readback-error" && !errors.Is(err, queryErr) {
@@ -405,7 +405,7 @@ func TestCephFSRebootstrapOriginalIdentityAndContextGuardsBeforeManagers(t *test
 			case "closed":
 				mirror.closed = true
 			case "partial":
-				mirror.destinationFilesystemID = 0
+				mirror.pair.destinationFilesystemID = 0
 			case "source-filesystem":
 				source.filesystemID++
 			case "destination-filesystem":

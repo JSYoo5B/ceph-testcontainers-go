@@ -45,8 +45,8 @@ func (c *cephFSIdentityControl) Exec(ctx context.Context, args []string, opts ..
 func newCephFSIdentityFixture(answer func(name string) (string, error)) (*Container, *[]string) {
 	mirror, source, destination, _, _ := newCephFSObserverDraft()
 	reads := &[]string{}
-	mirror.source = &ceph.Container{Container: &cephFSIdentityControl{source, answer, reads}}
-	mirror.destination = &ceph.Container{Container: &cephFSIdentityControl{destination, answer, reads}}
+	mirror.pair.source = &ceph.Container{Container: &cephFSIdentityControl{source, answer, reads}}
+	mirror.pair.destination = &ceph.Container{Container: &cephFSIdentityControl{destination, answer, reads}}
 	return mirror, reads
 }
 

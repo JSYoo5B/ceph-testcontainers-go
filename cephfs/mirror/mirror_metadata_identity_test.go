@@ -37,10 +37,10 @@ func (c *metadataCaptureControl) Exec(ctx context.Context, args []string, opts .
 }
 
 func captureMetadataFixture(m *Container, pool int64) (*metadataCaptureControl, *metadataCaptureControl) {
-	source := &metadataCaptureControl{Container: m.source.Container, pools: fmt.Sprintf(`[{"pool_id":%d,"pool_name":"source-metadata"}]`, pool)}
-	destination := &metadataCaptureControl{Container: m.destination.Container}
-	m.source.Container, m.destination.Container = source, destination
-	m.filesystemIdentityConfirmed = false
+	source := &metadataCaptureControl{Container: m.pair.source.Container, pools: fmt.Sprintf(`[{"pool_id":%d,"pool_name":"source-metadata"}]`, pool)}
+	destination := &metadataCaptureControl{Container: m.pair.destination.Container}
+	m.pair.source.Container, m.pair.destination.Container = source, destination
+	m.pair.identityConfirmed = false
 	return source, destination
 }
 
@@ -56,7 +56,7 @@ func TestCephFSMirrorExplicitZeroMetadataIdentity(t *testing.T) {
 						destination.metadataPool = 0
 					}
 					captureMetadataFixture(m, source.metadataPool)
-					if err := m.loadFilesystemIdentity(t.Context()); err != nil || !m.filesystemIdentityConfirmed {
+					if err := m.loadFilesystemIdentity(t.Context()); err != nil || !m.pair.identityConfirmed {
 						t.Fatal("capture", err)
 					}
 					status, err := m.DirectoryStatus(t.Context(), "/owned")
@@ -73,7 +73,7 @@ func TestCephFSMirrorExplicitZeroMetadataIdentity(t *testing.T) {
 					destination.pool = 0
 				}
 				captureMetadataFixture(m, source.pool)
-				if err := m.loadFilesystemIdentity(t.Context()); err != nil || !m.filesystemIdentityConfirmed {
+				if err := m.loadFilesystemIdentity(t.Context()); err != nil || !m.pair.identityConfirmed {
 					t.Fatal("capture", err)
 				}
 				var err error
@@ -83,7 +83,7 @@ func TestCephFSMirrorExplicitZeroMetadataIdentity(t *testing.T) {
 				case "directory removal":
 					_, err = m.beginDirectoryRemoval(t.Context(), "/owned", peerRemovalClusterReader)
 				case "peer removal":
-					_, err = m.beginPeerRemoval(t.Context(), m.peerID, peerRemovalClusterReader)
+					_, err = m.beginPeerRemoval(t.Context(), m.peer.id, peerRemovalClusterReader)
 				}
 				if err != nil {
 					t.Fatalf("zero metadata pool %s: %v", operation, err)
@@ -117,11 +117,11 @@ func TestCephFSMirrorMetadataIdentityRequiresConfirmedFields(t *testing.T) {
 			case "pool catalog null ID":
 				source.pools = `[{"pool_id":null,"pool_name":"source-metadata"}]`
 			}
-			m.filesystemIdentityConfirmed = true
-			if err := m.loadFilesystemIdentity(t.Context()); err == nil || m.filesystemIdentityConfirmed {
+			m.pair.identityConfirmed = true
+			if err := m.loadFilesystemIdentity(t.Context()); err == nil || m.pair.identityConfirmed {
 				t.Fatal("failed recapture retained authority", err)
 			}
-			if _, err := m.captureOriginalScope(t.Context(), "test", m.peerID, peerRemovalClusterReader); err == nil {
+			if _, err := m.captureOriginalScope(t.Context(), "test", m.peer.id, peerRemovalClusterReader); err == nil {
 				t.Fatal("unconfirmed metadata authorized a tracked operation")
 			}
 		})
@@ -130,7 +130,7 @@ func TestCephFSMirrorMetadataIdentityRequiresConfirmedFields(t *testing.T) {
 		t.Run("unconfirmed/"+operation, func(t *testing.T) {
 			m, source, _, _, _ := newDirectoryRemovalFixture()
 			m.ops.peerGeneration = 1
-			m.filesystemIdentityConfirmed, m.metadataPoolID, m.destinationMetadataPoolID = false, 0, 0
+			m.pair.identityConfirmed, m.pair.sourceMetadataPoolID, m.pair.destinationMetadataPoolID = false, 0, 0
 			var err error
 			switch operation {
 			case "addition":
@@ -138,7 +138,7 @@ func TestCephFSMirrorMetadataIdentityRequiresConfirmedFields(t *testing.T) {
 			case "directory removal":
 				_, err = m.beginDirectoryRemoval(t.Context(), "/owned", peerRemovalClusterReader)
 			case "peer removal":
-				_, err = m.beginPeerRemoval(t.Context(), m.peerID, peerRemovalClusterReader)
+				_, err = m.beginPeerRemoval(t.Context(), m.peer.id, peerRemovalClusterReader)
 			}
 			if err == nil || source.adds != 0 || source.removals != 0 {
 				t.Fatal("unconfirmed identity dispatched a mutation", err)

@@ -148,7 +148,7 @@ func newDirectoryRemovalFixture() (*Container, *directoryRemovalControlFake, *pe
 	s := &directoryRemovalControlFake{peerRemovalControlFake: source, directories: []string{"/owned"}, applyRemoval: true, applyAdd: true}
 	da := &directoryRemovalDaemonFake{peerRemovalDaemonFake: a, stats: directoryRemovalTracked}
 	db := &directoryRemovalDaemonFake{peerRemovalDaemonFake: b, stats: `{}`}
-	m.source.Container = s
+	m.pair.source.Container = s
 	m.roster.daemons[0].Container, m.roster.daemons[1].Container = da, db
 	m.directories.generations = map[string]uint64{"/owned": 1}
 	return m, s, destination, da, db
@@ -166,7 +166,7 @@ func beginDirectoryRemovalFixture(t *testing.T) (*DirectoryRemoval, *Container, 
 
 func TestCephFSDirectoryRemovalProductionExactCycleRelease(t *testing.T) {
 	r, m, s, _, a, b := beginDirectoryRemovalFixture(t)
-	if m.ops.directoryRemoval != r || s.removals != 1 || m.ops.peerRemoval != nil || m.peerID != cephFSObserverDraftPeer || m.directories.owned["/owned"] {
+	if m.ops.directoryRemoval != r || s.removals != 1 || m.ops.peerRemoval != nil || m.peer.id != cephFSObserverDraftPeer || m.directories.owned["/owned"] {
 		t.Fatal("directory intent altered peer ownership or failed to retain path")
 	}
 	for _, stats := range []string{
@@ -221,11 +221,11 @@ func TestCephFSDirectoryRemovalProductionPreflightNeverMutatesInvalidOwnership(t
 			case "dead":
 				a.state.Dead = true
 			case "missing-original-fs":
-				m.filesystemID = 0
+				m.pair.sourceFilesystemID = 0
 			case "missing-source-auth":
 				m.SourceClientEntity = ""
 			case "missing-pool":
-				m.metadataPool = ""
+				m.pair.metadataPool = ""
 			case "mapping":
 				s.mappingOverride = `{"state":"mapping"}`
 			case "foreign-owner":

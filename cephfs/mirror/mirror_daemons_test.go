@@ -79,7 +79,8 @@ func TestCephFSMirrorDaemonRemovalRetainsFailedResourceAndPolicy(t *testing.T) {
 	a := &Daemon{Container: aContainer, DaemonName: "a"}
 	b := &Daemon{Container: bContainer, DaemonName: "b"}
 	mirror := &Container{Container: aContainer, roster: cephFSDaemonRoster{daemons: []*Daemon{a, b}, initial: a},
-		peerID: "owned-peer", SourceClientEntity: "client.owned", DestinationClientEntity: "client.peer", Directories: []string{"/data"}}
+		peer: cephFSMirrorPeer{id: "owned-peer"}, SourceClientEntity: "client.owned", DestinationClientEntity: "client.peer", Directories: []string{"/data"},
+		pair: cephFSMirrorPair{sourceClient: "client.owned", destinationClient: "client.peer"}}
 	a.owner, b.owner = mirror, mirror
 	inventory := mirror.Daemons()
 	inventory[0] = nil
@@ -102,7 +103,7 @@ func TestCephFSMirrorDaemonRemovalRetainsFailedResourceAndPolicy(t *testing.T) {
 	if err := b.Remove(t.Context()); err != nil || len(mirror.Daemons()) != 0 {
 		t.Fatalf("last daemon or already-missing removal failed: %v", err)
 	}
-	if mirror.peerID != "owned-peer" || mirror.SourceClientEntity != "client.owned" || mirror.DestinationClientEntity != "client.peer" || !reflect.DeepEqual(mirror.Directories, []string{"/data"}) {
+	if mirror.peer.id != "owned-peer" || mirror.SourceClientEntity != "client.owned" || mirror.DestinationClientEntity != "client.peer" || !reflect.DeepEqual(mirror.Directories, []string{"/data"}) {
 		t.Fatal("daemon lifecycle changed peer/auth/directory policy")
 	}
 }
@@ -478,16 +479,19 @@ func (control *cephFSMirrorNativeControlFake) Exec(ctx context.Context, argument
 func TestCephFSMirrorNativeBarrierAndRebalanceUseRealJSONAndPrivateOwnership(t *testing.T) {
 	control := &cephFSMirrorNativeControlFake{directories: map[string]bool{"/owned": true, "/foreign": true}}
 	mirror := &Container{
-		source: &ceph.Container{Container: control}, destination: &ceph.Container{Container: &cephFSObserverDraftControl{filesystemID: 2, metadataPool: 9}},
-		peerID: "owned-peer", SourceFilesystem: "source", DestinationFilesystem: "destination", sourceFilesystem: "source", destinationFilesystem: "destination",
+		pair: cephFSMirrorPair{
+			source: &ceph.Container{Container: control}, destination: &ceph.Container{Container: &cephFSObserverDraftControl{filesystemID: 2, metadataPool: 9}},
+			sourceFilesystem: "source", destinationFilesystem: "destination",
+		},
+		peer: cephFSMirrorPeer{id: "owned-peer"}, SourceFilesystem: "source", DestinationFilesystem: "destination",
 		roster:      cephFSDaemonRoster{sourceID: "owned-auth", daemons: []*Daemon{{Container: control, DaemonName: "a"}}},
 		Directories: []string{"/owned", "/foreign"}, directories: cephFSDirectoryOwnership{owned: map[string]bool{"/owned": true}},
 	}
 	if err := mirror.loadFilesystemIdentity(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if mirror.filesystemID != 1 || mirror.metadataPool != "source-metadata" {
-		t.Fatalf("native metadata identity mismatch: id=%d pool=%q", mirror.filesystemID, mirror.metadataPool)
+	if mirror.pair.sourceFilesystemID != 1 || mirror.pair.metadataPool != "source-metadata" {
+		t.Fatalf("native metadata identity mismatch: id=%d pool=%q", mirror.pair.sourceFilesystemID, mirror.pair.metadataPool)
 	}
 	if err := mirror.RebalanceDirectories(t.Context()); err != nil {
 		t.Fatal(err)

@@ -139,7 +139,7 @@ func (mirror *Container) beginDirectoryRemoval(ctx context.Context, directory st
 	if len(mirror.roster.daemons) == 0 {
 		return nil, cephFSObserveGuard("strict CephFS directory removal requires a live owned daemon cohort")
 	}
-	scope, err := mirror.captureOriginalScope(ctx, "CephFS directory removal", mirror.peerID, readClusters)
+	scope, err := mirror.captureOriginalScope(ctx, "CephFS directory removal", mirror.peer.id, readClusters)
 	if err != nil {
 		return nil, err
 	}
@@ -363,7 +363,7 @@ func (r *DirectoryRemoval) resume(ctx context.Context) error {
 	r.requestAttempted = true
 	m := r.scope.mirror
 	m.directories.markReleasePending(r.directory)
-	if _, err := r.scope.source.Ceph(ctx, "fs", "snapshot", "mirror", "remove", r.scope.sourceFilesystem, r.directory); err != nil {
+	if _, err := r.scope.pair.source.Ceph(ctx, "fs", "snapshot", "mirror", "remove", r.scope.pair.sourceFilesystem, r.directory); err != nil {
 		return cephFSObserveQuery("remove original CephFS mirror directory", err)
 	}
 	r.requestAcknowledged = true
@@ -415,7 +415,7 @@ func (r *DirectoryRemoval) initialStatus() DirectoryRemovalStatus {
 		return result
 	}
 	o := r.scope
-	result = DirectoryRemovalStatus{Directory: r.directory, PeerID: o.peerID, SourceFilesystem: o.sourceFilesystem, DestinationFilesystem: o.destinationFilesystem, SourceFilesystemID: o.sourceID, DestinationFilesystemID: o.destinationID, Daemons: make(map[string]DirectoryRemovalDaemonStatus)}
+	result = DirectoryRemovalStatus{Directory: r.directory, PeerID: o.peerID, SourceFilesystem: o.pair.sourceFilesystem, DestinationFilesystem: o.pair.destinationFilesystem, SourceFilesystemID: o.pair.sourceFilesystemID, DestinationFilesystemID: o.pair.destinationFilesystemID, Daemons: make(map[string]DirectoryRemovalDaemonStatus)}
 	for _, w := range r.cohort.witnesses {
 		result.Daemons[w.name] = DirectoryRemovalDaemonStatus{ContainerID: w.containerID, InstanceID: w.instanceID, State: "unobserved"}
 	}
@@ -596,7 +596,7 @@ func (r *DirectoryRemoval) observeDaemon(ctx context.Context, w cephFSRemovalWit
 	if !registered {
 		return "session-changed", cephFSObserveGuard("CephFS directory release original peer command disappeared")
 	}
-	data, err := multicluster.Exec(ctx, w.daemon, "ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "peer", "status", fmt.Sprintf("%s@%d", r.scope.sourceFilesystem, r.scope.sourceID), r.scope.peerID)
+	data, err := multicluster.Exec(ctx, w.daemon, "ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "peer", "status", fmt.Sprintf("%s@%d", r.scope.pair.sourceFilesystem, r.scope.pair.sourceFilesystemID), r.scope.peerID)
 	if err != nil {
 		return "unavailable", cephFSObserveQuery("read original CephFS directory release peer stats", err)
 	}

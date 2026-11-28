@@ -708,7 +708,7 @@ func TestCephFSOriginalProcessDirectoryAuthorityRemovalAndContract(t *testing.T)
 					t.Fatalf("invalid authority became proof: %+v %v", st, err)
 				}
 			}
-			if r.completed || m.peerID != cephFSObserverDraftPeer || s.removals != 1 || m.ops.guardDirectoryRemovalOverlap() == nil {
+			if r.completed || m.peer.id != cephFSObserverDraftPeer || s.removals != 1 || m.ops.guardDirectoryRemovalOverlap() == nil {
 				t.Fatal("quiescence changed Released or overlap gates")
 			}
 			old, oldErr := r.Status(t.Context())

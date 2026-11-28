@@ -16,28 +16,25 @@ import (
 
 // cephFSOriginalScope is the original identity that a directory addition, a
 // directory removal and a peer removal compare every later observation with:
-// the two clusters and their FSIDs, both filesystems and their metadata
-// pools, the source client, the owned peer and its generation. It records no
-// daemon, witness or progress, so a directory addition captures it without a
-// live daemon. Its methods run while Container.mu is held.
+// a copy of the fixture's pair, the owned peer and its generation, and the
+// two cluster FSIDs. It records no daemon, witness or progress, so a
+// directory addition captures it without a live daemon. Its methods run while
+// Container.mu is held.
 type cephFSOriginalScope struct {
-	mirror                                                              *Container
-	source, destination                                                 *ceph.Container
-	sourceFilesystem, destinationFilesystem, sourceClient, metadataPool string
-	sourceID, destinationID                                             int
-	sourceMetadata, destinationMetadata                                 int64
-	peerID                                                              string
-	peer                                                                cephFSPeerIdentity
-	generation                                                          uint64
-	clusters                                                            [2]string
-	readClusters                                                        func(context.Context) ([2]string, error)
+	mirror       *Container
+	pair         cephFSMirrorPair
+	peerID       string
+	generation   uint64
+	clusters     [2]string
+	readClusters func(context.Context) ([2]string, error)
 }
 
 // captureOriginalScope records the fixture's current identity for peerID
 // after its native cluster identities are read and found distinct. operation
 // names the receipt in the refusals. Container.mu is held.
 func (mirror *Container) captureOriginalScope(ctx context.Context, operation, peerID string, readClusters func(context.Context) ([2]string, error)) (*cephFSOriginalScope, error) {
-	if !mirror.originalDirectoryFilesystemNames() || !mirror.filesystemIdentityConfirmed || mirror.metadataPoolID < 0 || mirror.destinationMetadataPoolID < 0 || mirror.SourceClientEntity == "" || mirror.metadataPool == "" {
+	pair := mirror.pair
+	if !mirror.describes(pair) || pair.sourceFilesystem == "" || pair.destinationFilesystem == "" || !pair.identityConfirmed || pair.sourceMetadataPoolID < 0 || pair.destinationMetadataPoolID < 0 || pair.sourceClient == "" || pair.metadataPool == "" {
 		return nil, cephFSObserveGuard(operation + " original filesystem metadata identity is unavailable")
 	}
 	if readClusters == nil {
@@ -50,32 +47,29 @@ func (mirror *Container) captureOriginalScope(ctx context.Context, operation, pe
 	if !validCephFSRemovalClusters(clusters) {
 		return nil, cephFSObserveGuard(operation + " original cluster identities are unavailable or equal")
 	}
-	return &cephFSOriginalScope{mirror: mirror, source: mirror.source, destination: mirror.destination,
-		sourceFilesystem: mirror.sourceFilesystem, destinationFilesystem: mirror.destinationFilesystem, sourceClient: mirror.SourceClientEntity, metadataPool: mirror.metadataPool,
-		sourceID: mirror.filesystemID, destinationID: mirror.destinationFilesystemID, sourceMetadata: mirror.metadataPoolID, destinationMetadata: mirror.destinationMetadataPoolID,
-		peerID: peerID, peer: cephFSPeerIdentity{mirror.DestinationClientEntity, mirror.destinationSite, mirror.DestinationFilesystem}, generation: mirror.ops.peerGeneration, clusters: clusters, readClusters: readClusters}, nil
+	return &cephFSOriginalScope{mirror: mirror, pair: pair, peerID: peerID, generation: mirror.ops.peerGeneration, clusters: clusters, readClusters: readClusters}, nil
 }
 
 // usable reports whether the scope still has its fixture, both clusters and
 // its cluster identity reader.
 func (s *cephFSOriginalScope) usable() bool {
-	return s != nil && s.mirror != nil && s.source != nil && s.destination != nil && s.readClusters != nil
+	return s != nil && s.mirror != nil && s.pair.source != nil && s.pair.destination != nil && s.readClusters != nil
 }
 
-// sameFixture reports whether the fixture still has the recorded clusters,
-// filesystems, metadata pools, clients, destination site and peer. A peer
+// sameFixture reports whether the fixture still has the recorded pair and
+// peer, and whether its exported descriptors still name that pair. A peer
 // removal passes allowClearedPeer, because its own request clears the
 // fixture's peer. Container.mu is held.
 func (s *cephFSOriginalScope) sameFixture(allowClearedPeer bool) bool {
 	m := s.mirror
-	peer := m.peerID == s.peerID || (allowClearedPeer && m.peerID == "")
-	return peer && m.filesystemIdentityConfirmed && m.source == s.source && m.destination == s.destination && m.SourceFilesystem == s.sourceFilesystem && m.DestinationFilesystem == s.destinationFilesystem && m.SourceClientEntity == s.sourceClient && m.filesystemID == s.sourceID && m.destinationFilesystemID == s.destinationID && m.metadataPoolID == s.sourceMetadata && m.destinationMetadataPoolID == s.destinationMetadata && m.metadataPool == s.metadataPool && m.DestinationClientEntity == s.peer.ClientName && m.destinationSite == s.peer.SiteName
+	peer := m.peer.id == s.peerID || (allowClearedPeer && m.peer.id == "")
+	return peer && m.pair == s.pair && m.describes(s.pair)
 }
 
 // directoryPolicy reads the source filesystem's native directory policy with
 // the strict ls decoder. operation names the receipt in a query error.
 func (s *cephFSOriginalScope) directoryPolicy(ctx context.Context, operation string) (map[string]bool, error) {
-	data, err := s.source.Ceph(ctx, "fs", "snapshot", "mirror", "ls", s.sourceFilesystem)
+	data, err := s.pair.source.Ceph(ctx, "fs", "snapshot", "mirror", "ls", s.pair.sourceFilesystem)
 	if err != nil {
 		return nil, cephFSObserveQuery("read original CephFS "+operation+" policy", err)
 	}
@@ -92,14 +86,14 @@ type cephFSDaemonSession struct {
 // watchers lists the native watchers of the source filesystem's mirror index
 // object by RADOS address.
 func (s *cephFSOriginalScope) watchers(ctx context.Context) (map[string]string, error) {
-	control, err := s.source.ClientContainer(ctx)
+	control, err := s.pair.source.ClientContainer(ctx)
 	if err != nil {
 		return nil, cephFSObserveQuery("select CephFS control container", err)
 	}
 	if control == nil {
 		return nil, cephFSObserveGuard("CephFS control container is unavailable")
 	}
-	data, err := multicluster.Exec(ctx, control, "rados", "--pool", s.metadataPool, "listwatchers", "cephfs_mirror")
+	data, err := multicluster.Exec(ctx, control, "rados", "--pool", s.pair.metadataPool, "listwatchers", "cephfs_mirror")
 	if err != nil {
 		return nil, cephFSObserveQuery("read original CephFS filesystem watchers", err)
 	}
@@ -113,11 +107,11 @@ func (s *cephFSOriginalScope) watchers(ctx context.Context) (map[string]string, 
 // session reads daemon's session of the original source filesystem and
 // checks its peer against the original peer identity.
 func (s *cephFSOriginalScope) session(ctx context.Context, daemon *Daemon) (cephFSDaemonSession, error) {
-	data, err := multicluster.Exec(ctx, daemon, "ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "status", fmt.Sprintf("%s@%d", s.sourceFilesystem, s.sourceID))
+	data, err := multicluster.Exec(ctx, daemon, "ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "status", fmt.Sprintf("%s@%d", s.pair.sourceFilesystem, s.pair.sourceFilesystemID))
 	if err != nil {
 		return cephFSDaemonSession{}, cephFSObserveQuery("read original CephFS filesystem session", err)
 	}
-	return decodeCephFSRemovalSession(data, s.peerID, s.peer)
+	return decodeCephFSRemovalSession(data, s.peerID, s.pair.peerIdentity())
 }
 
 // catalog reports whether daemon's admin socket still lists the original
@@ -127,7 +121,7 @@ func (s *cephFSOriginalScope) catalog(ctx context.Context, daemon *Daemon) (bool
 	if err != nil {
 		return false, cephFSObserveQuery("read original CephFS command catalog", err)
 	}
-	return decodeCephFSRemovalCatalog(data, fmt.Sprintf("fs mirror status %s@%d", s.sourceFilesystem, s.sourceID), fmt.Sprintf("fs mirror peer status %s@%d %s", s.sourceFilesystem, s.sourceID, s.peerID))
+	return decodeCephFSRemovalCatalog(data, fmt.Sprintf("fs mirror status %s@%d", s.pair.sourceFilesystem, s.pair.sourceFilesystemID), fmt.Sprintf("fs mirror peer status %s@%d %s", s.pair.sourceFilesystem, s.pair.sourceFilesystemID, s.peerID))
 }
 
 func decodeCephFSRemovalCatalog(data []byte, fsCommand, peerCommand string) (bool, error) {
@@ -246,7 +240,7 @@ func (s *cephFSOriginalScope) policy(ctx context.Context) (bool, bool, error) {
 		id      int
 		pool    int64
 		source  bool
-	}{{s.source, s.sourceFilesystem, s.sourceID, s.sourceMetadata, true}, {s.destination, s.destinationFilesystem, s.destinationID, s.destinationMetadata, false}} {
+	}{{s.pair.source, s.pair.sourceFilesystem, s.pair.sourceFilesystemID, s.pair.sourceMetadataPoolID, true}, {s.pair.destination, s.pair.destinationFilesystem, s.pair.destinationFilesystemID, s.pair.destinationMetadataPoolID, false}} {
 		data, err := site.cluster.Ceph(ctx, "fs", "get", site.name, "--format", "json")
 		if err != nil {
 			return false, false, cephFSObserveQuery("read original CephFS filesystem identity", err)
@@ -271,11 +265,11 @@ func (s *cephFSOriginalScope) policy(ctx context.Context) (bool, bool, error) {
 			fsPeers = value.MirrorInfo.Peers
 		}
 	}
-	fsPresent, err := decodeCephFSRemovalPeers(fsPeers, s.peerID, s.peer, true)
+	fsPresent, err := decodeCephFSRemovalPeers(fsPeers, s.peerID, s.pair.peerIdentity(), true)
 	if err != nil {
 		return false, false, err
 	}
-	data, err := s.source.Ceph(ctx, "fs", "snapshot", "mirror", "peer_list", s.sourceFilesystem)
+	data, err := s.pair.source.Ceph(ctx, "fs", "snapshot", "mirror", "peer_list", s.pair.sourceFilesystem)
 	if err != nil {
 		return false, false, cephFSObserveQuery("read original CephFS manager policy", err)
 	}
@@ -283,7 +277,7 @@ func (s *cephFSOriginalScope) policy(ctx context.Context) (bool, bool, error) {
 	if json.Unmarshal(data, &peers) != nil {
 		return false, false, cephFSObserveGuard("decode original CephFS manager policy")
 	}
-	present, err := decodeCephFSRemovalPeers(peers, s.peerID, s.peer, false)
+	present, err := decodeCephFSRemovalPeers(peers, s.peerID, s.pair.peerIdentity(), false)
 	return present, fsPresent, errors.Join(err, ctx.Err())
 }
 
@@ -305,7 +299,7 @@ func (mirror *Container) peerRemovalClusterIdentities(ctx context.Context) ([2]s
 	for i, site := range []struct {
 		cluster *ceph.Container
 		name    string
-	}{{mirror.source, "source"}, {mirror.destination, "destination"}} {
+	}{{mirror.pair.source, "source"}, {mirror.pair.destination, "destination"}} {
 		cluster := site.cluster
 		if cluster == nil {
 			return result, cephFSObserveGuard("CephFS original cluster is unavailable")

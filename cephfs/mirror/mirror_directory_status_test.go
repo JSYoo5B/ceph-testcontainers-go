@@ -117,9 +117,13 @@ func newCephFSObserverDraft() (*Container, *cephFSObserverDraftControl, *cephFSO
 	a := &cephFSObserverDraftDaemon{running: true, session: session("172.20.0.8:0/1234"), replay: `{"/owned":{"state":"idle","last_synced_snap":{"id":120,"name":"checkpoint"},"snaps_synced":1,"snaps_deleted":0,"snaps_renamed":0},"/foreign":null}`}
 	b := &cephFSObserverDraftDaemon{running: true, session: session("172.20.0.9:0/5678"), replay: a.replay}
 	mirror := &Container{
-		source: &ceph.Container{Container: source}, destination: &ceph.Container{Container: destination},
-		sourceFilesystem: "source", destinationFilesystem: "destination", SourceFilesystem: "source", DestinationFilesystem: "destination", SourceClientEntity: "client.owned-auth", DestinationClientEntity: "client.peer",
-		filesystemID: 1, destinationFilesystemID: 2, filesystemIdentityConfirmed: true, metadataPool: "source-metadata", metadataPoolID: 7, destinationMetadataPoolID: 9, destinationSite: "destination-site", peerID: cephFSObserverDraftPeer,
+		pair: cephFSMirrorPair{
+			source: &ceph.Container{Container: source}, destination: &ceph.Container{Container: destination},
+			sourceFilesystem: "source", destinationFilesystem: "destination", sourceClient: "client.owned-auth", destinationClient: "client.peer",
+			sourceFilesystemID: 1, destinationFilesystemID: 2, identityConfirmed: true, metadataPool: "source-metadata", sourceMetadataPoolID: 7, destinationMetadataPoolID: 9, destinationSite: "destination-site",
+		},
+		SourceFilesystem: "source", DestinationFilesystem: "destination", SourceClientEntity: "client.owned-auth", DestinationClientEntity: "client.peer",
+		peer:        cephFSMirrorPeer{id: cephFSObserverDraftPeer},
 		directories: cephFSDirectoryOwnership{owned: map[string]bool{"/owned": true}}, Directories: []string{"/owned"},
 		roster: cephFSDaemonRoster{daemons: []*Daemon{{Container: a, DaemonName: "a"}, {Container: b, DaemonName: "b"}}},
 	}
@@ -140,7 +144,7 @@ func TestCephFSObserverDraftExactOwnedWatcherAndSnapshotIdentity(t *testing.T) {
 	}
 	// Source/destination IDs must be captured during construction, not inferred
 	// from same-name filesystems during every standalone observation.
-	if err := mirror.loadFilesystemIdentity(t.Context()); err != nil || mirror.metadataPoolID != 7 || mirror.destinationFilesystemID != 2 || mirror.destinationMetadataPoolID != 9 {
+	if err := mirror.loadFilesystemIdentity(t.Context()); err != nil || mirror.pair.sourceMetadataPoolID != 7 || mirror.pair.destinationFilesystemID != 2 || mirror.pair.destinationMetadataPoolID != 9 {
 		t.Fatalf("pair identity capture: %v", err)
 	}
 }
@@ -477,15 +481,15 @@ func TestCephFSObserverDraftPartialHandleAndCheckpointInputsFailClosed(t *testin
 		mirror, source, _, _, _ := newCephFSObserverDraft()
 		switch missing {
 		case "source-FSID":
-			mirror.filesystemID = 0
+			mirror.pair.sourceFilesystemID = 0
 		case "destination-FSID":
-			mirror.destinationFilesystemID = 0
+			mirror.pair.destinationFilesystemID = 0
 		case "destination":
-			mirror.destination = nil
+			mirror.pair.destination = nil
 		case "peer":
-			mirror.peerID = ""
+			mirror.peer.id = ""
 		case "pending-import":
-			mirror.pendingPeerImport = &cephFSPeerIdentity{}
+			mirror.peer.pendingImport = &cephFSPeerIdentity{}
 		case "closed":
 			mirror.closed = true
 		}

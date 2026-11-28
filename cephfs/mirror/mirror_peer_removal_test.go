@@ -181,7 +181,7 @@ func newPeerRemovalFixture() (*Container, *peerRemovalControlFake, *peerRemovalC
 	}
 	a := makeDaemon(strings.Repeat("a", 64), "172.20.0.8:0/1234")
 	b := makeDaemon(strings.Repeat("b", 64), "172.20.0.9:0/5678")
-	mirror := &Container{source: &ceph.Container{Container: source}, destination: &ceph.Container{Container: destination}, sourceFilesystem: "source", destinationFilesystem: "destination", SourceFilesystem: "source", DestinationFilesystem: "destination", SourceClientEntity: "client.owned-auth", DestinationClientEntity: "client.peer", filesystemID: 1, destinationFilesystemID: 2, filesystemIdentityConfirmed: true, metadataPool: "source-metadata", metadataPoolID: 7, destinationMetadataPoolID: 9, destinationSite: "destination-site", peerID: cephFSObserverDraftPeer, Directories: []string{"/owned"}, directories: cephFSDirectoryOwnership{owned: map[string]bool{"/owned": true}}, roster: cephFSDaemonRoster{image: "unchanged", keyring: []byte("private-fixture-secret"), daemons: []*Daemon{{Container: a, DaemonName: "a"}, {Container: b, DaemonName: "b"}}}}
+	mirror := &Container{pair: cephFSMirrorPair{source: &ceph.Container{Container: source}, destination: &ceph.Container{Container: destination}, sourceFilesystem: "source", destinationFilesystem: "destination", sourceClient: "client.owned-auth", destinationClient: "client.peer", sourceFilesystemID: 1, destinationFilesystemID: 2, identityConfirmed: true, metadataPool: "source-metadata", sourceMetadataPoolID: 7, destinationMetadataPoolID: 9, destinationSite: "destination-site"}, SourceFilesystem: "source", DestinationFilesystem: "destination", SourceClientEntity: "client.owned-auth", DestinationClientEntity: "client.peer", peer: cephFSMirrorPeer{id: cephFSObserverDraftPeer}, Directories: []string{"/owned"}, directories: cephFSDirectoryOwnership{owned: map[string]bool{"/owned": true}}, roster: cephFSDaemonRoster{image: "unchanged", keyring: []byte("private-fixture-secret"), daemons: []*Daemon{{Container: a, DaemonName: "a"}, {Container: b, DaemonName: "b"}}}}
 	for _, d := range mirror.roster.daemons {
 		d.owner = mirror
 		mirror.owned.AddContainer(d)
@@ -206,7 +206,7 @@ func drainPeerRemovalDaemons(ds ...*peerRemovalDaemonFake) {
 
 func TestCephFSPeerRemovalProductionCommandUnregisterBarrier(t *testing.T) {
 	r, m, s, _, a, b := beginPeerRemovalFixture(t)
-	if s.removals != 1 || m.peerID != "" || len(r.cohort.witnesses) != 2 {
+	if s.removals != 1 || m.peer.id != "" || len(r.cohort.witnesses) != 2 {
 		t.Fatal("original native request/cohort not retained")
 	}
 	a.peer = false
@@ -273,7 +273,7 @@ func TestCephFSPeerRemovalProductionRefusesInvalidPreflightWithoutMutation(t *te
 			case "source-client":
 				m.SourceClientEntity = ""
 			case "peer-pending":
-				m.pendingPeerImport = &cephFSPeerIdentity{}
+				m.peer.pendingImport = &cephFSPeerIdentity{}
 			case "equal-clusters":
 				reader = func(context.Context) ([2]string, error) {
 					return [2]string{peerRemovalSourceFSID, peerRemovalSourceFSID}, nil
@@ -370,7 +370,7 @@ func TestCephFSPeerRemovalProductionOverlapGuardsAndLegacyContract(t *testing.T)
 	}
 	legacy, ls, _, _, _ := newPeerRemovalFixture()
 	legacy.roster.daemons = nil
-	if err := legacy.RemovePeer(t.Context(), cephFSObserverDraftPeer); err != nil || ls.removals != 1 || legacy.ops.peerRemoval != nil || legacy.peerID != "" {
+	if err := legacy.RemovePeer(t.Context(), cephFSObserverDraftPeer); err != nil || ls.removals != 1 || legacy.ops.peerRemoval != nil || legacy.peer.id != "" {
 		t.Fatalf("legacy zero-daemon contract changed: %v", err)
 	}
 }
@@ -568,8 +568,8 @@ func TestCephFSPeerRemovalProductionSupersedesReceiptAfterNewPeerReconcile(t *te
 	if st, err := r.Status(t.Context()); err != nil || !st.Drained {
 		t.Fatal(err)
 	}
-	expected := r.scope.peer
-	m.pendingPeerImport = &expected
+	expected := r.scope.pair.peerIdentity()
+	m.peer.pendingImport = &expected
 	var peers map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(strings.Replace(peerRemovalManagerPeers(), cephFSObserverDraftPeer, peerRemovalNewPeer, 1)), &peers); err != nil {
 		t.Fatal(err)

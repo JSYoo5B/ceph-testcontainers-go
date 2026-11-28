@@ -184,7 +184,7 @@ func (p *directoryObservationPin) running(ctx context.Context) error {
 	for _, site := range []struct {
 		name    string
 		cluster *ceph.Container
-	}{{"source", m.source}, {"destination", m.destination}} {
+	}{{"source", m.pair.source}, {"destination", m.pair.destination}} {
 		if site.cluster == nil {
 			continue
 		}
@@ -212,13 +212,13 @@ func (p *directoryObservationPin) admit(context.Context) error {
 	}
 	directoryGeneration, peerGeneration := m.directories.generation(p.directory), m.ops.peerGeneration
 	if !p.pinned {
-		p.pinned, p.directoryGeneration, p.peerGeneration, p.peerID = true, directoryGeneration, peerGeneration, m.peerID
+		p.pinned, p.directoryGeneration, p.peerGeneration, p.peerID = true, directoryGeneration, peerGeneration, m.peer.id
 		return nil
 	}
 	switch {
 	case directoryGeneration != p.directoryGeneration:
 		return cephFSObserveGuard("CephFS observed directory policy was registered again")
-	case peerGeneration != p.peerGeneration || m.peerID != p.peerID:
+	case peerGeneration != p.peerGeneration || m.peer.id != p.peerID:
 		return cephFSObserveGuard("CephFS observed peer was removed or replaced")
 	}
 	return nil

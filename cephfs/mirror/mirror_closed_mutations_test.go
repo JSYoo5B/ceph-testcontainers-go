@@ -19,7 +19,7 @@ func TestCephFSMirrorPolicyMutationsRefuseTerminatedOwner(t *testing.T) {
 						t.Fatal(err)
 					}
 				case "peer":
-					if _, err := m.beginPeerRemoval(t.Context(), m.peerID, peerRemovalClusterReader); err != nil {
+					if _, err := m.beginPeerRemoval(t.Context(), m.peer.id, peerRemovalClusterReader); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -35,7 +35,7 @@ func TestCephFSMirrorPolicyMutationsRefuseTerminatedOwner(t *testing.T) {
 				}
 				beforePaths := slices.Clone(m.Directories)
 				beforeNative := slices.Clone(s.directories)
-				peer := m.peerID
+				peer := m.peer.id
 				calls, adds, removes, peers := len(s.calls), s.adds, s.removals, s.peerRemovalControlFake.removals
 				operations := map[string]func() error{
 					"add":            func() error { return m.AddDirectory(t.Context(), "/new") },
@@ -57,7 +57,7 @@ func TestCephFSMirrorPolicyMutationsRefuseTerminatedOwner(t *testing.T) {
 				if len(s.calls) != calls || s.adds != adds || s.removals != removes || s.peerRemovalControlFake.removals != peers {
 					t.Error("closed owner dispatched native queries or mutations")
 				}
-				if !slices.Equal(m.Directories, beforePaths) || !slices.Equal(s.directories, beforeNative) || m.peerID != peer {
+				if !slices.Equal(m.Directories, beforePaths) || !slices.Equal(s.directories, beforeNative) || m.peer.id != peer {
 					t.Error("closed owner changed policy or ownership")
 				}
 				failed = false
@@ -79,7 +79,7 @@ func TestCephFSMirrorLiveZeroDaemonPolicyMutations(t *testing.T) {
 	if err := m.RemoveDirectory(t.Context(), "/new"); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.RemovePeer(t.Context(), m.peerID); err != nil {
+	if err := m.RemovePeer(t.Context(), m.peer.id); err != nil {
 		t.Fatal(err)
 	}
 	if s.adds != 1 || s.removals != 1 || s.peerRemovalControlFake.removals != 1 {

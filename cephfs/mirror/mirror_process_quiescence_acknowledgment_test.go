@@ -57,7 +57,7 @@ func removeAcknowledgmentOriginals(t *testing.T, m *Container, raw []*processRaw
 
 func TestCephFSProcessQuiescenceAcknowledgmentPeerAcceptanceAndFreshRetry(t *testing.T) {
 	r, m, s, _, raw := beginPeerAcknowledgmentFixture(t, true)
-	if m.peerID != r.scope.peerID || r.requestAcknowledged {
+	if m.peer.id != r.scope.peerID || r.requestAcknowledged {
 		t.Fatal("lost reply fixture did not retain stale peer intent")
 	}
 	removeAcknowledgmentOriginals(t, m, raw)
@@ -66,7 +66,7 @@ func TestCephFSProcessQuiescenceAcknowledgmentPeerAcceptanceAndFreshRetry(t *tes
 		t.Fatalf("read-only proof changed gate: %+v %v", st, err)
 	}
 	first, err := r.AcknowledgeProcessQuiescence(t.Context())
-	if err != nil || !first.Acknowledged || !first.Observation.OriginalQuiescent || !r.processQuiescenceAcknowledged || !r.terminal() || r.completed || r.requestAcknowledged || m.peerID != "" || m.ops.guardPeerRemovalOverlap() != nil {
+	if err != nil || !first.Acknowledged || !first.Observation.OriginalQuiescent || !r.processQuiescenceAcknowledged || !r.terminal() || r.completed || r.requestAcknowledged || m.peer.id != "" || m.ops.guardPeerRemovalOverlap() != nil {
 		t.Fatalf("peer alternative terminal decision: %+v %v", first, err)
 	}
 	before := raw[0].inspects
@@ -105,7 +105,7 @@ func TestCephFSProcessQuiescenceAcknowledgmentDirectoryReconcilesExactLostReply(
 	if err != nil || !st.Acknowledged || st.Observation.Directory != "/owned" || !st.Observation.OriginalQuiescent || !r.processQuiescenceAcknowledged || r.completed || r.requestAcknowledged || m.ops.guardDirectoryRemovalOverlap() != nil {
 		t.Fatalf("directory alternative terminal decision: %+v %v", st, err)
 	}
-	if slices.Contains(m.Directories, "/owned") || m.directories.owned["/owned"] || m.directories.pendingRelease["/owned"] || !slices.Contains(m.Directories, "/other") || !m.directories.owned["/other"] || !m.directories.pendingRelease["/other"] || m.peerID != cephFSObserverDraftPeer {
+	if slices.Contains(m.Directories, "/owned") || m.directories.owned["/owned"] || m.directories.pendingRelease["/owned"] || !slices.Contains(m.Directories, "/other") || !m.directories.owned["/other"] || !m.directories.pendingRelease["/other"] || m.peer.id != cephFSObserverDraftPeer {
 		t.Fatal("acknowledgment failed exact desired-state reconciliation")
 	}
 	before := raw[0].inspects
@@ -173,7 +173,7 @@ func TestCephFSProcessQuiescenceAcknowledgmentRequiresRemovedInventoryAndExactCI
 			}
 			queries := len(s.calls)
 			st, err := r.AcknowledgeProcessQuiescence(t.Context())
-			if err == nil || st.Acknowledged || r.processQuiescenceAcknowledged || r.completed || r.requestAcknowledged || m.peerID != r.scope.peerID || m.ops.guardPeerRemovalOverlap() == nil || s.removals != 1 {
+			if err == nil || st.Acknowledged || r.processQuiescenceAcknowledged || r.completed || r.requestAcknowledged || m.peer.id != r.scope.peerID || m.ops.guardPeerRemovalOverlap() == nil || s.removals != 1 {
 				t.Fatalf("invalid acknowledgment unblocked intent: %+v %v", st, err)
 			}
 			if len(m.roster.daemons) != 0 && len(s.calls) != queries {
@@ -235,7 +235,7 @@ func TestCephFSProcessQuiescenceAcknowledgmentFailureAndFinalEvidence(t *testing
 				}
 			}
 			st, err := r.AcknowledgeProcessQuiescence(ctx)
-			if err == nil || st.Acknowledged || r.processQuiescenceAcknowledged || r.completed || m.peerID != r.scope.peerID || s.removals != 1 || strings.Contains(err.Error(), "4829") {
+			if err == nil || st.Acknowledged || r.processQuiescenceAcknowledged || r.completed || m.peer.id != r.scope.peerID || s.removals != 1 || strings.Contains(err.Error(), "4829") {
 				t.Fatalf("failed/final proof committed or leaked: %+v %v", st, err)
 			}
 			if fault == "final-cancel" && !errors.Is(err, context.Canceled) {
@@ -417,7 +417,7 @@ func TestCephFSProcessQuiescenceAcknowledgmentLaterMembershipAndPeerGeneration(t
 	if st, err := r.AcknowledgeProcessQuiescence(t.Context()); st.Acknowledged || err == nil || !r.processQuiescenceAcknowledged || m.ops.guardPeerRemovalOverlap() != nil {
 		t.Fatal("failed fresh retry rolled back historical terminal decision")
 	}
-	m.pendingPeerImport = &cephFSPeerIdentity{"client.peer", "destination-site", "destination"}
+	m.peer.pendingImport = &cephFSPeerIdentity{"client.peer", "destination-site", "destination"}
 	peers := map[string]json.RawMessage{peerRemovalNewPeer: json.RawMessage(`{"client_name":"client.peer","site_name":"destination-site","fs_name":"destination"}`)}
 	if _, err := m.reconcilePendingPeer(peers); err != nil || m.ops.peerGeneration == r.scope.generation {
 		t.Fatal("new peer reconciliation failed to advance generation")
@@ -457,7 +457,7 @@ func TestCephFSProcessQuiescenceAcknowledgmentFailedFreshRepeatKeepsHistoricalDe
 			}
 			before := raw[0].infos
 			st, err := r.AcknowledgeProcessQuiescence(t.Context())
-			if err == nil || st.Acknowledged || st.Observation.OriginalQuiescent || !r.processQuiescenceAcknowledged || r.completed || m.peerID != "" || m.ops.guardPeerRemovalOverlap() != nil || s.removals != 1 || strings.Contains(err.Error(), "4829") {
+			if err == nil || st.Acknowledged || st.Observation.OriginalQuiescent || !r.processQuiescenceAcknowledged || r.completed || m.peer.id != "" || m.ops.guardPeerRemovalOverlap() != nil || s.removals != 1 || strings.Contains(err.Error(), "4829") {
 				t.Fatalf("failed repeat reused proof or revoked historical decision: %+v %v", st, err)
 			}
 			if fault != "policy" && raw[0].infos <= before {
@@ -481,7 +481,7 @@ func TestCephFSProcessQuiescenceAcknowledgmentNilGracefulAndCanceled(t *testing.
 	s.watchers = ""
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if st, err := r.AcknowledgeProcessQuiescence(ctx); st.Acknowledged || !errors.Is(err, context.Canceled) || r.processQuiescenceAcknowledged || m.peerID != r.scope.peerID {
+	if st, err := r.AcknowledgeProcessQuiescence(ctx); st.Acknowledged || !errors.Is(err, context.Canceled) || r.processQuiescenceAcknowledged || m.peer.id != r.scope.peerID {
 		t.Fatal("canceled acknowledgment mutated historical state")
 	}
 	r.completed = true
@@ -530,7 +530,7 @@ func TestCephFSProcessQuiescenceAcknowledgmentBusyGatesHaveWatchdog(t *testing.T
 			select {
 			case err := <-done:
 				joined = true
-				if !errors.Is(err, context.DeadlineExceeded) || r.processQuiescenceAcknowledged || m.peerID != r.scope.peerID {
+				if !errors.Is(err, context.DeadlineExceeded) || r.processQuiescenceAcknowledged || m.peer.id != r.scope.peerID {
 					t.Fatal("busy gate ignored context or committed after deadline")
 				}
 			case <-time.After(500 * time.Millisecond):

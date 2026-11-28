@@ -313,8 +313,8 @@ func initialCephFSProcessQuiescenceStatus(c *cephFSRemovalCohort, directory stri
 		return result
 	}
 	s := c.scope
-	result.PeerID, result.SourceFilesystem, result.DestinationFilesystem = s.peerID, s.sourceFilesystem, s.destinationFilesystem
-	result.SourceFilesystemID, result.DestinationFilesystemID = s.sourceID, s.destinationID
+	result.PeerID, result.SourceFilesystem, result.DestinationFilesystem = s.peerID, s.pair.sourceFilesystem, s.pair.destinationFilesystem
+	result.SourceFilesystemID, result.DestinationFilesystemID = s.pair.sourceFilesystemID, s.pair.destinationFilesystemID
 	for _, w := range c.witnesses {
 		entry := OriginalProcessStatus{ContainerID: w.containerID, StartedAt: w.startedAt, InstanceID: w.instanceID, Evidence: "unobserved"}
 		if w.originalProcess != nil {

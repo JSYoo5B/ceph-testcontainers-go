@@ -88,7 +88,7 @@ func (mirror *Container) beginPeerRemoval(ctx context.Context, id string, readCl
 		return nil, err
 	}
 	parsed, err := uuid.Parse(id)
-	if err != nil || parsed.String() != id || parsed == uuid.Nil || id != mirror.peerID {
+	if err != nil || parsed.String() != id || parsed == uuid.Nil || id != mirror.peer.id {
 		return nil, cephFSObserveGuard("CephFS mirror does not own this original peer")
 	}
 	if len(mirror.roster.daemons) == 0 {
@@ -187,7 +187,7 @@ func (r *PeerRemoval) resume(ctx context.Context) error {
 		return err
 	}
 	if !fsPresent {
-		r.scope.mirror.peerID = ""
+		r.scope.mirror.peer.id = ""
 		if present {
 			return cephFSObserveQuery("wait for CephFS manager peer policy convergence", nil)
 		}
@@ -199,11 +199,11 @@ func (r *PeerRemoval) resume(ctx context.Context) error {
 	if r.requestAcknowledged {
 		return cephFSObserveQuery("wait for acknowledged CephFS peer removal policy convergence", nil)
 	}
-	if _, err := r.scope.source.Ceph(ctx, "fs", "snapshot", "mirror", "peer_remove", r.scope.sourceFilesystem, r.scope.peerID); err != nil {
+	if _, err := r.scope.pair.source.Ceph(ctx, "fs", "snapshot", "mirror", "peer_remove", r.scope.pair.sourceFilesystem, r.scope.peerID); err != nil {
 		return cephFSObserveQuery("remove original CephFS mirror peer", err)
 	}
 	r.requestAcknowledged = true
-	r.scope.mirror.peerID = ""
+	r.scope.mirror.peer.id = ""
 	return ctx.Err()
 }
 
@@ -213,7 +213,7 @@ func (r *PeerRemoval) initialStatus() PeerRemovalStatus {
 		return result
 	}
 	s := r.scope
-	result = PeerRemovalStatus{PeerID: s.peerID, SourceFilesystem: s.sourceFilesystem, DestinationFilesystem: s.destinationFilesystem, SourceFilesystemID: s.sourceID, DestinationFilesystemID: s.destinationID, Daemons: make(map[string]PeerRemovalDaemonStatus)}
+	result = PeerRemovalStatus{PeerID: s.peerID, SourceFilesystem: s.pair.sourceFilesystem, DestinationFilesystem: s.pair.destinationFilesystem, SourceFilesystemID: s.pair.sourceFilesystemID, DestinationFilesystemID: s.pair.destinationFilesystemID, Daemons: make(map[string]PeerRemovalDaemonStatus)}
 	for _, w := range r.cohort.witnesses {
 		result.Daemons[w.name] = PeerRemovalDaemonStatus{ContainerID: w.containerID, InstanceID: w.instanceID, State: "unobserved"}
 	}
@@ -293,7 +293,7 @@ func (r *PeerRemoval) statusWithAdmission(ctx context.Context, admitted *bool) (
 	result.Drained = all && len(errs) == 0
 	if result.Drained {
 		r.completed = true
-		r.scope.mirror.peerID = ""
+		r.scope.mirror.peer.id = ""
 	}
 	return result, errors.Join(errs...)
 }

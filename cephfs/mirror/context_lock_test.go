@@ -11,7 +11,7 @@ import (
 func TestSerializedMirrorMutationQueuedDeadline(t *testing.T) {
 	probe := &clustertest.NativeCallCounter{}
 	daemon := &Daemon{Container: probe, DaemonName: "a"}
-	m := &Container{Container: daemon, roster: cephFSDaemonRoster{daemons: []*Daemon{daemon}, initial: daemon}, source: nil}
+	m := &Container{Container: daemon, roster: cephFSDaemonRoster{daemons: []*Daemon{daemon}, initial: daemon}}
 	daemon.owner = m
 	operations := map[string]func(context.Context) error{
 		"AddDaemon":            func(ctx context.Context) error { _, err := m.AddDaemon(ctx, "queued"); return err },

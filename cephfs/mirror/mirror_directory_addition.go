@@ -102,14 +102,14 @@ func (mirror *Container) beginDirectoryAddition(ctx context.Context, directory s
 	if err := mirror.confirmCephFSRefreshHandle(true); err != nil {
 		return nil, err
 	}
-	parsed, err := uuid.Parse(mirror.peerID)
-	if err != nil || parsed.String() != mirror.peerID || parsed == uuid.Nil || mirror.ops.peerGeneration == 0 {
+	parsed, err := uuid.Parse(mirror.peer.id)
+	if err != nil || parsed.String() != mirror.peer.id || parsed == uuid.Nil || mirror.ops.peerGeneration == 0 {
 		return nil, cephFSObserveGuard("CephFS directory addition original identity is unavailable")
 	}
 	if mirror.directories.hasIntent(directory) {
 		return nil, cephFSObserveGuard("CephFS directory addition path already has owned intent")
 	}
-	scope, err := mirror.captureOriginalScope(ctx, "CephFS directory addition", mirror.peerID, readClusters)
+	scope, err := mirror.captureOriginalScope(ctx, "CephFS directory addition", mirror.peer.id, readClusters)
 	if err != nil {
 		return nil, err
 	}
@@ -169,7 +169,7 @@ func (r *DirectoryAddition) checkHandle(retained bool) error {
 	if m.closed || r.superseded || (retained && m.ops.directoryAddition != r) || m.ops.peerGeneration != r.scope.generation {
 		return cephFSObserveGuard("CephFS directory addition owner is closed or superseded")
 	}
-	if !r.scope.sameFixture(false) || m.pendingPeerImport != nil {
+	if !r.scope.sameFixture(false) || m.peer.pendingImport != nil {
 		return cephFSObserveGuard("CephFS directory addition original fixture identity changed")
 	}
 	want := r.baseGeneration
@@ -300,7 +300,7 @@ func (r *DirectoryAddition) attempt(ctx context.Context) error {
 		old.superseded = true
 	}
 	r.requestAttempted = true
-	if _, err := r.scope.source.Ceph(ctx, "fs", "snapshot", "mirror", "add", r.scope.sourceFilesystem, r.directory); err != nil {
+	if _, err := r.scope.pair.source.Ceph(ctx, "fs", "snapshot", "mirror", "add", r.scope.pair.sourceFilesystem, r.directory); err != nil {
 		var failure *ceph.NativeFailure
 		if errors.As(err, &failure) {
 			refusal := *failure
@@ -348,7 +348,7 @@ func (r *DirectoryAddition) Status(ctx context.Context) (DirectoryAdditionStatus
 		return result, cephFSObserveGuard("CephFS directory addition handle is unavailable")
 	}
 	o := r.scope
-	result = DirectoryAdditionStatus{Directory: r.directory, PeerID: o.peerID, SourceFilesystem: o.sourceFilesystem, DestinationFilesystem: o.destinationFilesystem, SourceFilesystemID: o.sourceID, DestinationFilesystemID: o.destinationID}
+	result = DirectoryAdditionStatus{Directory: r.directory, PeerID: o.peerID, SourceFilesystem: o.pair.sourceFilesystem, DestinationFilesystem: o.pair.destinationFilesystem, SourceFilesystemID: o.pair.sourceFilesystemID, DestinationFilesystemID: o.pair.destinationFilesystemID}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if err := multicluster.LockObservation(ctx, &o.mirror.mu); err != nil {

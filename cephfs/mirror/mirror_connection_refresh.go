@@ -27,7 +27,7 @@ import (
 //purpose:condition
 func (mirror *Container) RefreshMonitorConfig(ctx context.Context) error {
 	return mirror.refreshMonitorConfig(ctx, func(ctx context.Context, client testcontainers.Container) error {
-		return mirror.source.RefreshClientMonitorConfig(ctx, client)
+		return mirror.pair.source.RefreshClientMonitorConfig(ctx, client)
 	})
 }
 
@@ -92,7 +92,7 @@ func (mirror *Container) refreshMonitorConfig(ctx context.Context, refresh func(
 //purpose:condition
 func (mirror *Container) RefreshPeerMonitorConfig(ctx context.Context) error {
 	return mirror.refreshPeerMonitorConfig(ctx, func(ctx context.Context) (string, error) {
-		observer, err := ceph.Observe(mirror.destination)
+		observer, err := ceph.Observe(mirror.pair.destination)
 		if err != nil {
 			return "", err
 		}
@@ -120,8 +120,8 @@ func (mirror *Container) refreshPeerMonitorConfig(ctx context.Context, addresses
 	if err != nil {
 		return err
 	}
-	key := "cephfs/mirror/peer/" + mirror.SourceFilesystem + "/" + mirror.peerID
-	data, err := mirror.source.Ceph(ctx, "config-key", "get", key)
+	key := "cephfs/mirror/peer/" + mirror.SourceFilesystem + "/" + mirror.peer.id
+	data, err := mirror.pair.source.Ceph(ctx, "config-key", "get", key)
 	if err != nil {
 		return cephFSObserveQuery("read owned CephFS peer bootstrap configuration", err)
 	}
@@ -138,11 +138,11 @@ func (mirror *Container) refreshPeerMonitorConfig(ctx context.Context, addresses
 		if err := mirror.checkCephFSObservedIdentities(ctx); err != nil {
 			return err
 		}
-		writeErr = writeCephFSOwnedPeerConfig(ctx, mirror.source, key, updated)
+		writeErr = writeCephFSOwnedPeerConfig(ctx, mirror.pair.source, key, updated)
 		if err := ctx.Err(); err != nil {
 			return errors.Join(writeErr, err)
 		}
-		after, err := mirror.source.Ceph(ctx, "config-key", "get", key)
+		after, err := mirror.pair.source.Ceph(ctx, "config-key", "get", key)
 		if err != nil {
 			return errors.Join(writeErr, cephFSObserveQuery("confirm owned CephFS peer bootstrap configuration", err))
 		}
@@ -195,10 +195,10 @@ func writeCephFSOwnedPeerConfig(ctx context.Context, source *ceph.Container, key
 }
 
 func (mirror *Container) confirmCephFSRefreshHandle(requirePeer bool) error {
-	if mirror.closed || mirror.source == nil || mirror.destination == nil || mirror.filesystemID <= 0 || mirror.destinationFilesystemID <= 0 {
+	if mirror.closed || mirror.pair.source == nil || mirror.pair.destination == nil || mirror.pair.sourceFilesystemID <= 0 || mirror.pair.destinationFilesystemID <= 0 {
 		return cephFSObserveGuard("CephFS mirror original filesystem identities are unavailable")
 	}
-	if requirePeer && (mirror.peerID == "" || mirror.pendingPeerImport != nil) {
+	if requirePeer && (mirror.peer.id == "" || mirror.peer.pendingImport != nil) {
 		return cephFSObserveGuard("CephFS mirror owned peer identity is unavailable")
 	}
 	return nil
@@ -222,7 +222,7 @@ func (mirror *Container) readCephFSRemoteMonitorIdentity(ctx context.Context, ad
 	if current == "" || strings.ContainsAny(current, "\x00\r\n") {
 		return result, cephFSObserveGuard("CephFS destination monitor bootstrap is unavailable")
 	}
-	data, err := mirror.destination.Ceph(ctx, "fsid")
+	data, err := mirror.pair.destination.Ceph(ctx, "fsid")
 	if err != nil {
 		return result, cephFSObserveQuery("read CephFS destination cluster identity", err)
 	}
