@@ -365,7 +365,7 @@ func TestCephFSPeerRemovalProductionOverlapGuardsAndLegacyContract(t *testing.T)
 	if st, err := r.Status(t.Context()); err != nil || !st.Drained {
 		t.Fatal(err)
 	}
-	if err := m.ops.guardPeerRemovalOverlap(); err != nil {
+	if err := m.ops.guardAnyPending(); err != nil {
 		t.Fatal("completed receipt keeps import gate closed")
 	}
 	legacy, ls, _, _, _ := newPeerRemovalFixture()

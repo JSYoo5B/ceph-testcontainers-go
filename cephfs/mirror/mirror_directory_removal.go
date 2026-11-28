@@ -115,13 +115,13 @@ func (mirror *Container) beginDirectoryRemoval(ctx context.Context, directory st
 		return nil, err
 	}
 	defer mirror.mu.Unlock()
-	if err := mirror.ops.guardDirectoryAdditionOverlap(); err != nil {
+	if err := mirror.ops.guardPendingAddition(); err != nil {
 		return nil, err
 	}
 	if r := mirror.ops.directoryRemoval; r != nil && r.directory == directory && r.generation == mirror.directories.generation(directory) && !r.superseded {
 		return r, r.resumeRetained(ctx)
 	}
-	if err := mirror.ops.guardPeerRemovalOverlap(); err != nil {
+	if err := mirror.ops.guardAnyPending(); err != nil {
 		return nil, err
 	}
 	if err := mirror.confirmCephFSRefreshHandle(true); err != nil {
@@ -204,13 +204,6 @@ func (r *DirectoryRemoval) preflight(ctx context.Context) error {
 		return cephFSObserveGuard("original CephFS directory owner changed during removal preflight")
 	}
 	return ctx.Err()
-}
-
-func (ops *mirrorOperations) guardDirectoryRemovalOverlap() error {
-	if ops.directoryRemoval != nil && !ops.directoryRemoval.terminal() {
-		return cephFSObserveGuard("explicit CephFS directory release is incomplete")
-	}
-	return nil
 }
 
 // checkHandle is called only under mirror.mu. The removal shares the original

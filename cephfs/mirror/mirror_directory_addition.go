@@ -84,13 +84,13 @@ func (mirror *Container) beginDirectoryAddition(ctx context.Context, directory s
 		return nil, err
 	}
 	defer mirror.mu.Unlock()
-	if err := mirror.ops.guardCephFSRemovalOverlap(); err != nil {
+	if err := mirror.ops.guardPendingRemoval(); err != nil {
 		return nil, err
 	}
 	if r := mirror.ops.directoryAddition; r != nil && r.directory == directory && !r.superseded {
 		return r.result(r.resume(ctx))
 	}
-	if err := mirror.ops.guardDirectoryAdditionOverlap(); err != nil {
+	if err := mirror.ops.guardPendingAddition(); err != nil {
 		return nil, err
 	}
 	if err := mirror.confirmCephFSRefreshHandle(true); err != nil {
@@ -131,28 +131,6 @@ func (r *DirectoryAddition) result(err error) (*DirectoryAddition, error) {
 		return nil, err
 	}
 	return r, err
-}
-
-func (ops *mirrorOperations) guardDirectoryAdditionOverlap() error {
-	if r := ops.directoryAddition; r != nil && !r.registered {
-		return cephFSObserveGuard("explicit CephFS directory addition is incomplete")
-	}
-	return nil
-}
-
-// Called before a selected-path mutation, including an uncertain native attempt.
-func (ops *mirrorOperations) supersedeDirectoryAddition(directory string) {
-	if r := ops.directoryAddition; r != nil && r.registered && r.directory == directory {
-		r.superseded = true
-	}
-}
-
-// Peer removal invalidates only a completed addition from that exact owned peer
-// generation. Read-only/stale receipt retries do not retire a newer addition.
-func (ops *mirrorOperations) supersedePeerDirectoryAddition(id string) {
-	if r := ops.directoryAddition; r != nil && r.registered && r.scope != nil && r.scope.peerID == id && r.scope.generation == ops.peerGeneration {
-		r.superseded = true
-	}
 }
 
 func (r *DirectoryAddition) checkHandle(retained bool) error {

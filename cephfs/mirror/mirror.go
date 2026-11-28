@@ -174,18 +174,6 @@ type cephFSMirrorPeer struct {
 	pendingImport *cephFSPeerIdentity
 }
 
-// mirrorOperations is the ledger of a mirror's explicit operations in flight:
-// the peer drain, the directory release and the directory addition, with the
-// peer generation that lets a completed addition be superseded. Its overlap
-// guards keep two of these operations from running against the same native
-// state. Every method requires the caller to hold Container.mu.
-type mirrorOperations struct {
-	peerRemoval       *PeerRemoval
-	directoryRemoval  *DirectoryRemoval
-	directoryAddition *DirectoryAddition
-	peerGeneration    uint64
-}
-
 // peer_list in Tentacle's mgr mirroring/fs/snapshot_mirror.py reports
 // UUID -> {client_name, site_name, fs_name}. site_name is the remote cluster
 // name; unlike the daemon's status JSON, this command does not use cluster_name.
@@ -594,7 +582,7 @@ func (mirror *Container) AddDaemon(ctx context.Context, daemonName string, opts 
 		return nil, err
 	}
 	defer mirror.mu.Unlock()
-	if err := mirror.ops.guardPeerRemovalOverlap(); err != nil {
+	if err := mirror.ops.guardAnyPending(); err != nil {
 		return nil, err
 	}
 	if mirror.pair.source == nil || mirror.pair.destination == nil || !mirror.roster.configured() {
@@ -933,7 +921,7 @@ func (mirror *Container) AddDirectory(ctx context.Context, directory string) err
 		return err
 	}
 	defer mirror.mu.Unlock()
-	if err := mirror.ops.guardPeerRemovalOverlap(); err != nil {
+	if err := mirror.ops.guardAnyPending(); err != nil {
 		return err
 	}
 	if err := mirror.confirmDirectoryFilesystems(ctx); err != nil {
@@ -988,7 +976,7 @@ func (mirror *Container) RemoveDirectory(ctx context.Context, directory string) 
 		return err
 	}
 	defer mirror.mu.Unlock()
-	if err := mirror.ops.guardDirectoryAdditionOverlap(); err != nil {
+	if err := mirror.ops.guardPendingAddition(); err != nil {
 		return err
 	}
 	if r := mirror.ops.directoryRemoval; r != nil && r.directory == directory && !r.completed {
@@ -1003,7 +991,7 @@ func (mirror *Container) RemoveDirectory(ctx context.Context, directory string) 
 			return r.resume(ctx)
 		}
 	}
-	if err := mirror.ops.guardPeerRemovalOverlap(); err != nil {
+	if err := mirror.ops.guardAnyPending(); err != nil {
 		return err
 	}
 	if err := mirror.confirmDirectoryFilesystems(ctx); err != nil {
@@ -1072,7 +1060,7 @@ func (mirror *Container) RebalanceDirectories(ctx context.Context) error {
 		return err
 	}
 	defer mirror.mu.Unlock()
-	if err := mirror.ops.guardPeerRemovalOverlap(); err != nil {
+	if err := mirror.ops.guardAnyPending(); err != nil {
 		return err
 	}
 	if mirror.peer.id == "" {
@@ -1348,7 +1336,7 @@ func (mirror *Container) RemovePeer(ctx context.Context, id string) error {
 		return err
 	}
 	defer mirror.mu.Unlock()
-	if err := mirror.ops.guardDirectoryAdditionOverlap(); err != nil {
+	if err := mirror.ops.guardPendingAddition(); err != nil {
 		return err
 	}
 	if mirror.ops.peerRemoval != nil && mirror.ops.peerRemoval.scope.peerID == id && !mirror.ops.peerRemoval.completed {
@@ -1360,7 +1348,7 @@ func (mirror *Container) RemovePeer(ctx context.Context, id string) error {
 		}
 		return mirror.ops.peerRemoval.resume(ctx)
 	}
-	if err := mirror.ops.guardPeerRemovalOverlap(); err != nil {
+	if err := mirror.ops.guardAnyPending(); err != nil {
 		return err
 	}
 	if id == "" || id != mirror.peer.id {
@@ -1397,7 +1385,7 @@ func (mirror *Container) RebootstrapPeer(ctx context.Context) (string, error) {
 		return "", err
 	}
 	defer mirror.mu.Unlock()
-	if err := mirror.ops.guardPeerRemovalOverlap(); err != nil {
+	if err := mirror.ops.guardAnyPending(); err != nil {
 		return "", err
 	}
 	if err := mirror.confirmCephFSRefreshHandle(false); err != nil {

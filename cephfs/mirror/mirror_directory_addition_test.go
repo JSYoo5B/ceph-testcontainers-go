@@ -618,7 +618,7 @@ func TestCephFSDirectoryAdditionFreshQueryFailureKeepsPublishedOwnership(t *test
 	}
 	s.peerRemovalControlFake.queryError = errPeerRemovalTransport
 	st, err := r.Status(t.Context())
-	if !errors.Is(err, errPeerRemovalTransport) || st.Registered || st.PolicyPresent || !r.registered || !m.directories.owned["/added"] || m.directories.generations["/added"] != 1 || m.ops.guardDirectoryAdditionOverlap() != nil || s.adds != 1 {
+	if !errors.Is(err, errPeerRemovalTransport) || st.Registered || st.PolicyPresent || !r.registered || !m.directories.owned["/added"] || m.directories.generations["/added"] != 1 || m.ops.guardPendingAddition() != nil || s.adds != 1 {
 		t.Fatal("fresh observation reused report or revoked historical publication")
 	}
 }

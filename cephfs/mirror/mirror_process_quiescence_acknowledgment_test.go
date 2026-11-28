@@ -61,11 +61,11 @@ func TestCephFSProcessQuiescenceAcknowledgmentPeerAcceptanceAndFreshRetry(t *tes
 	}
 	removeAcknowledgmentOriginals(t, m, raw)
 	s.watchers = ""
-	if st, err := r.ProcessQuiescence(t.Context()); err != nil || !st.OriginalQuiescent || m.ops.guardPeerRemovalOverlap() == nil {
+	if st, err := r.ProcessQuiescence(t.Context()); err != nil || !st.OriginalQuiescent || m.ops.guardAnyPending() == nil {
 		t.Fatalf("read-only proof changed gate: %+v %v", st, err)
 	}
 	first, err := r.AcknowledgeProcessQuiescence(t.Context())
-	if err != nil || !first.Acknowledged || !first.Observation.OriginalQuiescent || !r.processQuiescenceAcknowledged || !r.terminal() || r.completed || r.requestAcknowledged || m.peer.id != "" || m.ops.guardPeerRemovalOverlap() != nil {
+	if err != nil || !first.Acknowledged || !first.Observation.OriginalQuiescent || !r.processQuiescenceAcknowledged || !r.terminal() || r.completed || r.requestAcknowledged || m.peer.id != "" || m.ops.guardAnyPending() != nil {
 		t.Fatalf("peer alternative terminal decision: %+v %v", first, err)
 	}
 	before := raw[0].inspects
@@ -101,7 +101,7 @@ func TestCephFSProcessQuiescenceAcknowledgmentDirectoryReconcilesExactLostReply(
 	removeAcknowledgmentOriginals(t, m, raw)
 	s.watchers = ""
 	st, err := r.AcknowledgeProcessQuiescence(t.Context())
-	if err != nil || !st.Acknowledged || st.Observation.Directory != "/owned" || !st.Observation.OriginalQuiescent || !r.processQuiescenceAcknowledged || r.completed || r.requestAcknowledged || m.ops.guardDirectoryRemovalOverlap() != nil {
+	if err != nil || !st.Acknowledged || st.Observation.Directory != "/owned" || !st.Observation.OriginalQuiescent || !r.processQuiescenceAcknowledged || r.completed || r.requestAcknowledged || m.ops.guardPendingRemoval() != nil {
 		t.Fatalf("directory alternative terminal decision: %+v %v", st, err)
 	}
 	if slices.Contains(m.registered, "/owned") || m.directories.owned["/owned"] || m.directories.pendingRelease["/owned"] || !slices.Contains(m.registered, "/other") || !m.directories.owned["/other"] || !m.directories.pendingRelease["/other"] || m.peer.id != cephFSObserverDraftPeer {
@@ -172,7 +172,7 @@ func TestCephFSProcessQuiescenceAcknowledgmentRequiresRemovedInventoryAndExactCI
 			}
 			queries := len(s.calls)
 			st, err := r.AcknowledgeProcessQuiescence(t.Context())
-			if err == nil || st.Acknowledged || r.processQuiescenceAcknowledged || r.completed || r.requestAcknowledged || m.peer.id != r.scope.peerID || m.ops.guardPeerRemovalOverlap() == nil || s.removals != 1 {
+			if err == nil || st.Acknowledged || r.processQuiescenceAcknowledged || r.completed || r.requestAcknowledged || m.peer.id != r.scope.peerID || m.ops.guardAnyPending() == nil || s.removals != 1 {
 				t.Fatalf("invalid acknowledgment unblocked intent: %+v %v", st, err)
 			}
 			if len(m.roster.daemons) != 0 && len(s.calls) != queries {
@@ -388,7 +388,7 @@ func TestCephFSProcessQuiescenceAcknowledgmentDirectoryFinalAuthorityFailureKeep
 				s.hook = nil
 			}
 			st, err := r.AcknowledgeProcessQuiescence(ctx)
-			if err == nil || st.Acknowledged || r.processQuiescenceAcknowledged || r.completed || r.requestAcknowledged || !m.directories.owned["/owned"] || !slices.Contains(m.registered, "/owned") || m.ops.guardDirectoryRemovalOverlap() == nil || s.removals != 1 {
+			if err == nil || st.Acknowledged || r.processQuiescenceAcknowledged || r.completed || r.requestAcknowledged || !m.directories.owned["/owned"] || !slices.Contains(m.registered, "/owned") || m.ops.guardPendingRemoval() == nil || s.removals != 1 {
 				t.Fatalf("failed directory proof changed desired intent: %+v %v", st, err)
 			}
 			if fault == "cancel" && !errors.Is(err, context.Canceled) {
@@ -413,7 +413,7 @@ func TestCephFSProcessQuiescenceAcknowledgmentLaterMembershipAndPeerGeneration(t
 	if err := m.RemovePeer(t.Context(), r.scope.peerID); err != nil || s.removals != 1 {
 		t.Fatal("accepted retry with new cohort replayed deletion")
 	}
-	if st, err := r.AcknowledgeProcessQuiescence(t.Context()); st.Acknowledged || err == nil || !r.processQuiescenceAcknowledged || m.ops.guardPeerRemovalOverlap() != nil {
+	if st, err := r.AcknowledgeProcessQuiescence(t.Context()); st.Acknowledged || err == nil || !r.processQuiescenceAcknowledged || m.ops.guardAnyPending() != nil {
 		t.Fatal("failed fresh retry rolled back historical terminal decision")
 	}
 	m.peer.pendingImport = &cephFSPeerIdentity{"client.peer", "destination-site", "destination"}
@@ -432,7 +432,7 @@ func TestCephFSProcessQuiescenceAcknowledgmentLaterMembershipAndPeerGeneration(t
 	}
 	// A new explicit receipt's pending state belongs to that receipt, not fixture.
 	m.ops.peerRemoval = &PeerRemoval{scope: &cephFSOriginalScope{mirror: m, peerID: peerRemovalNewPeer, generation: m.ops.peerGeneration}}
-	if m.ops.guardPeerRemovalOverlap() == nil {
+	if m.ops.guardAnyPending() == nil {
 		t.Fatal("new receipt inherited historical acknowledgment")
 	}
 }
@@ -456,7 +456,7 @@ func TestCephFSProcessQuiescenceAcknowledgmentFailedFreshRepeatKeepsHistoricalDe
 			}
 			before := raw[0].infos
 			st, err := r.AcknowledgeProcessQuiescence(t.Context())
-			if err == nil || st.Acknowledged || st.Observation.OriginalQuiescent || !r.processQuiescenceAcknowledged || r.completed || m.peer.id != "" || m.ops.guardPeerRemovalOverlap() != nil || s.removals != 1 || strings.Contains(err.Error(), "4829") {
+			if err == nil || st.Acknowledged || st.Observation.OriginalQuiescent || !r.processQuiescenceAcknowledged || r.completed || m.peer.id != "" || m.ops.guardAnyPending() != nil || s.removals != 1 || strings.Contains(err.Error(), "4829") {
 				t.Fatalf("failed repeat reused proof or revoked historical decision: %+v %v", st, err)
 			}
 			if fault != "policy" && raw[0].infos <= before {
