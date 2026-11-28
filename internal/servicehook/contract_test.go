@@ -40,11 +40,11 @@ var registrationMu sync.Mutex
 func TestProductionCallDoesNotNeedTestAccess(t *testing.T) {
 	registrationMu.Lock()
 	defer registrationMu.Unlock()
-	saved := hookreg.Value
-	defer func() { hookreg.Value = saved }()
+	saved := hookreg.Service
+	defer func() { hookreg.Service = saved }()
 
 	calls := 0
-	hookreg.Value = onlyLock{locked: &calls}
+	hookreg.Service = onlyLock{locked: &calls}
 	Lock(nil)
 	if calls != 1 {
 		t.Fatalf("Lock reached the hooks %d times", calls)
@@ -54,7 +54,7 @@ func TestProductionCallDoesNotNeedTestAccess(t *testing.T) {
 func TestRegisteredHooksSatisfyProductionContract(t *testing.T) {
 	registrationMu.Lock()
 	defer registrationMu.Unlock()
-	if _, ok := hookreg.Value.(hooks); !ok {
+	if _, ok := hookreg.Service.(hooks); !ok {
 		t.Error("package ceph registered hooks that do not satisfy the production contract")
 	}
 }

@@ -8,11 +8,14 @@
 // that runs an arbitrary Ceph command, and none that returns the cluster
 // mutex, the keyring, the configuration bytes or a control container.
 //
-// Lock rules: Reserve, Settle, Release, Tracks, Ready, Terminated and the
-// native operations need the cluster mutex, held through WithTopology. A
-// function passed to them must not call a public
-// ceph.Container method that takes the cluster mutex and returns before the
-// hook unlocks.
+// Lock rules: Reserve, Settle, Release, Tracks, Ready, MGRConfigTargets and
+// the native operations need the cluster mutex, held through WithTopology,
+// with two exceptions: OpenDebugTarget waits for the mutex itself and holds
+// none when it returns, and a DebugTarget takes it for each of its methods.
+// Terminated, StartupTimeout, CheckConfigAllowed, MessengerPolicySettings,
+// DebugWindowRegistry and the pure checks and normalizations need none. A
+// function passed to WithTopology must not call a public ceph.Container
+// method that takes the cluster mutex and returns before the hook unlocks.
 package overridehook
 
 import (

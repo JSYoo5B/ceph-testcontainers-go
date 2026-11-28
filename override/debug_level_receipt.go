@@ -13,11 +13,15 @@ type DebugLevelSetting struct {
 	Daemon, Name, Level string
 }
 
-// DebugLevelState is the progress of a DebugLevelHandle. A window
-// moves from DebugLevelPriorRead through DebugLevelApplyAttempted to
-// DebugLevelApplied or DebugLevelApplyUncertain, and Restore moves it through
-// DebugLevelRestoreAttempted to DebugLevelRestored, DebugLevelConflict,
-// DebugLevelTargetChanged or DebugLevelUnconfirmed.
+// DebugLevelState is the progress of a DebugLevelHandle. A request that
+// issues no set ends as DebugLevelNotApplied, before or after
+// DebugLevelPriorRead: a target that changed while its prior level was read
+// is refused this way. A window whose set was issued moves from
+// DebugLevelPriorRead through DebugLevelApplyAttempted to DebugLevelApplied,
+// DebugLevelApplyUncertain or, when the target changed during the apply,
+// DebugLevelTargetChanged. Restore moves an applied or uncertain window
+// through DebugLevelRestoreAttempted to DebugLevelRestored,
+// DebugLevelConflict, DebugLevelTargetChanged or DebugLevelUnconfirmed.
 type DebugLevelState string
 
 const (

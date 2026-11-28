@@ -10,7 +10,7 @@
 // offsets and CPU limits last under it. Callers cannot add a phase, change the order or register another
 // cleanup.
 //
-// Lock rules: Reserve, Settle, Release, Closed, Owns, OwnedOSD,
+// Lock rules: Reserve, Settle, Release, Closed, Owns, ClockTarget, OwnedOSD,
 // PoolPolicyReady and PoolState need the cluster mutex, held through
 // WithTopology or WithTopologyNoContext. A function passed to them must not
 // lock a handle's mutex that is itself held while the cluster mutex is
@@ -111,8 +111,8 @@ func get() hooks {
 
 // Reserve reserves key for a fault of kind. The caller holds the mutex and
 // has refused a closed cluster with its own error. A refusal of
-// NetworkInterruption, ContainerPause or CPULimit may return the previous handle,
-// which still needs its undo.
+// NetworkInterruption, ContainerPause, CPULimit or ClockOffset may return the
+// previous handle, which still needs its undo.
 func Reserve(ctx context.Context, c *ceph.Container, kind Kind, key string) (Token, any, error) {
 	token, previous, err := get().Reserve(ctx, c, string(kind), key)
 	if err != nil {
