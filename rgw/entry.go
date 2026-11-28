@@ -67,7 +67,8 @@ func Gateways(ctx context.Context, c *ceph.Container) ([]*Gateway, error) {
 }
 
 // WithGateways starts named gateways during Run. No arguments starts one
-// default gateway. Repeated options replace the list. All gateways share this
+// default gateway. Repeated options replace the list. The configs, their TLS
+// material included, are copied when WithGateways is called. All gateways share this
 // cluster's backing zone; multisite scope is configured separately by
 // multisite.Run.
 //
@@ -76,7 +77,22 @@ func WithGateways(configs ...Config) ceph.Option {
 	if len(configs) == 0 {
 		configs = []Config{{}}
 	}
-	return servicehook.WithBootstrap(bootstrapKind, false, func() (servicehook.Bootstrap, error) { return newRGWBootstrap(configs), nil })
+	// Copy now, the TLS material included, so that later changes to the
+	// caller's configs do not reach Run.
+	captured := copyGatewayConfigs(configs)
+	return servicehook.WithBootstrap(bootstrapKind, false, func() (servicehook.Bootstrap, error) { return newRGWBootstrap(captured), nil })
+}
+
+// copyGatewayConfigs copies configs with their TLS configurations and PEM
+// bytes.
+func copyGatewayConfigs(configs []Config) []Config {
+	copied := slices.Clone(configs)
+	for i, config := range copied {
+		if config.TLS != nil {
+			copied[i].TLS = &TLSConfig{CertificatePEM: slices.Clone(config.TLS.CertificatePEM), PrivateKeyPEM: slices.Clone(config.TLS.PrivateKeyPEM)}
+		}
+	}
+	return copied
 }
 
 // defaultGateway selects one default gateway when no gateway option was given.

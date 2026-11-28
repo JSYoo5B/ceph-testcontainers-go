@@ -1,6 +1,7 @@
 package rgw
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -155,5 +156,30 @@ func TestGatewayImageOptionFillsMissingRoleInRunWithImageSet(t *testing.T) {
 	cluster, err := ceph.Run(ctx, "", ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(ceph.ImageSet{Essential: "core", Client: "toolkit"}).WithRGWImage("service-image")), WithGateways())
 	if cluster != nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("service image option did not reach canceled admission: %v %v", cluster, err)
+	}
+}
+
+// TestWithGatewaysCopiesItsConfigsWhenCalled changes the caller's slice and
+// TLS bytes after WithGateways and before Run applies the option: Run sees
+// the configs as they were when the option was created.
+func TestWithGatewaysCopiesItsConfigsWhenCalled(t *testing.T) {
+	material := testRGWTLSMaterial(t)
+	certificate, key := bytes.Clone(material.CertificatePEM), bytes.Clone(material.PrivateKeyPEM)
+	configs := []Config{{Name: "s3", TLS: material}}
+	option := WithGateways(configs...)
+	configs[0].Name = "changed"
+	material.CertificatePEM[0], material.PrivateKeyPEM[0] = 'x', 'x'
+	configs[0].TLS = nil
+	services, err := testhelper.TestApply(option)
+	if err != nil || len(services) != 1 {
+		t.Fatalf("bootstraps: %v %v", services, err)
+	}
+	b, ok := services[0].(*rgwBootstrap)
+	if !ok || len(b.configs) != 1 || b.configs[0].Name != "s3" || b.configs[0].TLS == nil ||
+		!bytes.Equal(b.configs[0].TLS.CertificatePEM, certificate) || !bytes.Equal(b.configs[0].TLS.PrivateKeyPEM, key) {
+		t.Fatalf("Run saw the caller's later changes: %+v", services)
+	}
+	if err := b.Prepare(nil, nil); err != nil {
+		t.Fatalf("the captured TLS material no longer validates: %v", err)
 	}
 }
