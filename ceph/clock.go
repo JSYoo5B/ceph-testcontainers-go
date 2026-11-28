@@ -364,7 +364,9 @@ type clockState struct {
 
 // loadClockInterposer admits the helper of settings, when it names one,
 // before Run creates anything else; owner is the ID that labels the
-// cluster's containers.
+// cluster's containers. Only MON a is armed here, because Run creates it
+// without AddMonitor; the other initial MONs are armed by AddMonitor through
+// clockDaemonOption, like any MON it adds.
 func loadClockInterposer(ctx context.Context, settings options, owner string) (clockState, error) {
 	state := clockState{armed: map[string]bool{}}
 	if settings.clock.set&clockHelperImage == 0 {
@@ -379,8 +381,8 @@ func loadClockInterposer(ctx context.Context, settings options, owner string) (c
 		return clockState{}, err
 	}
 	state.interposer = interposer
-	for _, name := range settings.clock.monitors {
-		state.armed[name] = true
+	if slices.Contains(settings.clock.monitors, "a") {
+		state.armed["a"] = true
 	}
 	return state, nil
 }

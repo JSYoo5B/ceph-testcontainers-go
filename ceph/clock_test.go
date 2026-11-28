@@ -338,6 +338,42 @@ func TestMonClockBlockPreloadsOnlyTheDaemon(t *testing.T) {
 // MON, with a quorum reply it cannot read, and requires the name to stay
 // unarmed, so that a later AddMonitor of that name without
 // WithClockInstrumentation gets no interposer.
+// TestInitialMonitorsAreArmedByAddMonitor checks that Run pre-arms only MON
+// a, and that an initial MON whose AddMonitor fails before the cluster owns
+// it is not recorded as armed.
+func TestInitialMonitorsAreArmedByAddMonitor(t *testing.T) {
+	restore := clockHelperFiles
+	t.Cleanup(func() { clockHelperFiles = restore })
+	good := clockTestELF(elf.EM_X86_64, map[string]elf.SectionIndex{"clock_gettime": 1})
+	clockHelperFiles = func(context.Context, string, string) ([]byte, []byte, error) {
+		return clockTestManifest(t, good, nil), good, nil
+	}
+	settings, err := resolveOptions(DefaultImage, []testcontainers.ContainerCustomizer{
+		WithClusterConfig(ClusterConfig{}.WithMonitorCount(3)),
+		WithClockConfig(ClockConfig{}.WithHelperImage("helper:v1").WithMonitors("a", "b")),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := loadClockInterposer(t.Context(), settings, "owner")
+	if err != nil || !state.armed["a"] || len(state.armed) != 1 {
+		t.Fatalf("pre-armed MONs = %v, %v; want only a", state.armed, err)
+	}
+	if settings.clockDaemonOption("b") == nil || settings.clockDaemonOption("c") != nil {
+		t.Fatal("clockDaemonOption does not follow ClockConfig.WithMonitors")
+	}
+	c, control := newMonitorConfigFixture()
+	c.settings.clock = settings.clock
+	c.clock = state
+	control.native = []byte("{not a quorum reply")
+	if mon, err := c.AddMonitor(t.Context(), "b", c.settings.clockDaemonOption("b")...); err == nil || mon != nil {
+		t.Fatalf("AddMonitor = %v, %v; want a failure before registration", mon, err)
+	}
+	if c.clockArmed("b") || c.clockFiles("b", false) != nil {
+		t.Fatal("an initial MON that was never owned is recorded as armed")
+	}
+}
+
 func TestAddMonitorArmsOnlyAnOwnedMonitor(t *testing.T) {
 	c, control := newMonitorConfigFixture()
 	c.clock = clockState{interposer: []byte("interposer"), armed: map[string]bool{}}
