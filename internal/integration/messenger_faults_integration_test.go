@@ -178,7 +178,7 @@ func TestMessengerFaultInjection(t *testing.T) {
 					t.Logf("MESSENGER_FAULT_MOUNT %s", harness.LastJSONLine(out))
 					return result
 				}
-				active := func(t *testing.T) cephfs.MDSStatus {
+				active := func(t *testing.T) cephfs.MDSDaemonStatus {
 					t.Helper()
 					status, err := fs.MDSStatus(ctx)
 					if err != nil || len(status.Active) != 1 {

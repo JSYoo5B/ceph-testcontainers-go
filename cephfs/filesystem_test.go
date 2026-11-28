@@ -101,7 +101,7 @@ func TestCephFSUsesClusterPoolDefaultsAndPreservesPartialDescriptor(t *testing.T
 
 func TestExistingCephFSDoesNotCreatePoolsOrChangeFilesystem(t *testing.T) {
 	ctr := &poolFixtureContainer{Output: map[string]string{
-		"fs dump --format json": `{"feature_flags":{"enable_multiple":false},"filesystems":[{"id":1,"mdsmap":{"fs_name":"tc-cephfs"}}]}`,
+		"fs dump --format json": `{"feature_flags":{"enable_multiple":false},"standbys":[],"filesystems":[{"id":1,"mdsmap":{"fs_name":"tc-cephfs"}}]}`,
 	}}
 	fs, err := startFilesystem(t.Context(), poolFixtureCluster(ctr, 2), Config{})
 	if err == nil || fs != nil || len(ctr.Calls) != 1 || !slices.Equal(ctr.Calls[0], []string{"fs", "dump", "--format", "json"}) {
@@ -253,11 +253,11 @@ func TestCephFSScaleRejectsCountsBeforeNativeCommands(t *testing.T) {
 }
 
 func TestCephFSMDSRetirementRequiresSettledOwnedRanksAndPrefersIdle(t *testing.T) {
-	active := MDSStatus{Name: "tenant-0", Rank: 0, GID: 10, Owned: true, State: "up:active"}
-	replay := MDSStatus{Name: "tenant-1", Rank: 0, GID: 11, Owned: true, State: "up:standby-replay"}
-	idle := MDSStatus{Name: "tenant-2", Rank: -1, GID: 12, Owned: true, State: "up:standby"}
+	active := MDSDaemonStatus{Name: "tenant-0", Rank: 0, GID: 10, Owned: true, State: "up:active"}
+	replay := MDSDaemonStatus{Name: "tenant-1", Rank: 0, GID: 11, Owned: true, State: "up:standby-replay"}
+	idle := MDSDaemonStatus{Name: "tenant-2", Rank: -1, GID: 12, Owned: true, State: "up:standby"}
 	daemons := []*MDS{{ID: active.Name}, {ID: replay.Name}, {ID: idle.Name}}
-	status := &FilesystemStatus{MaxMDS: 1, Active: []MDSStatus{active}, StandbyReplay: []MDSStatus{replay}, Standby: []MDSStatus{idle}}
+	status := &FilesystemStatus{MaxMDS: 1, Active: []MDSDaemonStatus{active}, StandbyReplay: []MDSDaemonStatus{replay}, Standby: []MDSDaemonStatus{idle}}
 	if got := cephFSMDSRetirementCandidate(status, daemons, 1); got == nil || got.Name != idle.Name {
 		t.Fatalf("idle standby was not selected before replay follower: %+v", got)
 	}
@@ -265,7 +265,7 @@ func TestCephFSMDSRetirementRequiresSettledOwnedRanksAndPrefersIdle(t *testing.T
 	if got := cephFSMDSRetirementCandidate(status, daemons, 1); got != nil {
 		t.Fatalf("a retiring/unobserved owned rank allowed premature removal: %+v", got)
 	}
-	status.Standby = []MDSStatus{idle}
+	status.Standby = []MDSDaemonStatus{idle}
 	status.Active[0].Owned = false
 	if got := cephFSMDSRetirementCandidate(status, daemons, 1); got != nil {
 		t.Fatalf("external active daemon allowed owned topology contraction: %+v", got)
@@ -274,14 +274,14 @@ func TestCephFSMDSRetirementRequiresSettledOwnedRanksAndPrefersIdle(t *testing.T
 
 func TestCephFSReplayReadinessRejectsRetiredDuplicateAndMissingRanks(t *testing.T) {
 	status := &FilesystemStatus{MaxMDS: 2,
-		Active:        []MDSStatus{{Rank: 0, GID: 1, Owned: true}, {Rank: 1, GID: 2, Owned: true}},
-		StandbyReplay: []MDSStatus{{Rank: 0, GID: 3, Owned: true}, {Rank: 1, GID: 4, Owned: true}},
+		Active:        []MDSDaemonStatus{{Rank: 0, GID: 1, Owned: true}, {Rank: 1, GID: 2, Owned: true}},
+		StandbyReplay: []MDSDaemonStatus{{Rank: 0, GID: 3, Owned: true}, {Rank: 1, GID: 4, Owned: true}},
 	}
 	config := Config{ActiveMDS: 2, StandbyMDS: 2, StandbyReplay: true}
 	if !cephFSMDSReady(status, config) {
 		t.Fatal("valid replay followers did not satisfy readiness")
 	}
-	for _, invalid := range []MDSStatus{{Rank: 2, GID: 4, Owned: true}, {Rank: 0, GID: 4, Owned: true}, {Rank: 1, GID: 0, Owned: true}, {Rank: 1, GID: 4, Owned: false}} {
+	for _, invalid := range []MDSDaemonStatus{{Rank: 2, GID: 4, Owned: true}, {Rank: 0, GID: 4, Owned: true}, {Rank: 1, GID: 0, Owned: true}, {Rank: 1, GID: 4, Owned: false}} {
 		status.StandbyReplay[1] = invalid
 		if cephFSMDSReady(status, config) {
 			t.Fatalf("invalid replay follower accepted: %+v", invalid)
@@ -404,7 +404,7 @@ type filesystemCreationCLI struct {
 func (c *filesystemCreationCLI) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
 	code, out, err := c.poolFixtureContainer.Exec(ctx, args, opts...)
 	if words := clustertest.ModuleArgs(args); (code == 0 || c.publishOnFailure) && err == nil && len(words) > 2 && words[0] == "fs" && words[1] == "new" {
-		c.Output["fs dump --format json"] = `{"filesystems":[{"id":41,"mdsmap":{"fs_name":"tenant","metadata_pool":1,"data_pools":[2]}}]}`
+		c.Output["fs dump --format json"] = `{"standbys":[],"filesystems":[{"id":41,"mdsmap":{"fs_name":"tenant","metadata_pool":1,"data_pools":[2]}}]}`
 		if c.failCapture {
 			c.Output["fs dump --format json"] = "invalid"
 		}
@@ -416,7 +416,7 @@ func TestPartialStartNeverAdoptsReplacementFilesystem(t *testing.T) {
 	for _, mode := range []string{"refused new", "lost new reply", "failed setting", "failed identity read"} {
 		t.Run(mode, func(t *testing.T) {
 			control := &poolFixtureContainer{Output: map[string]string{
-				"fs dump --format json":            `{"filesystems":[]}`,
+				"fs dump --format json":            `{"standbys":[],"filesystems":[]}`,
 				"osd pool ls detail --format json": `[{"pool_id":1,"pool_name":"tenant-metadata","type":1,"size":2,"min_size":1,"pg_num":8},{"pool_id":2,"pool_name":"tenant-data","type":1,"size":2,"min_size":1,"pg_num":8}]`,
 			}}
 			wire := &filesystemCreationCLI{poolFixtureContainer: control}
@@ -451,4 +451,14 @@ func TestPartialStartNeverAdoptsReplacementFilesystem(t *testing.T) {
 			}
 		})
 	}
+}
+
+// parseCephFSMDSStatus decodes one FSMap into the named filesystem's MDS
+// status, as MDSStatus does after its owner checks.
+func parseCephFSMDSStatus(data []byte, name string, daemons []*MDS) (*FilesystemStatus, error) {
+	topology, err := decodeCephFSMDSTopology(data, name, daemons)
+	if err != nil {
+		return nil, err
+	}
+	return topology.status, nil
 }

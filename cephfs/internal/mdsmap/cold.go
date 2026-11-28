@@ -1,9 +1,6 @@
 package mdsmap
 
-import (
-	"errors"
-	"slices"
-)
+import "errors"
 
 // ColdExpectation is every value the cold-start decoder compares the
 // native global map with; the decoder keeps no reference to their source.
@@ -43,7 +40,7 @@ func DecodeCold(data []byte, want ColdExpectation) error {
 			continue
 		}
 		found++
-		if *entry.ID != want.Native.ID || m.Metadata == nil || *m.Metadata != want.Native.MetadataPool || m.Data == nil || !slices.Equal(*m.Data, want.DataPools) || m.Max == nil || *m.Max != 1 || m.Wanted == nil || *m.Wanted != 0 || m.Flags == nil || m.Flags.Joinable == nil || !*m.Flags.Joinable || m.Flags.Replay == nil || *m.Flags.Replay || m.Flags.Refuse == nil || !*m.Flags.Refuse {
+		if !checkPolicy(*entry.ID, m, want.Native, want.DataPools, 1, 0, false) {
 			return errors.New("original cold filesystem policy or identity changed")
 		}
 		if m.Up == nil || m.In == nil || m.Failed == nil || m.Damaged == nil || m.Stopped == nil || len(*m.Info) != 0 || len(*m.Up) != 0 || len(*m.In) != 0 || len(*m.Failed) != 0 || len(*m.Damaged) != 0 || len(*m.Stopped) != 0 {
@@ -57,7 +54,7 @@ func DecodeCold(data []byte, want ColdExpectation) error {
 		if admitRow(s, row, want.ReservedName) != faultNone || *row.Rank != -1 || *row.State != "up:standby" {
 			return errors.New("native standby map is incomplete or conflicting")
 		}
-		if *row.Join == -1 || *row.Join == want.Native.ID || !s.fsIDs[*row.Join] {
+		if foreignStandbyCanJoin(s, row, want.Native.ID) {
 			return errors.New("foreign standby can join the cold filesystem")
 		}
 	}

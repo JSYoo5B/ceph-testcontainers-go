@@ -18,6 +18,6 @@ func evaluateMDSs(status *cephfs.FilesystemStatus, readErr error, want expect.MD
 
 // sameMDSRank is the only active rank still held by the daemon instance of
 // holder: a restart or a takeover gives the rank another GID.
-func sameMDSRank(holder cephfs.MDSStatus) expect.MDSs {
+func sameMDSRank(holder cephfs.MDSDaemonStatus) expect.MDSs {
 	return expect.MDSs{Ranks: []expect.MDSRank{{Rank: holder.Rank, GID: holder.GID}}, Exact: true}
 }

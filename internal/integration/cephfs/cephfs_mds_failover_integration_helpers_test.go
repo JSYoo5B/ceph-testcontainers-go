@@ -23,7 +23,7 @@ import (
 // MDS and one owned standby.
 type cephFSStandbyFailover struct {
 	*cephFSSingleMDS
-	standby cephfs.MDSStatus
+	standby cephfs.MDSDaemonStatus
 }
 
 func startCephFSStandbyFailover(t *testing.T, ctx context.Context) *cephFSStandbyFailover {
@@ -41,7 +41,7 @@ func startCephFSStandbyFailover(t *testing.T, ctx context.Context) *cephFSStandb
 // take rank 0 with its own GID and become active, and from then on m.mds is
 // the new active MDS. It returns the killed daemon's status and how long the
 // takeover took. The killed daemon stays stopped until the fixture ends.
-func (m *cephFSStandbyFailover) failToStandby(t *testing.T, ctx context.Context) (cephfs.MDSStatus, time.Duration) {
+func (m *cephFSStandbyFailover) failToStandby(t *testing.T, ctx context.Context) (cephfs.MDSDaemonStatus, time.Duration) {
 	t.Helper()
 	old := m.MDS
 	var daemon *cephfs.MDS
@@ -171,7 +171,7 @@ func testCephFSFlockAcrossMDSFailover(t *testing.T) {
 	watched := startSessionWatchLog(t, ctx, m.FS, 500*time.Millisecond, holder.client, contender.client)
 	old, took := m.failToStandby(t, ctx)
 	m.noEviction(t, ctx, sessions)
-	rebaselined := watched.await(t, ctx, time.Minute, func(e cephfssession.WatchEvent) bool {
+	rebaselined := watched.await(t, ctx, time.Minute, func(e cephfssession.SessionWatchEvent) bool {
 		return e.Kind != ceph.WatchGap && slices.Equal(e.After, []cephfssession.RankHolder{{Rank: 0, Name: m.MDS.Name, GID: m.MDS.GID}})
 	})
 	if !slices.Equal(rebaselined.Rebaselined, []int{0}) || rebaselined.Removed != nil || rebaselined.Added != nil {

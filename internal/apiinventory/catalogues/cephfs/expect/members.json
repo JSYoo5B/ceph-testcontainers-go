@@ -17,7 +17,7 @@
     ],
     "cephfs/expect.MDSMismatch": [
       "MDSMismatch.List field MDSList",
-      "MDSMismatch.Observed field cephfs.MDSStatus",
+      "MDSMismatch.Observed field cephfs.MDSDaemonStatus",
       "MDSMismatch.ObservedValue field int64",
       "MDSMismatch.Rank field int",
       "MDSMismatch.Reason field MDSMismatchReason",

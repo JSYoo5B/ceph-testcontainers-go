@@ -78,40 +78,10 @@ func BeginObservation(ctx context.Context, core *fsbase.Core) (context.Context, 
 }
 
 // admit is the admission and the native pool identity read that Begin and
-// BeginObservation share. A filesystem that is no longer the registered one
-// of an open cluster is refused with an fsbase.IdentityChanged error, because
-// no later admission of the same core can succeed.
+// BeginObservation share: fsbase.Core.AdmitActive with the control check.
 func admit(ctx context.Context, core *fsbase.Core) (context.Context, int64, func(), error) {
-	ctx, done, err := core.Admit(ctx, fsbase.AdmissionSpec{
-		RecheckCanceled: true,
-		Refusal:         admissionRefusal,
-		Check: func(ctx context.Context) (bool, error) {
-			c := core.Cluster()
-			if !core.Registered() {
-				return false, fsbase.IdentityRefusal(admissionRefusal)
-			}
-			if !core.DescriptorIntact() || core.Native() == nil {
-				return false, nil
-			}
-			control, err := c.ControlContainer(ctx)
-			if err != nil {
-				return false, err
-			}
-			return control != nil, nil
-		},
-	})
-	if err != nil {
-		return ctx, 0, func() {}, err
-	}
-	state, err := core.ReadNativePools(ctx)
-	if err != nil {
-		done()
-		return ctx, 0, func() {}, err
-	}
-	return ctx, state.ID, done, nil
+	return core.AdmitActive(ctx, true)
 }
-
-const admissionRefusal = "CephFS filesystem must be an active filesystem created by this cluster"
 
 // CheckIdentity refuses a native resource whose filesystem ID, path or birth
 // time differs from the captured identity: it was replaced outside this

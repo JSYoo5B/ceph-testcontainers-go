@@ -107,10 +107,9 @@ func cephFSPoolHandle(fs *Filesystem, identity *fsbase.PoolAttachment) *DataPool
 // refused. It creates or deletes no pools. A handle returned with an error
 // records an attempted attachment; retrying the same name reconciles an unknown
 // successful command using the original native IDs. External edits must not
-// race these operations. Ceph's retained application tag after detachment must
-// be inspected and explicitly cleared through Ceph before a new attachment.
+// race these operations.
 //
-// Clear the retained tag with ceph osd pool application rm <name> cephfs data
+// Ceph keeps the application tag of a detached pool. Clear the retained tag with ceph osd pool application rm <name> cephfs data
 // before attaching a detached pool again.
 //
 //purpose:construction

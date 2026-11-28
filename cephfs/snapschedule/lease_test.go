@@ -560,8 +560,7 @@ func TestLeaseRefusesAnotherScheduleWithItsRepeatInAnyOrder(t *testing.T) {
 				if _, err := lease.Status(t.Context()); !errors.Is(err, ceph.ErrInvalidRequest) {
 					t.Errorf("%s: Status = %v", order, err)
 				}
-				var ended leaseWatchEnded
-				if _, err := lease.watchRead(t.Context()); !errors.As(err, &ended) || !errors.Is(err, ceph.ErrInvalidRequest) {
+				if _, err := lease.watchRead(t.Context()); !errors.Is(err, ceph.ErrInvalidRequest) || !strings.Contains(err.Error(), "watch snapshot schedule") {
 					t.Errorf("%s: watch read = %v", order, err)
 				}
 				if err := lease.Restore(t.Context()); !errors.Is(err, ceph.ErrInvalidRequest) || fake.state() != before || lease.restored {

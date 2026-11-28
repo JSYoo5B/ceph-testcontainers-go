@@ -144,7 +144,7 @@ type MDSMismatch struct {
 	List                     MDSList
 	Rank                     int
 	Want                     MDSDaemon
-	Observed                 cephfs.MDSStatus
+	Observed                 cephfs.MDSDaemonStatus
 	WantValue, ObservedValue int64
 }
 
@@ -278,8 +278,8 @@ func (e MDSs) Evaluate(observed cephfs.FilesystemStatus) (MDSEvaluation, error) 
 
 // rankMismatches compares the active list, ordered by rank; maxMDS is the
 // observed max_mds.
-func (e MDSs) rankMismatches(active []cephfs.MDSStatus, maxMDS int) []MDSMismatch {
-	byRank := make(map[int]cephfs.MDSStatus, len(active))
+func (e MDSs) rankMismatches(active []cephfs.MDSDaemonStatus, maxMDS int) []MDSMismatch {
+	byRank := make(map[int]cephfs.MDSDaemonStatus, len(active))
 	for _, holder := range active {
 		byRank[holder.Rank] = holder
 	}
@@ -328,7 +328,7 @@ func (e MDSs) rankMismatches(active []cephfs.MDSStatus, maxMDS int) []MDSMismatc
 }
 
 // standbyMismatches compares one standby list; want nil compares nothing.
-func standbyMismatches(list MDSList, want *MDSStandbys, observed []cephfs.MDSStatus) []MDSMismatch {
+func standbyMismatches(list MDSList, want *MDSStandbys, observed []cephfs.MDSDaemonStatus) []MDSMismatch {
 	if want == nil {
 		return nil
 	}
@@ -338,7 +338,7 @@ func standbyMismatches(list MDSList, want *MDSStandbys, observed []cephfs.MDSSta
 		out = append(out, MDSMismatch{Reason: MDSMismatchCount, List: list, WantValue: int64(want.Count), ObservedValue: int64(len(observed))})
 	}
 	for _, daemon := range want.Daemons {
-		i := slices.IndexFunc(observed, func(s cephfs.MDSStatus) bool {
+		i := slices.IndexFunc(observed, func(s cephfs.MDSDaemonStatus) bool {
 			if daemon.Name != "" {
 				return s.Name == daemon.Name
 			}
@@ -445,7 +445,7 @@ func validateMDSObservation(s cephfs.FilesystemStatus) error {
 	for _, list := range []struct {
 		name    MDSList
 		state   string
-		entries []cephfs.MDSStatus
+		entries []cephfs.MDSDaemonStatus
 	}{{MDSListActive, "up:active", s.Active}, {MDSListStandby, "up:standby", s.Standby}, {MDSListStandbyReplay, "up:standby-replay", s.StandbyReplay}} {
 		for _, entry := range list.entries {
 			switch {

@@ -148,11 +148,11 @@ func receiver(fn *ast.FuncDecl) string {
 // TestFilesystemIdentityIsReadOnlyFromImmutableName and
 // TestNativeIdentityIsCapturedNotReplacedInProduction pin for package cephfs:
 // in volbase, cephfs/subvolume and cephfs/quiesce only admit (shared by Begin
-// and BeginObservation) calls Admit, it passes exactly one own Check function
-// and takes, releases or unlocks no lock itself; only admit reads the exported
-// descriptor through DescriptorIntact;
-// no production code installs or captures a native identity; and only the
-// pin restoration reads under the setup gate without an admission.
+// and BeginObservation) admits, through fsbase.Core.AdmitActive, which owns
+// the predicate and the lifetime, and admit takes, releases or unlocks no lock
+// itself; nothing reads the exported descriptor or calls Admit directly; no
+// production code installs or captures a native identity; and only the pin
+// restoration reads under the setup gate without an admission.
 func TestSubvolumeAdmissionHasOneOwnerAndKeepsItsPredicateLocal(t *testing.T) {
 	sites := map[string][]string{}
 	var begin *ast.FuncDecl
@@ -172,7 +172,7 @@ func TestSubvolumeAdmissionHasOneOwnerAndKeepsItsPredicateLocal(t *testing.T) {
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				if call, ok := n.(*ast.CallExpr); ok {
 					switch c := callee(call); c {
-					case "Admit", "DescriptorIntact", "ReplaceNative", "CaptureNativePools", "WithSetupGate":
+					case "Admit", "AdmitActive", "AdmitOwned", "DescriptorIntact", "ReplaceNative", "CaptureNativePools", "WithSetupGate":
 						sites[c] = append(sites[c], name)
 					}
 				}
@@ -181,9 +181,8 @@ func TestSubvolumeAdmissionHasOneOwnerAndKeepsItsPredicateLocal(t *testing.T) {
 		}
 	}
 	want := map[string][]string{
-		"Admit":            {"admit"},
-		"DescriptorIntact": {"admit"},
-		"WithSetupGate":    {"PinOverrideHandle.Restore"},
+		"AdmitActive":   {"admit"},
+		"WithSetupGate": {"PinOverrideHandle.Restore"},
 	}
 	if !reflect.DeepEqual(sites, want) {
 		t.Errorf("shared admission sites changed: %v, want %v", sites, want)
@@ -191,15 +190,7 @@ func TestSubvolumeAdmissionHasOneOwnerAndKeepsItsPredicateLocal(t *testing.T) {
 	if begin == nil {
 		t.Fatal("admit is missing")
 	}
-	checks := 0
 	ast.Inspect(begin.Body, func(n ast.Node) bool {
-		if kv, ok := n.(*ast.KeyValueExpr); ok {
-			if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "Check" {
-				if _, lit := kv.Value.(*ast.FuncLit); lit {
-					checks++
-				}
-			}
-		}
 		if call, ok := n.(*ast.CallExpr); ok {
 			switch callee(call) {
 			case "LockMutex", "LockTopology", "Lock", "Unlock":
@@ -208,9 +199,6 @@ func TestSubvolumeAdmissionHasOneOwnerAndKeepsItsPredicateLocal(t *testing.T) {
 		}
 		return true
 	})
-	if checks != 1 {
-		t.Errorf("admit must pass exactly one own check function, has %d", checks)
-	}
 }
 
 // TestFeaturePackagesKeepNoLockOrRegistration pins the ownership rules of the

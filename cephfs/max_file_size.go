@@ -2,7 +2,6 @@ package cephfs
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -26,10 +25,12 @@ type MaxFileSizeOverrideHandle struct {
 // maxFileSizeState is the restoration state of one override. The setup gate
 // guards it.
 type maxFileSizeState struct {
-	fsID              int64
+	fsbase.OverrideRecord
 	previous, applied int64
-	restored          bool
 }
+
+// maxFileSizeSubject names the max_file_size override in its refusals.
+const maxFileSizeSubject = "max_file_size override"
 
 // OverrideMaxFileSize sets the MDSMap max_file_size of the filesystem to
 // bytes, so that a client write or truncate that would make a file larger
@@ -46,21 +47,21 @@ func (fs *Filesystem) OverrideMaxFileSize(ctx context.Context, bytes int64) (*Ma
 	if bytes < MinMaxFileSize {
 		return nil, servicehook.Invalid(fmt.Errorf("CephFS max_file_size must be at least %d bytes", MinMaxFileSize))
 	}
-	ctx, fsID, done, err := fs.beginMaxFileSizeOperation(ctx)
+	ctx, fsID, done, err := fs.base().AdmitOwned(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer done()
 	registry := filesystems(fs.base().Cluster())
-	if active := registry.maxFileSizes[fs]; active != nil && !active.restored {
-		return nil, errors.New("restore the existing CephFS max_file_size override first")
+	if active := registry.maxFileSizes[fs]; active != nil && !active.Restored {
+		return nil, fsbase.OverrideActive(maxFileSizeSubject)
 	}
 	v := fs.base().Volumes()
 	previous, err := readMaxFileSize(ctx, v, fsID)
 	if err != nil {
 		return nil, err
 	}
-	state := &maxFileSizeState{fsID: fsID, previous: previous, applied: bytes}
+	state := &maxFileSizeState{OverrideRecord: fsbase.OverrideRecord{FSID: fsID}, previous: previous, applied: bytes}
 	registry.maxFileSizes[fs] = state
 	return &MaxFileSizeOverrideHandle{filesystem: fs, state: state}, writeMaxFileSize(ctx, v, fsID, previous, bytes)
 }
@@ -73,92 +74,55 @@ func (fs *Filesystem) OverrideMaxFileSize(ctx context.Context, bytes int64) (*Ma
 //purpose:condition,lifetime
 func (change *MaxFileSizeOverrideHandle) Restore(ctx context.Context) error {
 	if change == nil || change.filesystem == nil || change.state == nil {
-		return errors.New("CephFS max_file_size override is unavailable")
+		return fsbase.OverrideUnavailable(maxFileSizeSubject)
 	}
 	fs, state := change.filesystem, change.state
 	core := fs.base()
-	// A confirmed restore stays complete after the filesystem or cluster is gone.
-	if core.Cluster() != nil {
-		var restored bool
-		if err := core.WithSetupGate(ctx, func() { restored = state.restored }); err != nil {
-			return err
-		}
-		if restored {
-			return nil
-		}
-	}
-	ctx, fsID, done, err := fs.beginMaxFileSizeOperation(ctx)
-	if err != nil {
-		return err
-	}
-	defer done()
-	if state.restored {
-		return nil
-	}
-	registry := filesystems(core.Cluster())
-	if registry.maxFileSizes[fs] != state {
-		return errors.New("CephFS max_file_size override is not tracked by this filesystem")
-	}
-	if fsID != state.fsID {
-		return errors.New("CephFS filesystem identity changed since the max_file_size override")
-	}
-	v := core.Volumes()
-	current, err := readMaxFileSize(ctx, v, fsID)
-	if err != nil {
-		return err
-	}
-	if current != state.previous && current != state.applied {
-		return fmt.Errorf("CephFS max_file_size changed outside this override: %d", current)
-	}
-	if err := writeMaxFileSize(ctx, v, fsID, current, state.previous); err != nil {
-		return err
-	}
-	state.restored = true
-	delete(registry.maxFileSizes, fs)
-	return nil
+	return core.RestoreOverride(ctx, fsbase.Override{
+		Subject: maxFileSizeSubject,
+		Record:  &state.OverrideRecord,
+		Tracked: func() bool { return filesystems(core.Cluster()).maxFileSizes[fs] == state },
+		Restore: func(ctx context.Context, fsID int64) error {
+			v := core.Volumes()
+			current, err := readMaxFileSize(ctx, v, fsID)
+			if err != nil {
+				return err
+			}
+			if current != state.previous && current != state.applied {
+				return fmt.Errorf("CephFS max_file_size changed outside this override: %d", current)
+			}
+			return writeMaxFileSize(ctx, v, fsID, current, state.previous)
+		},
+		Forget: func() { delete(filesystems(core.Cluster()).maxFileSizes, fs) },
+	})
 }
 
-// beginMaxFileSizeOperation admits an operation on the original registered
-// filesystem and returns its FSMap ID.
-func (fs *Filesystem) beginMaxFileSizeOperation(ctx context.Context) (context.Context, int64, func(), error) {
-	core := fs.base()
-	var fsID int64
-	ctx, done, err := core.Admit(ctx, fsbase.AdmissionSpec{
-		RecheckCanceled: true,
-		Refusal:         "CephFS max_file_size requires the original registered filesystem and confirmed native identity",
-		Check: func(context.Context) (bool, error) {
-			if !core.Registered() || !core.DescriptorIntact() || core.Native() == nil {
-				return false, nil
-			}
-			fsID = core.Native().ID
-			return true, nil
-		},
-	})
-	return ctx, fsID, done, err
+// nativeMaxFileSize is the max_file_size field of an fs get mdsmap.
+type nativeMaxFileSize struct {
+	MaxFileSize *int64 `json:"max_file_size"`
 }
 
 func readMaxFileSize(ctx context.Context, v fsbase.VolumeCommands, fsID int64) (int64, error) {
-	data, err := v.Cluster().Ceph(ctx, "fs", "get", v.Name(), "--format", "json")
-	if err != nil {
-		return 0, fmt.Errorf("read CephFS %q max_file_size: %w", v.Name(), err)
+	var native nativeMaxFileSize
+	if err := v.ReadMDSMap(ctx, fsID, "max_file_size", &native); err != nil {
+		return 0, err
 	}
-	return parseMaxFileSize(data, fsID)
+	return checkMaxFileSize(native)
 }
 
 func parseMaxFileSize(data []byte, fsID int64) (int64, error) {
-	var native struct {
-		ID     int64 `json:"id"`
-		MDSMap struct {
-			MaxFileSize *int64 `json:"max_file_size"`
-		} `json:"mdsmap"`
+	var native nativeMaxFileSize
+	if err := fsbase.DecodeMDSMap(data, fsID, "max_file_size", &native); err != nil {
+		return 0, err
 	}
-	if err := json.Unmarshal(data, &native); err != nil || native.MDSMap.MaxFileSize == nil {
+	return checkMaxFileSize(native)
+}
+
+func checkMaxFileSize(native nativeMaxFileSize) (int64, error) {
+	if native.MaxFileSize == nil {
 		return 0, errors.New("decode CephFS max_file_size")
 	}
-	if native.ID != fsID {
-		return 0, fmt.Errorf("CephFS filesystem ID is %d, want %d", native.ID, fsID)
-	}
-	return *native.MDSMap.MaxFileSize, nil
+	return *native.MaxFileSize, nil
 }
 
 // writeMaxFileSize changes a differing value and confirms the result with a

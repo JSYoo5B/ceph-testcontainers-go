@@ -52,6 +52,42 @@ type FSMap struct {
 	} `json:"filesystems"`
 }
 
+// DecodeFSMap decodes one fs dump reply. Every FSMap reader uses it, so they
+// share one presence rule: a reply that is not a JSON object, or that lacks
+// the filesystems or the standbys list (absent or null), is refused, because
+// an empty list and a missing one mean different things: a missing list
+// would hide a filesystem or a daemon.
+func DecodeFSMap(data []byte) (FSMap, error) {
+	var fsmap FSMap
+	if err := json.Unmarshal(data, &fsmap); err != nil {
+		return FSMap{}, fmt.Errorf("decode FSMap: %w", err)
+	}
+	if fsmap.Filesystems == nil || fsmap.Standbys == nil {
+		return FSMap{}, errors.New("decode FSMap: the filesystems or standbys list is missing")
+	}
+	return fsmap, nil
+}
+
+// HasDaemon reports whether a standby or a daemon of any filesystem of m is
+// named name (when name is not empty) or has the GID gid (when gid is not
+// zero).
+func (m FSMap) HasDaemon(name string, gid uint64) bool {
+	match := func(info MDSInfo) bool {
+		return name != "" && info.Name == name || gid != 0 && info.GID == gid
+	}
+	if slices.ContainsFunc(m.Standbys, match) {
+		return true
+	}
+	for _, filesystem := range m.Filesystems {
+		for _, info := range filesystem.MDSMap.Info {
+			if match(info) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // MDSInfo is one daemon entry of the FSMap. Owned is not a native field; the
 // status reader sets it.
 type MDSInfo struct {
@@ -111,8 +147,8 @@ func (c *Core) ReadNativePools(ctx context.Context) (*NativePools, error) {
 	if err != nil {
 		return nil, err
 	}
-	var fsmap FSMap
-	if err := json.Unmarshal(data, &fsmap); err != nil || fsmap.Filesystems == nil {
+	fsmap, err := DecodeFSMap(data)
+	if err != nil {
 		return nil, errors.New("decode filesystem pool map")
 	}
 	var result *NativePools

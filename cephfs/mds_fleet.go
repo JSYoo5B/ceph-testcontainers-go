@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/testcontainers/testcontainers-go"
@@ -67,12 +68,8 @@ func (f mdsFleet) removeAll(ctx context.Context) error {
 			if err := daemon.Terminate(ctx); err != nil && !servicehook.OnlyMissingHostResource(err) {
 				return fmt.Errorf("terminate mds.%s of removed cephfs %q: %w", daemon.ID, name, err)
 			}
-			service := "mds." + daemon.ID
-			if owned := servicehook.Service(c, service); owned != nil && owned.GetContainerID() == daemon.GetContainerID() {
-				servicehook.DeleteService(c, service)
-			}
 		}
-		f.mds.roster.remove(daemon)
+		f.unpublishMDS(daemon)
 	}
 	*f.first = nil
 	ids := make([]string, 0, len(f.mds.credentials))
@@ -81,10 +78,41 @@ func (f mdsFleet) removeAll(ctx context.Context) error {
 	}
 	slices.Sort(ids)
 	for _, id := range ids {
-		if _, err := c.Ceph(ctx, "auth", "del", "mds."+id); err != nil && !errors.Is(err, iofs.ErrNotExist) && !strings.Contains(err.Error(), "does not exist") {
+		if err := deleteMDSKey(ctx, c, id); err != nil {
 			return fmt.Errorf("remove key of mds.%s: %w", id, err)
 		}
 		delete(f.mds.credentials, id)
+	}
+	return nil
+}
+
+// unpublishMDS is the inverse of publishStartedMDS: it deletes the service
+// registration of daemon while it still names daemon's container, drops
+// daemon from the roster and, when the first-MDS slot held daemon's
+// container, re-seats it on the first remaining member, or clears it. Owner
+// held: the caller holds the cluster mutex.
+func (f mdsFleet) unpublishMDS(daemon *MDS) {
+	c := f.core.Cluster()
+	if daemon.Container != nil {
+		service := "mds." + daemon.ID
+		if owned := servicehook.Service(c, service); owned != nil && owned.GetContainerID() == daemon.GetContainerID() {
+			servicehook.DeleteService(c, service)
+		}
+	}
+	f.mds.roster.remove(daemon)
+	if daemon.Container != nil && *f.first != nil && (*f.first).GetContainerID() == daemon.GetContainerID() {
+		*f.first = nil
+		if f.mds.roster.count() > 0 {
+			*f.first = f.mds.roster.at(0).Container
+		}
+	}
+}
+
+// deleteMDSKey deletes the auth entity of the daemon id. A key that does not
+// exist is already deleted.
+func deleteMDSKey(ctx context.Context, c *ceph.Container, id string) error {
+	if _, err := c.Ceph(ctx, "auth", "del", "mds."+id); err != nil && !errors.Is(err, iofs.ErrNotExist) && !strings.Contains(err.Error(), "does not exist") {
+		return err
 	}
 	return nil
 }

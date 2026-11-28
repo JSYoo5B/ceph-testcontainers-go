@@ -73,7 +73,7 @@ func TestOverrideRefusalAppliesReadsBackAndRestores(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !*ctr.refused || change.state.fsID != 7 {
+	if !*ctr.refused || change.state.FSID != 7 {
 		t.Fatalf("refusal not applied: %v %+v", *ctr.refused, *change.state)
 	}
 	if second, err := overrideRefusal(t.Context(), fs.Core); second != nil || err == nil {
@@ -88,7 +88,7 @@ func TestOverrideRefusalAppliesReadsBackAndRestores(t *testing.T) {
 	if err := copied.Restore(t.Context()); err != nil || *ctr.refused {
 		t.Fatalf("a copy did not restore the shared refusal: %v", err)
 	}
-	if overridesOf(fs.Core).refusals[fs.Core] != nil || overridesOf(fs.Core).byCore[fs.Core] != timeouts.state {
+	if overridesOf(fs.Core).refusals[fs.Core] != nil || overridesOf(fs.Core).timeouts[fs.Core] != timeouts.state {
 		t.Fatal("restoring the refusal changed the tracked overrides")
 	}
 	if got := ctr.mutations(); len(got) != 4 || got[0] != "fs set app refuse_client_session true" || got[3] != "fs set app refuse_client_session false" {

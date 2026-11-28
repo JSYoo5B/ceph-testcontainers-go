@@ -59,10 +59,18 @@ import (
 // placement refuses an unavailable gateway generation before restart and a
 // committed period outside the expected lineage. Subvolume and group removal
 // share one refusal for a directory with an outstanding pin override.
+// The CephFS admissions classify their refusals in fsbase: Admit classifies a
+// nil core, a refused handle and an identity refusal, and the shared override
+// restore its unavailable-handle, already-active, untracked and
+// replaced-filesystem refusals, so the session overrides keep only their own
+// input and outside-edit refusals there. cephfs classifies the unavailable
+// MDS handle and the owner and identity refusals of the status read that
+// MDSStatus, its watch and the read-only fault share, and a subvolume pin
+// handle classifies its unavailable restore.
 var invalidCallSites = map[string]int{
-	"rbd": 30, "cephfs": 27, "rgw": 52,
-	"cephfs/subvolume": 33, "cephfs/quiesce": 8, "cephfs/internal/fsbase": 1,
-	"cephfs/session": 17, "cephfs/snapschedule": 16,
+	"rbd": 30, "cephfs": 32, "rgw": 52,
+	"cephfs/subvolume": 34, "cephfs/quiesce": 8, "cephfs/internal/fsbase": 9,
+	"cephfs/session": 11, "cephfs/snapschedule": 16,
 	"rgw/account": 11, "rgw/placement": 22, "rgw/notification": 6, "rgw/internal/gwbase": 15,
 	"rbd/mirror": 34, "cephfs/mirror": 24,
 }

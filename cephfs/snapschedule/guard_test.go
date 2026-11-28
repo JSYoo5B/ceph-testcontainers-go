@@ -197,7 +197,7 @@ func TestLeaseLocksAreTheTwoLeafMutexes(t *testing.T) {
 
 	// The admission: the one function that admits, the wrappers that return
 	// its done, and the functions that hold it through them.
-	admit := method(g.pkg, "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase", "Core", "Admit")
+	admit := method(g.pkg, "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase", "Core", "AdmitActive")
 	if gate := method(g.pkg, "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase", "Core", "WithSetupGate"); gate != nil {
 		for _, fn := range g.referrers(gate) {
 			t.Errorf("%s takes the setup gate outside the admission", g.name(fn))
@@ -205,7 +205,7 @@ func TestLeaseLocksAreTheTwoLeafMutexes(t *testing.T) {
 	}
 	admitters := g.referrers(admit)
 	if len(admitters) != 1 || !returnsDone(admitters[0]) {
-		t.Fatalf("Admit is referred to by %v, want one function that returns its done", admitters)
+		t.Fatalf("AdmitActive is referred to by %v, want one function that returns its done", admitters)
 	}
 	wrappers := map[*types.Func]bool{admitters[0]: true}
 	for grown := true; grown; {

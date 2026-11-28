@@ -129,7 +129,7 @@ func (f mdsFleet) timingSnapshot() ([]*MDS, error) {
 		if daemon == nil || daemon.identity == nil {
 			return nil, errors.New("CephFS timing requires confirmed original MDS ownership")
 		}
-		if err := f.checkStoppedMDSOwner(daemon, daemon.identity); err != nil {
+		if err := f.checkOwnedMDS(daemon, daemon.identity); err != nil {
 			return nil, err
 		}
 	}

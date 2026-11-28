@@ -70,13 +70,15 @@ func DecodeStopped(data []byte, want StoppedExpectation) (*StoppedState, error) 
 	if err := collectStoppedMDSStandbys(s, *native.Standbys, want, registered); err != nil {
 		return nil, err
 	}
-	for _, id := range scope.DataPools {
-		name, ok := want.Pools.Names[id]
-		if !ok {
-			return nil, errors.New("stopped MDS attached data pool is unavailable")
-		}
-		scope.PoolNames = append(scope.PoolNames, name)
+	names, f := scopePoolNames(scope.DataPools, want.Pools.Names)
+	switch f {
+	case poolNone:
+	case poolInvalid:
+		return nil, errors.New("stopped MDS attached data pools are invalid or duplicated")
+	default:
+		return nil, errors.New("stopped MDS attached data pool is unavailable")
 	}
+	scope.PoolNames = names
 	return &StoppedState{Scope: scope, Registered: registered}, nil
 }
 
@@ -105,7 +107,7 @@ func checkStoppedMDSMembership(s seen, entry filesystemEntry, want StoppedExpect
 // stoppedMDSScope checks that the owned filesystem keeps its creation identity,
 // configured policy and settled ranks, and returns the removal scope.
 func stoppedMDSScope(id int64, m *mapFields, want StoppedExpectation) (*Scope, error) {
-	if id != want.Native.ID || m.Metadata == nil || *m.Metadata != want.Native.MetadataPool || m.Data == nil || !slices.Equal(*m.Data, want.Pools.DataPools) || m.Max == nil || *m.Max != want.ActiveMDS || m.Wanted == nil || *m.Wanted != want.StandbyMDS || m.Flags == nil || m.Flags.Joinable == nil || !*m.Flags.Joinable || m.Flags.Replay == nil || *m.Flags.Replay != want.StandbyReplay || m.Flags.Refuse == nil || !*m.Flags.Refuse || m.In == nil || m.Failed == nil || m.Damaged == nil || m.Stopped == nil || len(*m.Failed) != 0 || len(*m.Damaged) != 0 || len(*m.Stopped) != 0 || len(*m.In) != *m.Max || len(*m.Up) != *m.Max {
+	if !checkPolicy(id, m, want.Native, want.Pools.DataPools, want.ActiveMDS, want.StandbyMDS, want.StandbyReplay) || m.In == nil || m.Failed == nil || m.Damaged == nil || m.Stopped == nil || len(*m.Failed) != 0 || len(*m.Damaged) != 0 || len(*m.Stopped) != 0 || len(*m.In) != *m.Max || len(*m.Up) != *m.Max {
 		return nil, errors.New("original stopped MDS filesystem policy or settled ranks changed")
 	}
 	scope := &Scope{DataPools: slices.Clone(*m.Data), Active: *m.Max, Standby: *m.Wanted, Joinable: *m.Flags.Joinable, Replay: *m.Flags.Replay, Protected: *m.Flags.Refuse}

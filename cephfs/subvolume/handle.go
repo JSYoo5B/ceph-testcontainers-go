@@ -2,6 +2,7 @@ package subvolume
 
 import (
 	"errors"
+	"slices"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
@@ -50,4 +51,72 @@ func (grant *Authorization) filesystem() (*fsbase.Core, error) {
 		return nil, servicehook.Invalid(errors.New("subvolume authorization must be an owned grant attempted by this filesystem"))
 	}
 	return grant.identity.volume.Core, nil
+}
+
+// removal is one owned resource's removal reconciliation. Its flags are the
+// resource's shared removal state, so every handle copy observes the outcome.
+type removal struct {
+	name      string
+	removed   *bool
+	attempted *bool
+	// check runs after the already-removed shortcut and before any listing.
+	check func() error
+	// list returns the native names that may still hold the resource.
+	list func() ([]string, error)
+	// verify confirms the present resource is still the owned incarnation.
+	verify func() error
+	// remove runs the native removal command.
+	remove func() error
+	// vanished, when set, lists before every attempt and is returned when the
+	// resource is absent before any removal was attempted.
+	vanished error
+	// unconfirmed, when set, relists after a successful command and is
+	// returned while the resource is still listed.
+	unconfirmed error
+}
+
+// reconcile removes the resource once. A confirmed removal is a no-op; after
+// an uncertain earlier attempt it relists and marks the resource removed when
+// its name is gone, so a retry neither repeats the command nor deletes a
+// recreated same-named resource that fails verification.
+func (r removal) reconcile() error {
+	if *r.removed {
+		return nil
+	}
+	if r.check != nil {
+		if err := r.check(); err != nil {
+			return err
+		}
+	}
+	if *r.attempted || r.vanished != nil {
+		names, err := r.list()
+		if err != nil {
+			return err
+		}
+		if !slices.Contains(names, r.name) {
+			if *r.attempted {
+				*r.removed = true
+				return nil
+			}
+			return r.vanished
+		}
+	}
+	if err := r.verify(); err != nil {
+		return err
+	}
+	*r.attempted = true
+	if err := r.remove(); err != nil {
+		return err
+	}
+	if r.unconfirmed != nil {
+		names, err := r.list()
+		if err != nil {
+			return err
+		}
+		if slices.Contains(names, r.name) {
+			return r.unconfirmed
+		}
+	}
+	*r.removed = true
+	return nil
 }

@@ -90,7 +90,7 @@ func testCephFSMDSReadOnlyFault(t *testing.T) {
 		}
 		return result
 	}
-	readOnlyHealth := func(daemon cephfs.MDSStatus) bool {
+	readOnlyHealth := func(daemon cephfs.MDSDaemonStatus) bool {
 		t.Helper()
 		health, err := harness.ObserveCluster(m.Cluster).HealthDetails(ctx)
 		if err != nil {

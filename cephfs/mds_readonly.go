@@ -51,7 +51,7 @@ type MDSReadOnlyFault struct {
 // change after ForceReadOnly records it.
 type mdsReadOnlyState struct {
 	fsID, metadataPool, defaultPool int64
-	target                          MDSStatus
+	target                          MDSDaemonStatus
 }
 
 // mdsReadOnlyKey names one faulted process of one filesystem.
@@ -160,9 +160,9 @@ func (daemon *MDS) ForceReadOnly(ctx context.Context) (*MDSReadOnlyFault, error)
 // and other fixture calls may run while it waits.
 //
 //purpose:observation
-func (fault *MDSReadOnlyFault) WaitReplaced(ctx context.Context) (MDSStatus, error) {
+func (fault *MDSReadOnlyFault) WaitReplaced(ctx context.Context) (MDSDaemonStatus, error) {
 	if fault == nil || fault.state == nil || fault.fleet.core.Cluster() == nil {
-		return MDSStatus{}, mdsReadOnlyInvalid("CephFS MDS read-only fault is unavailable")
+		return MDSDaemonStatus{}, mdsReadOnlyInvalid("CephFS MDS read-only fault is unavailable")
 	}
 	f := fault.fleet
 	state := fault.state
@@ -171,13 +171,13 @@ func (fault *MDSReadOnlyFault) WaitReplaced(ctx context.Context) (MDSStatus, err
 	var last error
 	for {
 		if err := ctx.Err(); err != nil {
-			return MDSStatus{}, fmt.Errorf("wait for a replacement of read-only mds.%s (GID %d) on rank %d; force_readonly has no inverse, so fail or restart the daemon: %w",
+			return MDSDaemonStatus{}, fmt.Errorf("wait for a replacement of read-only mds.%s (GID %d) on rank %d; force_readonly has no inverse, so fail or restart the daemon: %w",
 				state.target.Name, state.target.GID, state.target.Rank, errors.Join(err, last))
 		}
 		holder, replaced, err := f.readMDSReadOnlyReplacement(ctx, state)
 		switch {
 		case errors.Is(err, ceph.ErrInvalidRequest):
-			return MDSStatus{}, err
+			return MDSDaemonStatus{}, err
 		case err != nil:
 			last = err
 		case replaced:
@@ -210,10 +210,10 @@ func (f mdsFleet) beginMDSReadOnlyOperation(ctx context.Context) (context.Contex
 	var native fsbase.NativeIdentity
 	ctx, done, err := core.Admit(ctx, fsbase.AdmissionSpec{
 		RecheckCanceled: true,
-		Refusal:         "CephFS MDS read-only fault requires the original registered filesystem and confirmed native identity",
+		Refusal:         "CephFS MDS read-only fault requires an open cluster and the original registered filesystem with its confirmed native identity",
 		Check: func(context.Context) (bool, error) {
 			if !core.Registered() || !core.DescriptorIntact() || core.Native() == nil {
-				return false, mdsReadOnlyInvalid("CephFS MDS read-only fault requires an open cluster and the original registered filesystem with its confirmed native identity")
+				return false, nil
 			}
 			native = fsbase.NativeIdentity{ID: core.Native().ID, MetadataPool: core.Native().MetadataPool, DefaultPool: core.Native().DefaultPool}
 			return true, nil
@@ -222,49 +222,23 @@ func (f mdsFleet) beginMDSReadOnlyOperation(ctx context.Context) (context.Contex
 	return ctx, native, done, err
 }
 
-// readMDSReadOnlyTopology snapshots the owned daemons, reads one FSMap and
-// decodes the filesystem's MDS status with it. A terminated cluster and a
-// filesystem that was removed or recreated under the same name are
-// ceph.ErrInvalidRequest; the FSMap is returned for the GID search.
+// readMDSReadOnlyTopology is one MDS status read, as MDSStatus reads it,
+// that also refuses a filesystem that is not the one the fault captured. A
+// terminated cluster and a filesystem that was removed or recreated under the
+// same name are ceph.ErrInvalidRequest; the FSMap is returned for the GID
+// search.
 func (f mdsFleet) readMDSReadOnlyTopology(ctx context.Context, state *mdsReadOnlyState) (*FilesystemStatus, fsbase.FSMap, error) {
-	owner, err := f.ownerSample(ctx)
-	if err != nil {
-		return nil, fsbase.FSMap{}, err
-	}
-	name := f.core.Name()
-	switch {
-	case !owner.open:
-		return nil, fsbase.FSMap{}, mdsReadOnlyInvalid("CephFS MDS read-only fault: the cluster is terminated")
-	case !owner.registered || owner.native == nil:
-		return nil, fsbase.FSMap{}, mdsReadOnlyInvalid("CephFS MDS read-only fault: cephfs %q was removed or this handle no longer owns it", name)
-	case owner.native.ID != state.fsID || owner.native.MetadataPool != state.metadataPool || owner.native.DefaultPool != state.defaultPool:
-		return nil, fsbase.FSMap{}, mdsReadOnlyInvalid("CephFS MDS read-only fault: cephfs %q is not the filesystem of FSMap ID %d the fault captured", name, state.fsID)
-	}
-	data, err := f.readFSMap(ctx)
-	if err != nil {
-		return nil, fsbase.FSMap{}, fmt.Errorf("read cephfs MDS status: %w", err)
-	}
-	topology, err := decodeCephFSMDSTopology(data, name, owner.daemons)
-	if errors.Is(err, errFilesystemAbsent) {
-		if err := checkWatchedFSMap(data, name); err != nil {
-			return nil, fsbase.FSMap{}, err
-		}
-		return nil, fsbase.FSMap{}, mdsReadOnlyInvalid("CephFS MDS read-only fault: cephfs %q (FSMap ID %d) is absent from the FSMap", name, state.fsID)
+	sample, fsmap, err := f.readMDSStatus(ctx)
+	if errors.Is(err, ceph.ErrInvalidRequest) {
+		return nil, fsbase.FSMap{}, fmt.Errorf("CephFS MDS read-only fault: %w", err)
 	}
 	if err != nil {
 		return nil, fsbase.FSMap{}, err
 	}
-	if topology.status.FilesystemID != state.fsID || topology.metadataPool != state.metadataPool || topology.defaultPool != state.defaultPool {
-		if err := checkWatchedFSMap(data, name); err != nil {
-			return nil, fsbase.FSMap{}, err
-		}
-		return nil, fsbase.FSMap{}, mdsReadOnlyInvalid("CephFS MDS read-only fault: cephfs %q now has FSMap ID %d, not the captured %d: recreated under the same name", name, topology.status.FilesystemID, state.fsID)
+	if sample.status.FilesystemID != state.fsID {
+		return nil, fsbase.FSMap{}, mdsReadOnlyInvalid("CephFS MDS read-only fault: cephfs %q is not the filesystem of FSMap ID %d the fault captured", f.core.Name(), state.fsID)
 	}
-	var fsmap fsbase.FSMap
-	if err := json.Unmarshal(data, &fsmap); err != nil {
-		return nil, fsbase.FSMap{}, fmt.Errorf("decode cephfs FSMap: %w", err)
-	}
-	return topology.status, fsmap, nil
+	return &sample.status, fsmap, nil
 }
 
 // checkMDSReadOnlyOwner refuses, under the topology lock, a daemon handle
@@ -276,7 +250,7 @@ func (f mdsFleet) checkMDSReadOnlyOwner(ctx context.Context, daemon *MDS) error 
 		return err
 	}
 	defer servicehook.Unlock(c)
-	if err := f.checkStoppedMDSOwner(daemon, daemon.identity); err != nil || daemon.identity.removed {
+	if err := f.checkOwnedMDS(daemon, daemon.identity); err != nil || daemon.identity.removed {
 		return mdsReadOnlyInvalid("CephFS MDS read-only fault: mds.%s is not an owned MDS of cephfs %q: %v", daemon.ID, f.core.Name(), err)
 	}
 	return nil
@@ -284,17 +258,17 @@ func (f mdsFleet) checkMDSReadOnlyOwner(ctx context.Context, daemon *MDS) error 
 
 // readMDSReadOnlyTarget returns the FSMap entry of the daemon named name,
 // which must hold the only active rank of a single-rank filesystem.
-func (f mdsFleet) readMDSReadOnlyTarget(ctx context.Context, state *mdsReadOnlyState, name string) (MDSStatus, error) {
+func (f mdsFleet) readMDSReadOnlyTarget(ctx context.Context, state *mdsReadOnlyState, name string) (MDSDaemonStatus, error) {
 	status, _, err := f.readMDSReadOnlyTopology(ctx, state)
 	if err != nil {
-		return MDSStatus{}, err
+		return MDSDaemonStatus{}, err
 	}
 	if status.MaxMDS != 1 || len(status.Active) != 1 {
-		return MDSStatus{}, mdsReadOnlyInvalid("CephFS MDS read-only fault needs a filesystem with one active rank; cephfs %q has max_mds %d and %d active", f.core.Name(), status.MaxMDS, len(status.Active))
+		return MDSDaemonStatus{}, mdsReadOnlyInvalid("CephFS MDS read-only fault needs a filesystem with one active rank; cephfs %q has max_mds %d and %d active", f.core.Name(), status.MaxMDS, len(status.Active))
 	}
 	holder := status.Active[0]
 	if holder.Name != name || !holder.Owned {
-		return MDSStatus{}, mdsReadOnlyInvalid("mds.%s is not the active MDS of cephfs %q: rank %d is held by mds.%s", name, f.core.Name(), holder.Rank, holder.Name)
+		return MDSDaemonStatus{}, mdsReadOnlyInvalid("mds.%s is not the active MDS of cephfs %q: rank %d is held by mds.%s", name, f.core.Name(), holder.Rank, holder.Name)
 	}
 	return holder, nil
 }
@@ -313,7 +287,7 @@ func (f mdsFleet) confirmMDSReadOnly(ctx context.Context, state *mdsReadOnlyStat
 			if err != nil {
 				return err
 			}
-			if !slices.ContainsFunc(status.Active, func(active MDSStatus) bool {
+			if !slices.ContainsFunc(status.Active, func(active MDSDaemonStatus) bool {
 				return active.Rank == target.Rank && active.GID == target.GID && active.Name == target.Name
 			}) {
 				return fmt.Errorf("mds.%s (GID %d) left rank %d before its read-only state was confirmed", target.Name, target.GID, target.Rank)
@@ -332,48 +306,30 @@ func (f mdsFleet) confirmMDSReadOnly(ctx context.Context, state *mdsReadOnlyStat
 // when the faulted GID is absent from the FSMap, another owned GID holds the
 // rank, that GID answers as the rank's daemon and its health does not report
 // MDS_READ_ONLY.
-func (f mdsFleet) readMDSReadOnlyReplacement(ctx context.Context, state *mdsReadOnlyState) (MDSStatus, bool, error) {
+func (f mdsFleet) readMDSReadOnlyReplacement(ctx context.Context, state *mdsReadOnlyState) (MDSDaemonStatus, bool, error) {
 	status, fsmap, err := f.readMDSReadOnlyTopology(ctx, state)
 	if err != nil {
-		return MDSStatus{}, false, err
+		return MDSDaemonStatus{}, false, err
 	}
-	if mdsGIDRegistered(fsmap, state.target.GID) {
-		return MDSStatus{}, false, nil
+	if fsmap.HasDaemon("", state.target.GID) {
+		return MDSDaemonStatus{}, false, nil
 	}
-	index := slices.IndexFunc(status.Active, func(active MDSStatus) bool { return active.Rank == state.target.Rank })
+	index := slices.IndexFunc(status.Active, func(active MDSDaemonStatus) bool { return active.Rank == state.target.Rank })
 	if index < 0 {
-		return MDSStatus{}, false, nil // the rank is in replay, reconnect or rejoin
+		return MDSDaemonStatus{}, false, nil // the rank is in replay, reconnect or rejoin
 	}
 	holder := status.Active[index]
 	if !holder.Owned {
-		return MDSStatus{}, false, mdsReadOnlyInvalid("rank %d of cephfs %q is held by mds.%s, which this fixture does not own", holder.Rank, f.core.Name(), holder.Name)
+		return MDSDaemonStatus{}, false, mdsReadOnlyInvalid("rank %d of cephfs %q is held by mds.%s, which this fixture does not own", holder.Rank, f.core.Name(), holder.Name)
 	}
 	if err := checkMDSProcess(ctx, f.core.Volumes(), holder); err != nil {
-		return MDSStatus{}, false, err
+		return MDSDaemonStatus{}, false, err
 	}
 	reported, err := mdsReportsReadOnly(ctx, f.core.Volumes(), holder)
 	if err != nil || reported {
-		return MDSStatus{}, false, err
+		return MDSDaemonStatus{}, false, err
 	}
 	return holder, true, nil
-}
-
-// mdsGIDRegistered reports whether any filesystem or the standby list of
-// fsmap names gid.
-func mdsGIDRegistered(fsmap fsbase.FSMap, gid uint64) bool {
-	for _, info := range fsmap.Standbys {
-		if info.GID == gid {
-			return true
-		}
-	}
-	for _, filesystem := range fsmap.Filesystems {
-		for _, info := range filesystem.MDSMap.Info {
-			if info.GID == gid {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // mdsProcessStatus is the part of ceph tell mds.<gid> status that binds a
@@ -389,7 +345,7 @@ type mdsProcessStatus struct {
 }
 
 // readMDSProcess reads ceph tell mds.<gid> status of daemon.
-func readMDSProcess(ctx context.Context, v fsbase.VolumeCommands, daemon MDSStatus) (mdsProcessStatus, error) {
+func readMDSProcess(ctx context.Context, v fsbase.VolumeCommands, daemon MDSDaemonStatus) (mdsProcessStatus, error) {
 	data, err := v.Cluster().Ceph(ctx, "tell", "mds."+strconv.FormatUint(daemon.GID, 10), "status")
 	if err != nil {
 		return mdsProcessStatus{}, fmt.Errorf("read the status of mds.%s (GID %d): %w", daemon.Name, daemon.GID, err)
@@ -403,7 +359,7 @@ func readMDSProcess(ctx context.Context, v fsbase.VolumeCommands, daemon MDSStat
 
 // checkMDSProcess confirms that the process answering daemon's GID is the
 // up:active daemon of daemon's rank of this filesystem.
-func checkMDSProcess(ctx context.Context, v fsbase.VolumeCommands, daemon MDSStatus) error {
+func checkMDSProcess(ctx context.Context, v fsbase.VolumeCommands, daemon MDSDaemonStatus) error {
 	status, err := readMDSProcess(ctx, v, daemon)
 	if err != nil {
 		return err
@@ -416,7 +372,7 @@ func checkMDSProcess(ctx context.Context, v fsbase.VolumeCommands, daemon MDSSta
 
 // checkMDSReadOnlyCommand refuses a target whose own command list lacks
 // force_readonly, with the release the daemon reports.
-func checkMDSReadOnlyCommand(ctx context.Context, v fsbase.VolumeCommands, target MDSStatus) error {
+func checkMDSReadOnlyCommand(ctx context.Context, v fsbase.VolumeCommands, target MDSDaemonStatus) error {
 	data, err := v.Cluster().Ceph(ctx, "tell", "mds."+strconv.FormatUint(target.GID, 10), "get_command_descriptions")
 	if err != nil {
 		return fmt.Errorf("read the commands of mds.%s (GID %d): %w", target.Name, target.GID, err)
@@ -456,7 +412,7 @@ func mdsOffersCommand(data []byte, word string) (bool, error) {
 
 // mdsReportsReadOnly reports whether the cluster health lists daemon's
 // name and rank under MDS_READ_ONLY.
-func mdsReportsReadOnly(ctx context.Context, v fsbase.VolumeCommands, daemon MDSStatus) (bool, error) {
+func mdsReportsReadOnly(ctx context.Context, v fsbase.VolumeCommands, daemon MDSDaemonStatus) (bool, error) {
 	data, err := v.Cluster().Ceph(ctx, "health", "detail", "--format", "json")
 	if err != nil {
 		return false, fmt.Errorf("read the MDS read-only health: %w", err)
@@ -466,7 +422,7 @@ func mdsReportsReadOnly(ctx context.Context, v fsbase.VolumeCommands, daemon MDS
 
 // parseMDSReadOnlyHealth finds "mds.<name>(mds.<rank>):" at the start of a
 // detail message of MDS_READ_ONLY.
-func parseMDSReadOnlyHealth(data []byte, daemon MDSStatus) (bool, error) {
+func parseMDSReadOnlyHealth(data []byte, daemon MDSDaemonStatus) (bool, error) {
 	var health struct {
 		Checks *map[string]struct {
 			Detail []struct {

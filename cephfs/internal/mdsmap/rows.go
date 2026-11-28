@@ -3,6 +3,7 @@ package mdsmap
 import (
 	"encoding/json"
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -168,6 +169,54 @@ func admitRanks(s seen, m *mapFields, forbidden string) fault {
 		}
 	}
 	return faultNone
+}
+
+// checkPolicy reports whether the owned filesystem entry keeps the identity
+// captured at creation, the attached data pools and the given max_mds,
+// standby_count_wanted and standby-replay policy, with the filesystem
+// joinable and refusing standbys of another filesystem.
+func checkPolicy(id int64, m *mapFields, native *Native, dataPools []int64, active, standby int, replay bool) bool {
+	return id == native.ID && m.Metadata != nil && *m.Metadata == native.MetadataPool && m.Data != nil && slices.Equal(*m.Data, dataPools) &&
+		m.Max != nil && *m.Max == active && m.Wanted != nil && *m.Wanted == standby && m.Flags != nil &&
+		m.Flags.Joinable != nil && *m.Flags.Joinable && m.Flags.Replay != nil && *m.Flags.Replay == replay && m.Flags.Refuse != nil && *m.Flags.Refuse
+}
+
+// foreignStandbyCanJoin reports whether an admitted standby that is not the
+// owned filesystem's own could join it: it follows any filesystem, follows
+// the owned one, or follows a filesystem the map does not hold.
+func foreignStandbyCanJoin(s seen, row Row, owned int64) bool {
+	return *row.Join == -1 || *row.Join == owned || !s.fsIDs[*row.Join]
+}
+
+// poolFault is what scopePoolNames refused; each decoder reports it with its
+// own text.
+type poolFault int
+
+const (
+	poolNone poolFault = iota
+	// poolInvalid is a negative or repeated data pool ID.
+	poolInvalid
+	// poolUnavailable is a data pool ID with no pool name.
+	poolUnavailable
+)
+
+// scopePoolNames returns the names of the attached data pools in order. It
+// refuses a negative or repeated data pool ID and one without a name.
+func scopePoolNames(dataPools []int64, names map[int64]string) ([]string, poolFault) {
+	var out []string
+	seenPools := map[int64]bool{}
+	for _, id := range dataPools {
+		if id < 0 || seenPools[id] {
+			return nil, poolInvalid
+		}
+		seenPools[id] = true
+		name, ok := names[id]
+		if !ok {
+			return nil, poolUnavailable
+		}
+		out = append(out, name)
+	}
+	return out, poolNone
 }
 
 // DecodeJSON strictly decodes one native document: it rejects duplicate

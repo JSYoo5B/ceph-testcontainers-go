@@ -251,28 +251,8 @@ func add(ctx context.Context, fs *fsbase.Core, schedule Config) (*Lease, error) 
 // filesystem that is no longer registered, or that the FSMap shows replaced,
 // is an fsbase.IdentityChanged error: no later admission can succeed.
 func begin(ctx context.Context, fs *fsbase.Core) (context.Context, int64, func(), error) {
-	ctx, done, err := fs.Admit(ctx, fsbase.AdmissionSpec{
-		RecheckCanceled: true,
-		Refusal:         admissionRefusal,
-		Check: func(context.Context) (bool, error) {
-			if !fs.Registered() {
-				return false, fsbase.IdentityRefusal(admissionRefusal)
-			}
-			return fs.DescriptorIntact() && fs.Native() != nil, nil
-		},
-	})
-	if err != nil {
-		return ctx, 0, func() {}, err
-	}
-	state, err := fs.ReadNativePools(ctx)
-	if err != nil {
-		done()
-		return ctx, 0, func() {}, err
-	}
-	return ctx, state.ID, done, nil
+	return fs.AdmitActive(ctx, false)
 }
-
-const admissionRefusal = "CephFS filesystem must be an active filesystem created by this cluster"
 
 // begin admits one operation of the lease and refuses a filesystem whose
 // native ID is not the one the lease was added on, with an

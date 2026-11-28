@@ -14,7 +14,7 @@ import (
 // daemon is a standby again under a new GID. Evaluating the observation of a
 // takeover that is still in progress names what is missing.
 func ExampleMDSs_Evaluate() {
-	old := cephfs.MDSStatus{Name: "tc-cephfs-0", Rank: 0, GID: 4100, State: "up:active", Owned: true}
+	old := cephfs.MDSDaemonStatus{Name: "tc-cephfs-0", Rank: 0, GID: 4100, State: "up:active", Owned: true}
 	want := expect.MDSs{
 		FilesystemID: 1,
 		Ranks:        []expect.MDSRank{{Rank: 0, NotGID: old.GID}},
@@ -25,7 +25,7 @@ func ExampleMDSs_Evaluate() {
 	// The standby took rank 0; the killed daemon has not registered again.
 	later := cephfs.FilesystemStatus{
 		FilesystemName: "tc-cephfs", FilesystemID: 1, MaxMDS: 1,
-		Active: []cephfs.MDSStatus{{Name: "tc-cephfs-1", Rank: 0, GID: 4200, State: "up:active", Owned: true}},
+		Active: []cephfs.MDSDaemonStatus{{Name: "tc-cephfs-1", Rank: 0, GID: 4200, State: "up:active", Owned: true}},
 	}
 	result, err := want.Evaluate(later)
 	if err != nil {

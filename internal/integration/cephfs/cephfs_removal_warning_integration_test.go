@@ -111,7 +111,7 @@ finally:
 	}
 	guardGeneration := func(probe context.Context) error {
 		status, err := induced.MDSStatus(probe)
-		if err != nil || status == nil || status.FilesystemID != inducedBefore.FilesystemID || !slices.ContainsFunc(status.Active, func(mds cephfs.MDSStatus) bool {
+		if err != nil || status == nil || status.FilesystemID != inducedBefore.FilesystemID || !slices.ContainsFunc(status.Active, func(mds cephfs.MDSDaemonStatus) bool {
 			return mds.Name == inducedBefore.Active[0].Name && mds.GID == inducedBefore.Active[0].GID && mds.Owned
 		}) {
 			return fmt.Errorf("native induced filesystem/MDS generation unavailable or changed: %+v err=%v", status, err)

@@ -21,9 +21,9 @@ import (
 // sessionWatchLog runs a session.Watch and keeps every event it sends, so
 // that a burst of gaps during a takeover cannot overflow the watch's buffer.
 type sessionWatchLog struct {
-	watch  *cephfssession.Watcher
+	watch  *cephfssession.SessionWatch
 	mu     sync.Mutex
-	events []cephfssession.WatchEvent
+	events []cephfssession.SessionWatchEvent
 	notify chan struct{}
 	closed chan struct{}
 	cause  error
@@ -57,7 +57,7 @@ func startSessionWatchLog(t *testing.T, ctx context.Context, fs *cephfs.Filesyst
 			t.Errorf("stop session watch: %v", err)
 		}
 	})
-	if base := l.await(t, ctx, time.Minute, func(e cephfssession.WatchEvent) bool { return e.Kind == ceph.WatchBaseline }); base.Sequence != 1 {
+	if base := l.await(t, ctx, time.Minute, func(e cephfssession.SessionWatchEvent) bool { return e.Kind == ceph.WatchBaseline }); base.Sequence != 1 {
 		t.Fatalf("session watch baseline = %+v", base)
 	}
 	return l
@@ -65,10 +65,10 @@ func startSessionWatchLog(t *testing.T, ctx context.Context, fs *cephfs.Filesyst
 
 // await returns the first logged event that match accepts, waiting up to
 // timeout for it.
-func (l *sessionWatchLog) await(t *testing.T, ctx context.Context, timeout time.Duration, match func(cephfssession.WatchEvent) bool) cephfssession.WatchEvent {
+func (l *sessionWatchLog) await(t *testing.T, ctx context.Context, timeout time.Duration, match func(cephfssession.SessionWatchEvent) bool) cephfssession.SessionWatchEvent {
 	t.Helper()
-	var found cephfssession.WatchEvent
-	l.awaitLog(t, ctx, timeout, func(events []cephfssession.WatchEvent) bool {
+	var found cephfssession.SessionWatchEvent
+	l.awaitLog(t, ctx, timeout, func(events []cephfssession.SessionWatchEvent) bool {
 		for _, event := range events {
 			if match(event) {
 				found = event
@@ -82,7 +82,7 @@ func (l *sessionWatchLog) await(t *testing.T, ctx context.Context, timeout time.
 
 // awaitLog waits up to timeout until done accepts the whole log so far and
 // returns that log.
-func (l *sessionWatchLog) awaitLog(t *testing.T, ctx context.Context, timeout time.Duration, done func([]cephfssession.WatchEvent) bool) []cephfssession.WatchEvent {
+func (l *sessionWatchLog) awaitLog(t *testing.T, ctx context.Context, timeout time.Duration, done func([]cephfssession.SessionWatchEvent) bool) []cephfssession.SessionWatchEvent {
 	t.Helper()
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
@@ -105,7 +105,7 @@ func (l *sessionWatchLog) awaitLog(t *testing.T, ctx context.Context, timeout ti
 	}
 }
 
-func (l *sessionWatchLog) snapshot() []cephfssession.WatchEvent {
+func (l *sessionWatchLog) snapshot() []cephfssession.SessionWatchEvent {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return slices.Clone(l.events)
@@ -176,7 +176,7 @@ type rankOneSessionWatch struct {
 	// when the retained client was told to close; a client's sessions may
 	// change or go only after that.
 	evicted, finished time.Time
-	takeover          cephfssession.WatchEvent
+	takeover          cephfssession.SessionWatchEvent
 }
 
 // startRankOneSessionWatch starts the departing client, which creates a file
@@ -232,10 +232,10 @@ func listsOpenSessions(want map[sessionWatchKey]cephfssession.Session, sessions 
 // rank 1 by one, the daemon that took it over: rank 0 kept its daemon, so it
 // is compared and nothing changed on it, while rank 1 is rebaselined; every
 // session is listed, on both ranks, with the address it had.
-func (w *rankOneSessionWatch) takenOver(t *testing.T, ctx context.Context, zero, one cephfs.MDSStatus) {
+func (w *rankOneSessionWatch) takenOver(t *testing.T, ctx context.Context, zero, one cephfs.MDSDaemonStatus) {
 	t.Helper()
 	roster := []cephfssession.RankHolder{{Rank: 0, Name: zero.Name, GID: zero.GID}, {Rank: 1, Name: one.Name, GID: one.GID}}
-	w.takeover = w.log.await(t, ctx, time.Minute, func(e cephfssession.WatchEvent) bool {
+	w.takeover = w.log.await(t, ctx, time.Minute, func(e cephfssession.SessionWatchEvent) bool {
 		return e.Kind != ceph.WatchGap && slices.Equal(e.After, roster)
 	})
 	if !slices.Equal(w.takeover.Rebaselined, []int{1}) || w.takeover.Added != nil || w.takeover.Removed != nil || w.takeover.Changed != nil || !w.listsAll(w.takeover.Sessions) {
@@ -248,7 +248,7 @@ func (w *rankOneSessionWatch) takenOver(t *testing.T, ctx context.Context, zero,
 // session of the client when its OSDMap carries that entry. The watch must
 // remove both sessions, each from a sample of the daemon that listed it, and
 // nothing else; the blocklist, read on its own, names the removed address.
-func (w *rankOneSessionWatch) evict(t *testing.T, ctx context.Context, cluster *ceph.Container, zero cephfs.MDSStatus) {
+func (w *rankOneSessionWatch) evict(t *testing.T, ctx context.Context, cluster *ceph.Container, zero cephfs.MDSDaemonStatus) {
 	t.Helper()
 	w.evicted = time.Now()
 	harness.MustCeph(t, ctx, cluster, "tell", "mds."+zero.Name, "client", "evict", "id="+strconv.FormatUint(w.departing, 10))
@@ -313,7 +313,7 @@ func (w *rankOneSessionWatch) retainedAddress() string {
 func (w *rankOneSessionWatch) awaitRemoval(t *testing.T, ctx context.Context, client uint64) []uint64 {
 	t.Helper()
 	var sequences []uint64
-	w.log.awaitLog(t, ctx, 2*time.Minute, func(events []cephfssession.WatchEvent) bool {
+	w.log.awaitLog(t, ctx, 2*time.Minute, func(events []cephfssession.SessionWatchEvent) bool {
 		sequences = nil
 		removed := map[int]bool{}
 		for _, event := range events {

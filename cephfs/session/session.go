@@ -61,17 +61,16 @@ type TimeoutsOverrideHandle struct {
 }
 
 type timeoutsState struct {
-	fsID              int64
+	fsbase.OverrideRecord
 	previous, applied Limits
-	restored          bool
 }
 
+// timeoutsSubject names the timeouts override in its refusals.
+const timeoutsSubject = "session timeouts override"
+
 type nativeLimits struct {
-	ID     int64 `json:"id"`
-	MDSMap struct {
-		SessionTimeout   *int64 `json:"session_timeout"`
-		SessionAutoclose *int64 `json:"session_autoclose"`
-	} `json:"mdsmap"`
+	SessionTimeout   *int64 `json:"session_timeout"`
+	SessionAutoclose *int64 `json:"session_autoclose"`
 }
 
 type nativeSession struct {
@@ -137,15 +136,15 @@ func overrideTimeouts(ctx context.Context, fs *fsbase.Core, requested Limits) (*
 	}
 	defer done()
 	overrides := overridesOf(fs)
-	if active := overrides.byCore[fs]; active != nil && !active.restored {
-		return nil, errors.New("restore the existing CephFS session timeouts override first")
+	if active := overrides.timeouts[fs]; active != nil && !active.Restored {
+		return nil, fsbase.OverrideActive(timeoutsSubject)
 	}
 	previous, err := readLimits(ctx, fs.Volumes(), fsID)
 	if err != nil {
 		return nil, err
 	}
-	state := &timeoutsState{fsID: fsID, previous: previous, applied: requested}
-	overrides.byCore[fs] = state
+	state := &timeoutsState{OverrideRecord: fsbase.OverrideRecord{FSID: fsID}, previous: previous, applied: requested}
+	overrides.timeouts[fs] = state
 	change := &TimeoutsOverrideHandle{filesystem: fs, state: state}
 	return change, writeLimits(ctx, fs.Volumes(), fsID, previous, requested)
 }
@@ -157,54 +156,27 @@ func overrideTimeouts(ctx context.Context, fs *fsbase.Core, requested Limits) (*
 //purpose:condition,lifetime
 func (change *TimeoutsOverrideHandle) Restore(ctx context.Context) error {
 	if change == nil || change.filesystem == nil || change.state == nil {
-		return errors.New("CephFS session timeouts override is unavailable")
+		return fsbase.OverrideUnavailable(timeoutsSubject)
 	}
-	fs := change.filesystem
-	state := change.state
-	if restored, err := confirmedRestore(ctx, fs, func() bool { return state.restored }); err != nil || restored {
-		return err
-	}
-	ctx, fsID, done, err := begin(ctx, fs)
-	if err != nil {
-		return err
-	}
-	defer done()
-	if state.restored {
-		return nil
-	}
-	overrides := overridesOf(fs)
-	if overrides.byCore[fs] != state {
-		return errors.New("CephFS session timeouts override is not tracked by this filesystem")
-	}
-	if fsID != state.fsID {
-		return errors.New("CephFS filesystem identity changed since the session timeouts override")
-	}
-	current, err := readLimits(ctx, fs.Volumes(), fsID)
-	if err != nil {
-		return err
-	}
-	if !ownedSessionValue(current.Timeout, state.previous.Timeout, state.applied.Timeout) ||
-		!ownedSessionValue(current.Autoclose, state.previous.Autoclose, state.applied.Autoclose) {
-		return fmt.Errorf("CephFS session timeouts changed outside this override: %+v", current)
-	}
-	if err := writeLimits(ctx, fs.Volumes(), fsID, current, state.previous); err != nil {
-		return err
-	}
-	state.restored = true
-	delete(overrides.byCore, fs)
-	return nil
-}
-
-// confirmedRestore reports, under the setup gate and without an admission,
-// whether a handle's restore was already confirmed, so a confirmed restore
-// stays complete after the filesystem or cluster is gone.
-func confirmedRestore(ctx context.Context, fs *fsbase.Core, restored func() bool) (bool, error) {
-	if fs.Cluster() == nil {
-		return false, nil
-	}
-	var done bool
-	err := fs.WithSetupGate(ctx, func() { done = restored() })
-	return done, err
+	fs, state := change.filesystem, change.state
+	overrides := func() *overrides { return overridesOf(fs) }
+	return fs.RestoreOverride(ctx, fsbase.Override{
+		Subject: timeoutsSubject,
+		Record:  &state.OverrideRecord,
+		Tracked: func() bool { return overrides().timeouts[fs] == state },
+		Restore: func(ctx context.Context, fsID int64) error {
+			current, err := readLimits(ctx, fs.Volumes(), fsID)
+			if err != nil {
+				return err
+			}
+			if !ownedSessionValue(current.Timeout, state.previous.Timeout, state.applied.Timeout) ||
+				!ownedSessionValue(current.Autoclose, state.previous.Autoclose, state.applied.Autoclose) {
+				return fmt.Errorf("CephFS session timeouts changed outside this override: %+v", current)
+			}
+			return writeLimits(ctx, fs.Volumes(), fsID, current, state.previous)
+		},
+		Forget: func() { delete(overrides().timeouts, fs) },
+	})
 }
 
 // ownedSessionValue accepts either side of an interrupted apply or restore.
@@ -287,58 +259,28 @@ func validateLimits(requested Limits) error {
 }
 
 // begin serializes with other CephFS setup and confirms that fs is still the
-// cluster's active owned filesystem; a filesystem that is not, such as one of
-// a terminated cluster, is refused with ceph.ErrInvalidRequest. It does not
-// recheck cancellation after the setup gate.
+// cluster's active owned filesystem, as fsbase.Core.AdmitOwned does; a
+// filesystem that is not, such as one of a terminated cluster, is refused with
+// ceph.ErrInvalidRequest.
 func begin(ctx context.Context, fs *fsbase.Core) (context.Context, int64, func(), error) {
-	if fs.Cluster() == nil {
-		err := ctx.Err()
-		if err == nil {
-			err = servicehook.Invalid(errors.New("CephFS filesystem is unavailable"))
-		}
-		return ctx, 0, func() {}, err
-	}
-	var fsID int64
-	refused := false
-	ctx, done, err := fs.Admit(ctx, fsbase.AdmissionSpec{
-		Refusal: "CephFS filesystem must be an active filesystem created by this cluster",
-		Check: func(context.Context) (bool, error) {
-			if !fs.Registered() || !fs.DescriptorIntact() || fs.Native() == nil {
-				refused = true
-				return false, nil
-			}
-			fsID = fs.Native().ID
-			return true, nil
-		},
-	})
-	if refused {
-		err = servicehook.Invalid(err)
-	}
-	if err != nil {
-		return ctx, 0, func() {}, err
-	}
-	return ctx, fsID, done, nil
+	return fs.AdmitOwned(ctx)
 }
 
 func readLimits(ctx context.Context, v fsbase.VolumeCommands, fsID int64) (Limits, error) {
-	data, err := v.Cluster().Ceph(ctx, "fs", "get", v.Name(), "--format", "json")
-	if err != nil {
-		return Limits{}, fmt.Errorf("read CephFS %q session timeouts: %w", v.Name(), err)
+	var limits nativeLimits
+	if err := v.ReadMDSMap(ctx, fsID, "session timeouts", &limits); err != nil {
+		return Limits{}, err
 	}
-	return parseLimits(data, fsID)
+	return checkLimits(limits)
 }
 
-func parseLimits(data []byte, fsID int64) (Limits, error) {
-	var limits nativeLimits
-	if err := json.Unmarshal(data, &limits); err != nil || limits.MDSMap.SessionTimeout == nil || limits.MDSMap.SessionAutoclose == nil {
+func checkLimits(limits nativeLimits) (Limits, error) {
+	if limits.SessionTimeout == nil || limits.SessionAutoclose == nil {
 		return Limits{}, errors.New("decode CephFS session timeouts")
 	}
-	if limits.ID != fsID {
-		return Limits{}, fmt.Errorf("CephFS filesystem ID is %d, want %d", limits.ID, fsID)
-	}
 	return Limits{
-		Timeout:   time.Duration(*limits.MDSMap.SessionTimeout) * time.Second,
-		Autoclose: time.Duration(*limits.MDSMap.SessionAutoclose) * time.Second,
+		Timeout:   time.Duration(*limits.SessionTimeout) * time.Second,
+		Autoclose: time.Duration(*limits.SessionAutoclose) * time.Second,
 	}, nil
 }
 
@@ -382,7 +324,7 @@ const overrideKind = "cephfs/session.overrides"
 // again, and a filesystem created later under the same name gets a new core.
 // They live as long as their cluster.
 type overrides struct {
-	byCore   map[*fsbase.Core]*timeoutsState
+	timeouts map[*fsbase.Core]*timeoutsState
 	refusals map[*fsbase.Core]*refusalState
 	features map[*fsbase.Core]*featuresState
 }
@@ -391,7 +333,7 @@ type overrides struct {
 // the setup gate.
 func overridesOf(core *fsbase.Core) *overrides {
 	return servicehook.Extension(core.Cluster(), overrideKind, func() any {
-		return &overrides{byCore: make(map[*fsbase.Core]*timeoutsState), refusals: make(map[*fsbase.Core]*refusalState),
+		return &overrides{timeouts: make(map[*fsbase.Core]*timeoutsState), refusals: make(map[*fsbase.Core]*refusalState),
 			features: make(map[*fsbase.Core]*featuresState)}
 	}).(*overrides)
 }

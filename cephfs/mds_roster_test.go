@@ -132,12 +132,13 @@ var mdsRosterMethods = map[string]struct{ calls []string }{
 
 // mdsRosterWriters maps each mutating method to the only functions that may
 // call it. All of them run with setupMu and the cluster mutex held: they take
-// them, or (removeAll) are owner held and setup held, so every reference to them
+// them, or (removeAll, and unpublishMDS, which retireMDS, removeAll and removeStoppedMDS
+// call) are owner held and setup held, so every reference to them
 // follows both acquisitions (checked by the reader guard).
 var mdsRosterWriters = map[string][]string{
 	"reserveIndex": {"admitMDSStart"},
 	"publish":      {"publishStartedMDS"},
-	"remove":       {"retireMDS", "removeAll", "removeStoppedMDS"},
+	"remove":       {"unpublishMDS"},
 }
 
 // mdsRosterSetupHeld are the functions that run with setupMu held by their
@@ -147,7 +148,7 @@ var mdsRosterSetupHeld = map[string]bool{
 	"timingSnapshot": true,
 	"startMDS":       true, "startMDSWithService": true, "startMDSWithAdmission": true, "admitMDSStart": true, "createMDSCredentials": true, "publishStartedMDS": true, "retireMDS": true,
 	"captureColdMDS": true, "scaleColdMDS": true, "verifyColdMDS": true, "checkColdMDSAuth": true,
-	"growMDSs": true, "retireSurplusMDSs": true, "removeAll": true,
+	"growMDSs": true, "retireSurplusMDSs": true, "removeAll": true, "unpublishMDS": true,
 }
 
 // mdsRosterOwnerHeld are the functions documented "Owner held": they read the
@@ -158,10 +159,10 @@ var mdsRosterSetupHeld = map[string]bool{
 var mdsRosterOwnerHeld = map[string]bool{
 	"timingSnapshot":                true,
 	"completedMDSReplacementCohort": true, "checkMDSReplacementOwner": true,
-	"checkMDSReplacementPartial": true, "checkStoppedMDSOwner": true,
+	"checkMDSReplacementPartial": true, "checkOwnedMDS": true, "embeddedOwned": true, "registryHolds": true,
 	"decodeStoppedMDSScope": true, "verifyStoppedMDSSurvivors": true, "readStoppedMDSScope": true, "ConfigTargets": true,
 	"admitMDSReplacement": true, "admitStoppedMDSRemoval": true, "reattestStoppedMDS": true, "confirmStoppedMDSRemoved": true,
-	"checkScaleOwner": true, "removeAll": true, "addConfigTargets": true, "ownedNames": true,
+	"checkScaleOwner": true, "removeAll": true, "addConfigTargets": true, "ownedNames": true, "unpublishMDS": true,
 }
 
 // mdsRosterSetupOnlyReaders read the roster under setupMu alone, between the

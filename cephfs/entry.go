@@ -13,7 +13,13 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-var errNilCluster = servicehook.Invalid(errors.New("ceph cluster is unavailable"))
+// errNilCluster refuses an operation without a cluster: a nil cluster, a nil
+// filesystem or one that has no cluster.
+var errNilCluster = servicehook.Invalid(errors.New("cephfs cluster is unavailable"))
+
+// errMDSUnavailable refuses an MDS operation on a nil MDS or one without the
+// creation identity of an owned daemon.
+var errMDSUnavailable = servicehook.Invalid(errors.New("original owned MDS creation identity is unavailable"))
 
 // Start creates one filesystem with dedicated pools and its
 // ActiveMDS+StandbyMDS daemons on an existing cluster. A zero config selects

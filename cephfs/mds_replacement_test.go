@@ -818,3 +818,25 @@ func TestMDSReplacementLegacyStarterReceiptUnchanged(t *testing.T) {
 		})
 	}
 }
+
+// A replacement admission whose selected control reports another cluster is
+// refused, before the receipt is recorded, by the cluster identity check
+// that the cold start shares, worded for any cluster. The public error hides
+// the admission's text, so the admission is called directly.
+func TestMDSReplacementAdmissionRefusesAForeignControlFSID(t *testing.T) {
+	r := newReplacementMDSFixture(t)
+	f := r.fs.fleet()
+	receipt := &cephFSMDSReplacement{name: f.mds.roster.nextID(f.core.Name())}
+	scope, _, err := f.readMDSReplacementScope(t.Context(), r.old.identity, receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt.scope = scope
+	r.n.fsid = "0b4a987e-f450-4f00-aa7f-0f5230ae4bca"
+	if _, err := f.admitMDSReplacement(t.Context(), r.old, receipt, receipt.name); err == nil || !strings.Contains(err.Error(), "cluster identity") || strings.Contains(err.Error(), "cold") {
+		t.Fatalf("a foreign control FSID: %v", err)
+	}
+	if r.old.identity.replacement != nil {
+		t.Fatal("a refused admission recorded the receipt")
+	}
+}

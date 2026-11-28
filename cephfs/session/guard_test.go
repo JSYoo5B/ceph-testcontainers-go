@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -41,20 +42,15 @@ func callee(call *ast.CallExpr) string {
 }
 
 // TestSessionAdmissionHasOneOwnerAndKeepsItsPredicateLocal pins for the
-// session flow what the cephfs guards
-// TestAdmissionLifetimeHasOneOwnerAndKeepsPredicatesLocal,
-// TestFilesystemIdentityIsReadOnlyFromImmutableName and
-// TestNativeIdentityIsCapturedNotReplacedInProduction pinned for it while it
-// was in package cephfs: only begin calls Admit, with exactly one own Check
-// and no lock of its own; only begin reads the exported descriptor through
-// DescriptorIntact; nothing installs or captures a native identity; only
-// confirmedRestore, which the overrides' Restore methods share, reads under
-// the setup gate without an admission; and the
-// package adds no init and no mutex, so the override state is guarded by the
-// setup gate alone.
+// session flow what the cephfs guards pin for package cephfs: only begin
+// admits, through fsbase.Core.AdmitOwned, which owns the predicate; only the
+// overrides' Restore methods run the shared restore protocol
+// (RestoreOverride); nothing else admits, reads the exported descriptor,
+// reads under the setup gate without an admission, or installs or captures a
+// native identity; and the package adds no init and no mutex, so the
+// override state is guarded by the setup gate alone.
 func TestSessionAdmissionHasOneOwnerAndKeepsItsPredicateLocal(t *testing.T) {
 	sites := map[string][]string{}
-	var beginFn *ast.FuncDecl
 	for file, parsed := range productionFiles(t) {
 		for _, imp := range parsed.Imports {
 			if strings.Trim(imp.Path.Value, `"`) == "sync" {
@@ -74,13 +70,10 @@ func TestSessionAdmissionHasOneOwnerAndKeepsItsPredicateLocal(t *testing.T) {
 			} else if name == "init" {
 				t.Errorf("%s declares init", file)
 			}
-			if name == "begin" {
-				beginFn = fn
-			}
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				if call, ok := n.(*ast.CallExpr); ok {
 					switch c := callee(call); c {
-					case "Admit", "DescriptorIntact", "ReplaceNative", "CaptureNativePools", "WithSetupGate":
+					case "Admit", "AdmitOwned", "AdmitActive", "RestoreOverride", "DescriptorIntact", "ReplaceNative", "CaptureNativePools", "WithSetupGate":
 						sites[c] = append(sites[c], name)
 					}
 				}
@@ -88,38 +81,14 @@ func TestSessionAdmissionHasOneOwnerAndKeepsItsPredicateLocal(t *testing.T) {
 			})
 		}
 	}
+	for _, list := range sites {
+		slices.Sort(list)
+	}
 	want := map[string][]string{
-		"Admit":            {"begin"},
-		"DescriptorIntact": {"begin"},
-		"WithSetupGate":    {"confirmedRestore"},
+		"AdmitOwned":      {"begin"},
+		"RestoreOverride": {"RefusalOverrideHandle.Restore", "RequiredFeaturesOverrideHandle.Restore", "TimeoutsOverrideHandle.Restore"},
 	}
 	if !reflect.DeepEqual(sites, want) {
 		t.Errorf("session admission sites changed: %v, want %v", sites, want)
-	}
-	if beginFn == nil {
-		t.Fatal("begin is missing")
-	}
-	checks := 0
-	ast.Inspect(beginFn.Body, func(n ast.Node) bool {
-		if kv, ok := n.(*ast.KeyValueExpr); ok {
-			if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "Check" {
-				if _, lit := kv.Value.(*ast.FuncLit); lit {
-					checks++
-				}
-			}
-			if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "RecheckCanceled" {
-				t.Error("the session admission does not recheck cancellation after the setup gate")
-			}
-		}
-		if call, ok := n.(*ast.CallExpr); ok {
-			switch callee(call) {
-			case "LockMutex", "LockTopology", "Lock", "Unlock":
-				t.Errorf("begin calls %s; the lifetime belongs to Admit", callee(call))
-			}
-		}
-		return true
-	})
-	if checks != 1 {
-		t.Errorf("begin must pass exactly one own check function, has %d", checks)
 	}
 }

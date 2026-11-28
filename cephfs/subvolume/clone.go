@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"path"
-	"slices"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
@@ -243,48 +242,34 @@ func (clone *Clone) RemovePartial(ctx context.Context) error {
 	}
 	defer done()
 	identity := clone.identity
-	if identity.removed {
-		return nil
-	}
-	names, err := fs.Volumes().SubvolumeNames(ctx, identity.group)
-	if err != nil {
-		return err
-	}
-	if !slices.Contains(names, identity.name) {
-		if identity.removalAttempted {
-			identity.removed = true
+	return removal{
+		name: identity.name, removed: &identity.removed, attempted: &identity.removalAttempted,
+		list: func() ([]string, error) { return fs.Volumes().SubvolumeNames(ctx, identity.group) },
+		verify: func() error {
+			status, err := identity.checkedStatus(ctx, fs, fsID)
+			if err != nil {
+				return err
+			}
+			if status.State != "failed" && status.State != "canceled" {
+				return fmt.Errorf("clone is %s; only failed or canceled targets support partial cleanup", status.State)
+			}
+			detached, err := cloneSourceDetached(ctx, fs, fsID, identity)
+			if err != nil {
+				return err
+			}
+			if !detached {
+				return errors.New("clone source snapshot is still protected; await cancellation/worker detachment before cleanup")
+			}
 			return nil
-		}
-		return errors.New("partial clone disappeared outside this fixture")
-	}
-	status, err := identity.checkedStatus(ctx, fs, fsID)
-	if err != nil {
-		return err
-	}
-	if status.State != "failed" && status.State != "canceled" {
-		return fmt.Errorf("clone is %s; only failed or canceled targets support partial cleanup", status.State)
-	}
-	detached, err := cloneSourceDetached(ctx, fs, fsID, identity)
-	if err != nil {
-		return err
-	}
-	if !detached {
-		return errors.New("clone source snapshot is still protected; await cancellation/worker detachment before cleanup")
-	}
-	identity.removalAttempted = true
-	args := fsbase.AppendGroup([]string{"fs", "subvolume", "rm", fs.Name(), identity.name}, identity.group)
-	if _, err := fs.Cluster().Ceph(ctx, append(args, "--force")...); err != nil {
-		return err
-	}
-	names, err = fs.Volumes().SubvolumeNames(ctx, identity.group)
-	if err != nil {
-		return err
-	}
-	if slices.Contains(names, identity.name) {
-		return errors.New("partial clone removal was not confirmed")
-	}
-	identity.removed = true
-	return nil
+		},
+		remove: func() error {
+			args := fsbase.AppendGroup([]string{"fs", "subvolume", "rm", fs.Name(), identity.name}, identity.group)
+			_, err := fs.Cluster().Ceph(ctx, append(args, "--force")...)
+			return err
+		},
+		vanished:    errors.New("partial clone disappeared outside this fixture"),
+		unconfirmed: errors.New("partial clone removal was not confirmed"),
+	}.reconcile()
 }
 
 // cloneIdentityScript prints the native incarnation of the clone under the

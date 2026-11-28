@@ -178,12 +178,18 @@ func (f mdsFleet) checkColdMDSAuth(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	present, err := mdsmap.IdentityPresent(data, "mds."+f.mds.roster.nextID(f.core.Name()))
+	return checkReservedMDSIdentity(ctx, data, f.mds.roster.nextID(f.core.Name()), "initial MDS identity already exists")
+}
+
+// checkReservedMDSIdentity refuses, with refusal as ceph.ErrInvalidRequest,
+// an auth listing that already holds the reserved daemon name.
+func checkReservedMDSIdentity(ctx context.Context, data []byte, name, refusal string) error {
+	present, err := mdsmap.IdentityPresent(data, "mds."+name)
 	if err != nil {
 		return err
 	}
 	if present {
-		return servicehook.Invalid(errors.New("initial MDS identity already exists"))
+		return servicehook.Invalid(errors.New(refusal))
 	}
 	return ctx.Err()
 }
@@ -195,24 +201,49 @@ func readColdFSID(ctx context.Context, v fsbase.VolumeCommands, cap *cephFSColdM
 	if err != nil {
 		return "", err
 	}
-	return coldMDSFSID(ctx, data, cap)
+	want := ""
+	if cap != nil {
+		want = cap.fsid
+	}
+	return checkClusterFSID(ctx, data, want)
 }
-func coldMDSFSID(ctx context.Context, data []byte, cap *cephFSColdMDS) (string, error) {
+
+// checkClusterFSID returns the cluster UUID that one fsid reply reports. It
+// refuses a reply that is not a canonical, non-nil UUID and, when want is not
+// empty, one that is not want.
+func checkClusterFSID(ctx context.Context, data []byte, want string) (string, error) {
 	value := strings.TrimSpace(string(data))
 	id, err := uuid.Parse(value)
-	if err != nil || id == uuid.Nil || id.String() != value || cap != nil && cap.fsid != value {
-		return "", errors.New("original cold cluster identity is invalid or changed")
+	if err != nil || id == uuid.Nil || id.String() != value || want != "" && want != value {
+		return "", errors.New("original cluster identity is invalid or changed")
 	}
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
 	return value, nil
 }
-func (f mdsFleet) checkColdSelectedControl(ctx context.Context, control testcontainers.Container) error {
-	data, err := servicehook.Command(ctx, control, "ceph", "--connect-timeout", "5", "fsid")
-	if err != nil {
-		return clusterutil.OperationError(ctx, "read selected initial MDS control identity", err)
+
+// controlCeph is the argument list of a ceph command that runs in a
+// selected control container, bounded by a monitor connection timeout.
+func controlCeph(args ...string) []string {
+	return append([]string{"ceph", "--connect-timeout", "5"}, args...)
+}
+
+// controlFSID checks the cluster UUID that the selected control reports
+// against want, the cluster UUID an earlier read confirmed; what names the
+// read in its error.
+func controlFSID(ctx context.Context, control testcontainers.Container, want, what string) error {
+	if want == "" {
+		return errors.New("original cluster identity is invalid or changed")
 	}
-	_, err = coldMDSFSID(ctx, data, f.mds.coldMDS)
+	data, err := servicehook.Command(ctx, control, controlCeph("fsid")...)
+	if err != nil {
+		return clusterutil.OperationError(ctx, what, err)
+	}
+	_, err = checkClusterFSID(ctx, data, want)
 	return err
+}
+
+func (f mdsFleet) checkColdSelectedControl(ctx context.Context, control testcontainers.Container) error {
+	return controlFSID(ctx, control, f.mds.coldMDS.fsid, "read selected initial MDS control identity")
 }

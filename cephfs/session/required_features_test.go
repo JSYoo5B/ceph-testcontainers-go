@@ -147,7 +147,7 @@ func TestOverrideRequiredFeaturesOwnsOnlyTheAddedBitsAndRestoresThem(t *testing.
 	if got := ctr.featureMutations(); !slices.Equal(got, []string{"add metric_collect", "add alternate_name", "rm alternate_name", "rm metric_collect"}) {
 		t.Fatalf("mutations = %q", got)
 	}
-	if overridesOf(fs.Core).features[fs.Core] != nil || overridesOf(fs.Core).byCore[fs.Core] != timeouts.state {
+	if overridesOf(fs.Core).features[fs.Core] != nil || overridesOf(fs.Core).timeouts[fs.Core] != timeouts.state {
 		t.Fatal("restoring the features override changed the tracked overrides")
 	}
 	if err := change.Restore(t.Context()); err != nil || len(ctr.featureMutations()) != 4 {
