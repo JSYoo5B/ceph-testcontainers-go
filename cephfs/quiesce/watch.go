@@ -14,6 +14,9 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/watch"
 )
 
+// setWatchOperation names a set watch in its refusals.
+const setWatchOperation = "watch quiesce set"
+
 // setWatchDefaultInterval is the default WatchConfig.Interval of Set.Watch:
 // each read is one FSMap read and one quiesce database query, and the
 // shortest native expiration is one second.
@@ -78,7 +81,7 @@ func (w *SetWatch) Events() <-chan SetWatchEvent {
 //purpose:observation,lifetime
 func (w *SetWatch) Stop() error {
 	if w == nil || !w.stream.Started() {
-		return servicehook.Invalid(errors.New("watch quiesce set: the watch is not started by Set.Watch"))
+		return servicehook.WatchNotStarted(setWatchOperation)
 	}
 	return w.stream.Stop()
 }
@@ -128,11 +131,11 @@ func (w *SetWatch) Stop() error {
 //purpose:observation
 func (q *Set) Watch(ctx context.Context, cfg ceph.WatchConfig) (*SetWatch, error) {
 	if q == nil || q.filesystem == nil || q.state == nil {
-		return nil, servicehook.Invalid(errors.New("watch quiesce set: the set is not started by quiesce.Start"))
+		return nil, servicehook.Invalid(errors.New(setWatchOperation + ": the set is not from quiesce.Start"))
 	}
-	settings, err := watch.Validate(cfg.Interval, cfg.QueryTimeout, cfg.Buffer, setWatchDefaultInterval)
+	settings, err := servicehook.WatchSettings(setWatchOperation, cfg, setWatchDefaultInterval)
 	if err != nil {
-		return nil, servicehook.Invalid(fmt.Errorf("watch quiesce set: %v", err))
+		return nil, err
 	}
 	read := func(ctx context.Context) (*State, error) {
 		return q.status(ctx, volbase.BeginObservation)
@@ -168,7 +171,8 @@ func startSetWatch(ctx context.Context, settings watch.Settings, id string, conf
 		},
 		Final: func(s *State) bool { return terminalState(s.State) },
 		Event: func(m watch.Meta, s *State, err error) SetWatchEvent {
-			e := SetWatchEvent{Sequence: m.Sequence, Kind: ceph.WatchEventKind(m.Kind), Started: m.Started, Finished: m.Finished, Err: err}
+			e := SetWatchEvent{Err: err}
+			e.Sequence, e.Kind, e.Started, e.Finished = servicehook.WatchMeta(m)
 			if err == nil {
 				copied := *s
 				copied.Members = slices.Clone(s.Members)

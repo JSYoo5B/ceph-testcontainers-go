@@ -388,7 +388,7 @@ func Command(ctx context.Context, ctr testcontainers.Container, label string, pr
 // processLimit, shortened to the caller's deadline. When Exec ends before the
 // supervisor does, which includes a manual cancellation, Cancel stops this
 // invocation inside the container before Run returns, whether its supervisor
-// is running or has not started yet; when Cancel fails, the error holds a
+// is running or is yet to start; when Cancel fails, the error holds a
 // NotStoppedError. label names the command in errors. Run returns the
 // supervisor's report, also for a run that timed out or was truncated, and an
 // error only when it has no complete report.
@@ -611,7 +611,7 @@ func parseReport(attempt context.Context, label, marker string, code int, data [
 
 // CancelScript cancels one invocation through its marker and
 // signals no process itself. If it claims the marker first, the supervisor has
-// not started, and if Docker starts it later it finds the claim, removes it and
+// yet to start, and if Docker starts it later it finds the claim, removes it and
 // starts nothing. A marker that holds its own claim, or that a supervisor of an
 // earlier container instance wrote, needs nothing more: that supervisor and
 // its command ended with their instance, and the file still blocks a late

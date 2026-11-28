@@ -36,19 +36,6 @@ const (
 // epoch is no longer the baseline's.
 var errSyncPeriodChanged = errors.New("the committed period changed; start a new watch")
 
-// syncWatchSettings validates cfg for one Watch of this package.
-func syncWatchSettings(operation string, cfg ceph.WatchConfig, defaultInterval time.Duration) (watch.Settings, error) {
-	s, err := watch.Validate(cfg.Interval, cfg.QueryTimeout, cfg.Buffer, defaultInterval)
-	if err != nil {
-		return watch.Settings{}, servicehook.Invalid(fmt.Errorf("%s: %v", operation, err))
-	}
-	return s, nil
-}
-
-func syncWatchNotStarted(operation string) error {
-	return servicehook.Invalid(fmt.Errorf("%s: the watch is not started by its Watch call", operation))
-}
-
 // SyncWatchEvent is one event of a SyncWatch.
 //
 // Sequence starts at 1 with the baseline and increases by one for each event,
@@ -99,7 +86,7 @@ func (w *SyncWatch) Events() <-chan SyncWatchEvent {
 //purpose:observation,lifetime
 func (w *SyncWatch) Stop() error {
 	if w == nil || !w.stream.Started() {
-		return syncWatchNotStarted(syncWatchOperation)
+		return servicehook.WatchNotStarted(syncWatchOperation)
 	}
 	return w.stream.Stop()
 }
@@ -144,7 +131,7 @@ func (f *Fixture) WatchSync(ctx context.Context, cfg ceph.WatchConfig, zoneName 
 	if f == nil {
 		return nil, servicehook.Invalid(errors.New("RGW multisite fixture is required"))
 	}
-	settings, err := syncWatchSettings(syncWatchOperation, cfg, syncWatchDefaultInterval)
+	settings, err := servicehook.WatchSettings(syncWatchOperation, cfg, syncWatchDefaultInterval)
 	if err != nil {
 		return nil, err
 	}
@@ -179,7 +166,7 @@ func (f *Fixture) WatchSync(ctx context.Context, cfg ceph.WatchConfig, zoneName 
 		Event: func(m watch.Meta, s SyncStatus, err error) SyncWatchEvent {
 			s.DataSources = slices.Clone(s.DataSources)
 			e := SyncWatchEvent{Status: s, Err: err, Ready: err == nil && syncStatusReady(s, sources)}
-			e.Sequence, e.Kind, e.Started, e.Finished = m.Sequence, ceph.WatchEventKind(m.Kind), m.Started, m.Finished
+			e.Sequence, e.Kind, e.Started, e.Finished = servicehook.WatchMeta(m)
 			return e
 		},
 	})
@@ -281,7 +268,7 @@ func (w *BucketSyncWatch) Events() <-chan BucketSyncWatchEvent {
 //purpose:observation,lifetime
 func (w *BucketSyncWatch) Stop() error {
 	if w == nil || !w.stream.Started() {
-		return syncWatchNotStarted(bucketSyncWatchOperation)
+		return servicehook.WatchNotStarted(bucketSyncWatchOperation)
 	}
 	return w.stream.Stop()
 }
@@ -323,7 +310,7 @@ func (g *SyncGroup) WatchBucketSync(ctx context.Context, cfg ceph.WatchConfig, p
 	if err != nil {
 		return nil, err
 	}
-	settings, err := syncWatchSettings(bucketSyncWatchOperation, cfg, syncWatchDefaultInterval)
+	settings, err := servicehook.WatchSettings(bucketSyncWatchOperation, cfg, syncWatchDefaultInterval)
 	if err != nil {
 		return nil, err
 	}
@@ -341,7 +328,7 @@ func (g *SyncGroup) WatchBucketSync(ctx context.Context, cfg ceph.WatchConfig, p
 		Equal: func(a, b BucketSyncStatus) bool { return a == b },
 		Event: func(m watch.Meta, s BucketSyncStatus, err error) BucketSyncWatchEvent {
 			e := BucketSyncWatchEvent{Status: s, Err: err}
-			e.Sequence, e.Kind, e.Started, e.Finished = m.Sequence, ceph.WatchEventKind(m.Kind), m.Started, m.Finished
+			e.Sequence, e.Kind, e.Started, e.Finished = servicehook.WatchMeta(m)
 			return e
 		},
 	})
@@ -459,7 +446,7 @@ func (w *BucketPolicyWatch) Events() <-chan BucketPolicyWatchEvent {
 //purpose:observation,lifetime
 func (w *BucketPolicyWatch) Stop() error {
 	if w == nil || !w.stream.Started() {
-		return syncWatchNotStarted(bucketPolicyWatchOperation)
+		return servicehook.WatchNotStarted(bucketPolicyWatchOperation)
 	}
 	return w.stream.Stop()
 }
@@ -512,7 +499,7 @@ func (g *SyncGroup) WatchBucketPolicy(ctx context.Context, cfg ceph.WatchConfig,
 	if _, err := g.fixture(); err != nil {
 		return nil, err
 	}
-	settings, err := syncWatchSettings(bucketPolicyWatchOperation, cfg, bucketPolicyWatchDefaultInterval)
+	settings, err := servicehook.WatchSettings(bucketPolicyWatchOperation, cfg, bucketPolicyWatchDefaultInterval)
 	if err != nil {
 		return nil, err
 	}
@@ -537,7 +524,7 @@ func (g *SyncGroup) WatchBucketPolicy(ctx context.Context, cfg ceph.WatchConfig,
 		Event: func(m watch.Meta, s BucketSyncPolicyStatus, err error) BucketPolicyWatchEvent {
 			s.Buckets = slices.Clone(s.Buckets)
 			e := BucketPolicyWatchEvent{Status: s, Err: err}
-			e.Sequence, e.Kind, e.Started, e.Finished = m.Sequence, ceph.WatchEventKind(m.Kind), m.Started, m.Finished
+			e.Sequence, e.Kind, e.Started, e.Finished = servicehook.WatchMeta(m)
 			return e
 		},
 	})

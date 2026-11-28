@@ -14,6 +14,9 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/watch"
 )
 
+// leaseWatchOperation names a lease watch in its refusals.
+const leaseWatchOperation = "watch snapshot schedule"
+
 // leaseWatchDefaultInterval is the default WatchConfig.Interval of
 // Lease.Watch: each read is one FSMap read and one schedule status query, and
 // the module takes snapshots at minute boundaries at the finest.
@@ -82,7 +85,7 @@ func (w *LeaseWatch) Events() <-chan LeaseWatchEvent {
 //purpose:observation,lifetime
 func (w *LeaseWatch) Stop() error {
 	if w == nil || !w.stream.Started() {
-		return servicehook.Invalid(errors.New("watch snapshot schedule: the watch is not started by Lease.Watch"))
+		return servicehook.WatchNotStarted(leaseWatchOperation)
 	}
 	return w.stream.Stop()
 }
@@ -132,9 +135,9 @@ func (l *Lease) Watch(ctx context.Context, cfg ceph.WatchConfig) (*LeaseWatch, e
 	if l == nil || l.filesystem == nil {
 		return nil, servicehook.Invalid(errors.New("watch snapshot schedule: the lease is not from snapschedule.Add"))
 	}
-	settings, err := watch.Validate(cfg.Interval, cfg.QueryTimeout, cfg.Buffer, leaseWatchDefaultInterval)
+	settings, err := servicehook.WatchSettings(leaseWatchOperation, cfg, leaseWatchDefaultInterval)
 	if err != nil {
-		return nil, servicehook.Invalid(fmt.Errorf("watch snapshot schedule: %v", err))
+		return nil, err
 	}
 	return startLeaseWatch(ctx, settings, l.watchName(), l.watchRead)
 }
@@ -192,7 +195,8 @@ func startLeaseWatch(ctx context.Context, settings watch.Settings, name string, 
 				a.First.Equal(b.First) && a.Last.Equal(b.Last) && maps.Equal(a.Retention, b.Retention)
 		},
 		Event: func(m watch.Meta, s Status, err error) LeaseWatchEvent {
-			e := LeaseWatchEvent{Sequence: m.Sequence, Kind: ceph.WatchEventKind(m.Kind), Started: m.Started, Finished: m.Finished, Err: err}
+			e := LeaseWatchEvent{Err: err}
+			e.Sequence, e.Kind, e.Started, e.Finished = servicehook.WatchMeta(m)
 			if err == nil {
 				s.Retention = maps.Clone(s.Retention)
 				s.Raw = bytes.Clone(s.Raw)

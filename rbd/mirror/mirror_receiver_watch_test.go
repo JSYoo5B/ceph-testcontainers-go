@@ -414,7 +414,7 @@ func TestRBDReceiverWatchTerminationEndsTheWatch(t *testing.T) {
 }
 
 func TestRBDReceiverWatchConfigAndUnstartedRefusals(t *testing.T) {
-	got, err := rbdWatchSettings(receiverWatchOperation, ceph.WatchConfig{}, receiverWatchDefaultInterval)
+	got, err := servicehook.WatchSettings(receiverWatchOperation, ceph.WatchConfig{}, receiverWatchDefaultInterval)
 	if err != nil || got != (watch.Settings{Interval: 5 * time.Second, Timeout: 30 * time.Second, Buffer: 16}) {
 		t.Fatalf("defaults = %+v, %v", got, err)
 	}

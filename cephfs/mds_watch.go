@@ -22,12 +22,6 @@ const mdsWatchDefaultInterval = 2 * time.Second
 // mdsWatchOperation names the watch in its errors.
 const mdsWatchOperation = "watch MDSs"
 
-// mdsWatchInvalid is a refusal of the watch: an invalid request that names
-// the operation.
-func mdsWatchInvalid(format string, args ...any) error {
-	return servicehook.Invalid(fmt.Errorf(mdsWatchOperation+": "+format, args...))
-}
-
 // MDSWatchEvent is one event of an MDSWatch.
 //
 // Sequence starts at 1 with the baseline and increases by one for each event,
@@ -91,7 +85,7 @@ func (w *MDSWatch) Events() <-chan MDSWatchEvent {
 //purpose:observation,lifetime
 func (w *MDSWatch) Stop() error {
 	if w == nil || !w.stream.Started() {
-		return mdsWatchInvalid("the watch is not started by its Watch call")
+		return servicehook.WatchNotStarted(mdsWatchOperation)
 	}
 	return w.stream.Stop()
 }
@@ -141,9 +135,9 @@ func (fs *Filesystem) WatchMDSs(ctx context.Context, cfg ceph.WatchConfig) (*MDS
 	if fs == nil || fs.base().Cluster() == nil {
 		return nil, errNilCluster
 	}
-	settings, err := watch.Validate(cfg.Interval, cfg.QueryTimeout, cfg.Buffer, mdsWatchDefaultInterval)
+	settings, err := servicehook.WatchSettings(mdsWatchOperation, cfg, mdsWatchDefaultInterval)
 	if err != nil {
-		return nil, mdsWatchInvalid("%v", err)
+		return nil, err
 	}
 	f := fs.fleet()
 	return startMDSWatch(ctx, settings, f.core.Name(), f.watchSample)
@@ -187,7 +181,8 @@ func startMDSWatch(ctx context.Context, settings watch.Settings, name string, re
 		},
 		Equal: func(a, b mdsSample) bool { return mdsStatusEqual(a.status, b.status) },
 		Event: func(m watch.Meta, s mdsSample, err error) MDSWatchEvent {
-			e := MDSWatchEvent{Sequence: m.Sequence, Kind: ceph.WatchEventKind(m.Kind), Started: m.Started, Finished: m.Finished, Err: err}
+			e := MDSWatchEvent{Err: err}
+			e.Sequence, e.Kind, e.Started, e.Finished = servicehook.WatchMeta(m)
 			if err == nil {
 				e.Epoch, e.MDSMapEpoch, e.Status = s.epoch, s.mdsMapEpoch, cloneFilesystemStatus(s.status)
 			}

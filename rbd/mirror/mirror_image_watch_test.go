@@ -366,7 +366,7 @@ func TestRBDImageWatchTerminationEndsTheWatch(t *testing.T) {
 }
 
 func TestRBDImageWatchConfigAndUnstartedRefusals(t *testing.T) {
-	got, err := rbdWatchSettings(imageWatchOperation, ceph.WatchConfig{}, imageWatchDefaultInterval)
+	got, err := servicehook.WatchSettings(imageWatchOperation, ceph.WatchConfig{}, imageWatchDefaultInterval)
 	if err != nil || got != (watch.Settings{Interval: 5 * time.Second, Timeout: 30 * time.Second, Buffer: 16}) {
 		t.Fatalf("defaults = %+v, %v", got, err)
 	}
