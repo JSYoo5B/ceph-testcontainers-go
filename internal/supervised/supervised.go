@@ -301,11 +301,22 @@ func Unconfirmed(err error) (string, bool) {
 		return notStopped.Marker, true
 	}
 	var exit *ExitError
-	if errors.As(err, &exit) && (exit.Code < 0 || exit.Code > 128 || exit.Code == CleanupFailedExit) {
+	if errors.As(err, &exit) && unconfirmedExit(exit.Code) {
 		return exit.Marker, true
 	}
 	return "", false
 }
+
+// unconfirmedExit reports a supervisor exit after which its command may
+// still run: a signal killed the supervisor before its cleanup (a negative
+// code, or one above 128), or its cleanup failed (CleanupFailedExit).
+func unconfirmedExit(code int) bool {
+	return code < 0 || code > 128 || code == CleanupFailedExit
+}
+
+// interpreterMissing reports the exit of a shell that could not find or
+// execute python3, which therefore never started the supervisor.
+func interpreterMissing(code int) bool { return code == 126 || code == 127 }
 
 // BackendError is an error of Docker or of a container implementation during
 // Op. Its text holds the cause's text, which this package does not control.
@@ -335,7 +346,7 @@ type Report struct {
 	// limit; the output holds its first limit bytes.
 	StdoutTruncated, StderrTruncated bool
 	// InputWritten, InputDelivered and InputEOF describe the input of a
-	// RunInput call: the bytes written to the supervisor, the bytes that it
+	// RunInputWithExecCushion call: the bytes written to the supervisor, the bytes that it
 	// wrote into the command's standard input, and whether the command got
 	// the end of input after all of them.
 	InputWritten, InputDelivered int64
@@ -399,18 +410,31 @@ func RunWithExecCushion(ctx context.Context, ctr testcontainers.Container, label
 	if execCushion <= 0 {
 		return Report{}, errors.New("exec cushion must be positive")
 	}
-	// The child expires first, leaving time to kill/reap and return its envelope.
-	// WithTimeout also preserves an earlier caller deadline without extending it.
-	attempt, cancel := context.WithTimeout(ctx, processLimit+execCushion)
+	attempt, cancel, seconds, err := attemptSeconds(ctx, processLimit, execCushion)
+	if err != nil {
+		return Report{}, err
+	}
 	defer cancel()
+	return run(ctx, attempt, ctr, label, seconds, stdoutLimit, stderrLimit, false, argv...)
+}
+
+// attemptSeconds bounds one supervised attempt at processLimit plus
+// execCushion and returns the supervisor's own limit, in seconds, inside it.
+// The child expires first, leaving time to kill and reap it and return its
+// envelope; WithTimeout also preserves an earlier caller deadline without
+// extending it. A deadline that leaves no time for the command is
+// context.DeadlineExceeded.
+func attemptSeconds(ctx context.Context, processLimit, execCushion time.Duration) (context.Context, context.CancelFunc, string, error) {
+	attempt, cancel := context.WithTimeout(ctx, processLimit+execCushion)
 	deadline, _ := attempt.Deadline()
 	remaining := time.Until(deadline)
 	cushion := min(execCushion, remaining/4)
 	seconds := min(processLimit, remaining-cushion).Seconds()
 	if seconds <= 0 {
-		return Report{}, context.DeadlineExceeded
+		cancel()
+		return nil, nil, "", context.DeadlineExceeded
 	}
-	return run(ctx, attempt, ctr, label, strconv.FormatFloat(seconds, 'f', 9, 64), stdoutLimit, stderrLimit, false, argv...)
+	return attempt, cancel, strconv.FormatFloat(seconds, 'f', 9, 64), nil
 }
 
 // RunRoleCommand supervises a command in its feature's role container. A zero
@@ -452,7 +476,7 @@ func WithDeadlineSignal(ctx context.Context, signal int) context.Context {
 // MissingPython reports a missing interpreter or required Linux process API.
 func MissingPython(err error) bool {
 	var exit *ExitError
-	return errors.As(err, &exit) && (exit.Code == 126 || exit.Code == 127 || exit.Code == PythonCapabilityExit)
+	return errors.As(err, &exit) && (interpreterMissing(exit.Code) || exit.Code == PythonCapabilityExit)
 }
 
 func run(ctx, attempt context.Context, ctr testcontainers.Container, label, seconds string, stdoutLimit, stderrLimit int, confirm bool, argv ...string) (_ Report, err error) {
@@ -493,7 +517,7 @@ func run(ctx, attempt context.Context, ctr testcontainers.Container, label, seco
 	}
 	// A signal killed the supervisor, or its cleanup failed, so its command
 	// may still run, whatever happened to attempt meanwhile.
-	if code < 0 || code > 128 || code == CleanupFailedExit {
+	if unconfirmedExit(code) {
 		return Report{}, errors.Join(&ExitError{Label: label, Code: code, Marker: marker}, attempt.Err())
 	}
 	if err := attempt.Err(); err != nil {
@@ -526,14 +550,14 @@ func run(ctx, attempt context.Context, ctr testcontainers.Container, label, seco
 // the fields around them.
 func envelopeLimit(stdoutLimit, stderrLimit int) int { return (stdoutLimit+stderrLimit)*2 + 4096 }
 
-// inputOutcome is what RunInput knows of an input before the report.
+// inputOutcome is what RunInputWithExecCushion knows of an input before the report.
 type inputOutcome struct {
 	written int64
 	closed  bool
 }
 
 // parseReport turns the output of a supervisor that exited with code into
-// its report. input is set for a RunInput call, whose envelope must account
+// its report. input is set for a RunInputWithExecCushion call, whose envelope must account
 // for the input.
 func parseReport(attempt context.Context, label, marker string, code int, data []byte, stdoutLimit, stderrLimit int, input *inputOutcome) (Report, error) {
 	oversized := stdoutLimit >= 0 && stderrLimit >= 0 && len(data) > envelopeLimit(stdoutLimit, stderrLimit)

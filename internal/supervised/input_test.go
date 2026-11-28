@@ -23,7 +23,7 @@ import (
 
 // finishedAttachment is an exec that already ended with a complete report.
 // Closing its connection runs onClose, which can cancel the caller's
-// context just as RunInput takes the report.
+// context just as RunInputWithExecCushion takes the report.
 type finishedAttachment struct {
 	onClose func()
 	once    sync.Once
@@ -95,7 +95,7 @@ func (c *finishedContainer) Exec(ctx context.Context, _ []string, _ ...tcexec.Pr
 	return 0, bytes.NewReader(nil), c.cancelErr
 }
 
-// A cancellation that becomes visible after RunInput took the complete
+// A cancellation that becomes visible after RunInputWithExecCushion took the complete
 // output must not make it wait for that output again.
 func TestRunInputCancellationAfterTheOutput(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
@@ -105,22 +105,22 @@ func TestRunInputCancellationAfterTheOutput(t *testing.T) {
 	finished := make(chan struct{})
 	returned := make(chan error, 1)
 	go func() {
-		_, err := RunInput(ctx, ctr, "probe", time.Minute, 1024, 1024,
+		_, err := RunInputWithExecCushion(ctx, ctr, "probe", time.Minute, ExecCushion, 1024, 1024,
 			Input{Limit: 8, Writes: writes, Closed: closed, Finished: finished}, "true")
 		returned <- err
 	}()
 	select {
 	case err := <-returned:
 		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("RunInput returned %v", err)
+			t.Fatalf("RunInputWithExecCushion returned %v", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("RunInput stuck after its output completion coincided with cancellation")
+		t.Fatal("RunInputWithExecCushion stuck after its output completion coincided with cancellation")
 	}
 	select {
 	case <-finished:
 	default:
-		t.Fatal("RunInput returned without finishing its input")
+		t.Fatal("RunInputWithExecCushion returned without finishing its input")
 	}
 	if ctr.cancels != 0 {
 		t.Fatalf("a supervisor that had ended was canceled %d times", ctr.cancels)
@@ -173,11 +173,11 @@ func TestRunInputEOFCancellationBudgets(t *testing.T) {
 						cancel()
 					}()
 				}
-				report, err := RunInput(ctx, ctr, "probe", time.Minute, 1024, 1024, Input{
+				report, err := RunInputWithExecCushion(ctx, ctr, "probe", time.Minute, ExecCushion, 1024, 1024, Input{
 					Limit: 8, Writes: make(chan InputWrite), Closed: make(chan struct{}), Finished: make(chan struct{}),
 				}, "true")
 				if !errors.Is(err, context.Canceled) || len(report.Stdout) != 0 || time.Since(cancelAt) != tc.elapsed {
-					t.Fatalf("RunInput after %v returned %+v, %v; want canceled after %s", time.Since(cancelAt), report, err, tc.elapsed)
+					t.Fatalf("RunInputWithExecCushion after %v returned %+v, %v; want canceled after %s", time.Since(cancelAt), report, err, tc.elapsed)
 				}
 				marker, unconfirmed := Unconfirmed(err)
 				if tc.terminalInspect {
@@ -194,7 +194,7 @@ func TestRunInputEOFCancellationBudgets(t *testing.T) {
 
 // Output that ends without an error does not show that the supervisor cleaned
 // up: a signal may have killed it first. When cancellation arrives as that
-// output ends, RunInput still classifies the supervisor's exit, and keeps the
+// output ends, RunInputWithExecCushion still classifies the supervisor's exit, and keeps the
 // invocation unconfirmed together with the cancellation.
 func TestRunInputCancellationAfterAKilledSupervisor(t *testing.T) {
 	for name, test := range map[string]struct {
@@ -224,7 +224,7 @@ func TestRunInputCancellationAfterAKilledSupervisor(t *testing.T) {
 			writes, closed, finished := make(chan InputWrite), make(chan struct{}), make(chan struct{})
 			returned := make(chan error, 1)
 			go func() {
-				_, err := RunInput(ctx, test.ctr, "probe", time.Minute, 1024, 1024,
+				_, err := RunInputWithExecCushion(ctx, test.ctr, "probe", time.Minute, ExecCushion, 1024, 1024,
 					Input{Limit: 8, Writes: writes, Closed: closed, Finished: finished}, "true")
 				returned <- err
 			}()
@@ -232,10 +232,10 @@ func TestRunInputCancellationAfterAKilledSupervisor(t *testing.T) {
 			select {
 			case err = <-returned:
 			case <-time.After(5 * time.Second):
-				t.Fatal("RunInput stuck after its supervisor ended")
+				t.Fatal("RunInputWithExecCushion stuck after its supervisor ended")
 			}
 			if !errors.Is(err, context.Canceled) || !test.check(err) || test.ctr.cancels != test.cancels {
-				t.Fatalf("RunInput returned %v after %d cancelers", err, test.ctr.cancels)
+				t.Fatalf("RunInputWithExecCushion returned %v after %d cancelers", err, test.ctr.cancels)
 			}
 			if _, ok := Unconfirmed(err); ok != (test.cancels == 0) {
 				t.Fatalf("unconfirmed %t for %v", ok, err)
@@ -306,7 +306,7 @@ func TestRunInputInspectsExecAfterOutputEOF(t *testing.T) {
 					exitCode:  func(ctx context.Context) (int, error) { return inspectAttachedExit(ctx, client, "attached") },
 				}
 				finished := make(chan struct{})
-				report, err := RunInput(ctx, ctr, "probe", time.Minute, 1024, 1024,
+				report, err := RunInputWithExecCushion(ctx, ctr, "probe", time.Minute, ExecCushion, 1024, 1024,
 					Input{Limit: 8, Writes: make(chan InputWrite), Closed: make(chan struct{}), Finished: finished}, "true")
 				if tc.noReport {
 					if err == nil {
@@ -316,7 +316,7 @@ func TestRunInputInspectsExecAfterOutputEOF(t *testing.T) {
 					t.Fatalf("completed output changed: %+v, %v", report, err)
 				}
 				if ctr.cancels != tc.wantCancels || errors.Is(err, errAttachedExecRunning) != (tc.wantCancels > 0) {
-					t.Fatalf("RunInput canceled %d times, want %d; error %v", ctr.cancels, tc.wantCancels, err)
+					t.Fatalf("RunInputWithExecCushion canceled %d times, want %d; error %v", ctr.cancels, tc.wantCancels, err)
 				}
 				if errors.Is(err, context.Canceled) != tc.cancelCaller {
 					t.Fatalf("caller cancellation state was not preserved: %v", err)
@@ -332,7 +332,7 @@ func TestRunInputInspectsExecAfterOutputEOF(t *testing.T) {
 				select {
 				case <-finished:
 				default:
-					t.Fatal("RunInput returned before releasing input")
+					t.Fatal("RunInputWithExecCushion returned before releasing input")
 				}
 			})
 		})

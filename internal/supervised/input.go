@@ -24,7 +24,7 @@ var ErrInputLimit = errors.New("the write would exceed the input limit")
 // written before.
 var ErrInputEnded = errors.New("the command's input has ended")
 
-// Input is the standard input of one RunInput call.
+// Input is the standard input of one RunInputWithExecCushion call.
 type Input struct {
 	// Limit bounds the bytes written to the command in all.
 	Limit int64
@@ -34,11 +34,11 @@ type Input struct {
 	// Closed ends the input when it is closed: the command gets the end of
 	// input after everything written before.
 	Closed <-chan struct{}
-	// Finished is closed once RunInput takes no more writes.
+	// Finished is closed once RunInputWithExecCushion takes no more writes.
 	Finished chan<- struct{}
 }
 
-// InputWrite is one write to an Input. RunInput owns Data once it took the
+// InputWrite is one write to an Input. RunInputWithExecCushion owns Data once it took the
 // write, and sends its outcome to Done, which must have room for it.
 type InputWrite struct {
 	Data []byte
@@ -65,7 +65,7 @@ type Attachment struct {
 }
 
 // Attacher starts an exec with its standard input attached. A container that
-// implements it runs RunInput's supervisor itself; for any other the Docker
+// implements it runs RunInputWithExecCushion's supervisor itself; for any other the Docker
 // engine runs it, in the container with the same ID.
 type Attacher interface {
 	AttachExec(ctx context.Context, cmd, env []string) (Attachment, error)
@@ -158,23 +158,18 @@ func (b *cappedBuffer) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// RunInput runs argv like Run, with input as its standard input. The
-// supervisor reads what is written at once, up to input.Limit, and passes it
-// on as the command reads; see Script. Writes end when the command ends or
-// RunInput returns, and RunInput returns only after it stopped taking writes
-// and its input and output work ended.
+// RunInputWithExecCushion runs argv like RunWithExecCushion, with input as
+// its standard input. The supervisor reads what is written at once, up to
+// input.Limit, and passes it on as the command reads; see Script. Writes end
+// when the command ends or the call returns, and it returns only after it
+// stopped taking writes and its input and output work ended. The caller's
+// deadline still bounds the whole attempt.
 //
 // The exec runs through the target's Attacher, or the Docker engine. When the
-// run ends before the supervisor does, RunInput closes the connection and
+// run ends before the supervisor does, the call closes the connection and
 // Cancel stops the invocation inside the container, as in Run. A supervisor
 // that a signal killed, or whose cleanup failed, leaves its invocation
 // unconfirmed (see Unconfirmed) also when the run ended meanwhile.
-func RunInput(ctx context.Context, ctr testcontainers.Container, label string, processLimit time.Duration, stdoutLimit, stderrLimit int, input Input, argv ...string) (Report, error) {
-	return RunInputWithExecCushion(ctx, ctr, label, processLimit, ExecCushion, stdoutLimit, stderrLimit, input, argv...)
-}
-
-// RunInputWithExecCushion is RunInput with the startup/report allowance of
-// RunWithExecCushion. The caller's deadline still bounds the whole attempt.
 func RunInputWithExecCushion(ctx context.Context, ctr testcontainers.Container, label string, processLimit, execCushion time.Duration, stdoutLimit, stderrLimit int, input Input, argv ...string) (Report, error) {
 	var finish sync.Once
 	finished := func() { finish.Do(func() { close(input.Finished) }) }
@@ -191,17 +186,12 @@ func RunInputWithExecCushion(ctx context.Context, ctr testcontainers.Container, 
 	if input.Limit <= 0 || input.Writes == nil || input.Closed == nil || input.Finished == nil {
 		return Report{}, fmt.Errorf("%s input is incomplete", label)
 	}
-	attempt, cancel := context.WithTimeout(ctx, processLimit+execCushion)
-	defer cancel()
-	deadline, _ := attempt.Deadline()
-	remaining := time.Until(deadline)
-	cushion := min(execCushion, remaining/4)
-	seconds := min(processLimit, remaining-cushion).Seconds()
-	if seconds <= 0 {
-		return Report{}, context.DeadlineExceeded
+	attempt, cancel, seconds, err := attemptSeconds(ctx, processLimit, execCushion)
+	if err != nil {
+		return Report{}, err
 	}
-	command := append([]string{"python3", "-c", Script,
-		strconv.Itoa(stdoutLimit), strconv.Itoa(stderrLimit), strconv.FormatFloat(seconds, 'f', 9, 64)}, argv...)
+	defer cancel()
+	command := append([]string{"python3", "-c", Script, strconv.Itoa(stdoutLimit), strconv.Itoa(stderrLimit), seconds}, argv...)
 	marker := MarkerDir + "/" + uuid.NewString()
 	env := []string{MarkerVariable + "=" + marker, InputVariable + "=" + strconv.FormatInt(input.Limit, 10)}
 	attacher, ok := ctr.(Attacher)
@@ -291,7 +281,7 @@ func RunInputWithExecCushion(ctx context.Context, ctr testcontainers.Container, 
 	if readErr != nil {
 		// A container that could not run python3 answers with its own
 		// message instead of the multiplexed stream.
-		if inspectErr == nil && (code == 126 || code == 127) {
+		if inspectErr == nil && interpreterMissing(code) {
 			return Report{}, &ExitError{Label: label, Code: code, Marker: marker}
 		}
 		var err error = &BackendError{Op: "read " + label + " supervisor", Err: readErr}
@@ -314,7 +304,7 @@ func RunInputWithExecCushion(ctx context.Context, ctr testcontainers.Container, 
 	}
 	// A signal killed the supervisor, or its cleanup failed, so its command
 	// may still run, whatever happened to attempt meanwhile.
-	if code < 0 || code > 128 || code == CleanupFailedExit {
+	if unconfirmedExit(code) {
 		return Report{}, errors.Join(&ExitError{Label: label, Code: code, Marker: marker}, attempt.Err())
 	}
 	if err := attempt.Err(); err != nil {
