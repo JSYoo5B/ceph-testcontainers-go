@@ -207,16 +207,7 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	if err != nil {
 		return b, err
 	}
-	request := testcontainers.GenericContainerRequest{ContainerRequest: testcontainers.ContainerRequest{
-		Image: img, Name: b.name, Entrypoint: []string{"sleep"}, Cmd: []string{"infinity"}, User: "0",
-		Files: []testcontainers.ContainerFile{{Reader: strings.NewReader(ownerScript), ContainerFilePath: ownerProgram, FileMode: 0o500}},
-		HostConfigModifier: func(h *container.HostConfig) {
-			h.Privileged = true
-			h.Binds = append(h.Binds, "/dev:/dev")
-			h.Tmpfs = map[string]string{"/tc-blk": fmt.Sprintf("size=%d,mode=0700", cfg.Size+(64<<20))}
-			h.NetworkMode = "none"
-		},
-	}, Started: true}
+	request := testcontainers.GenericContainerRequest{ContainerRequest: keeperRequest(img, b.name, cfg.Size), Started: true}
 	for _, opt := range opts {
 		if err := opt.Customize(&request); err != nil {
 			return b, err
@@ -258,6 +249,19 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
+}
+
+// keeperRequest is the shared helper request with the keeper's owner script
+// and its private tmpfs, bounded by the backing size.
+func keeperRequest(img, name string, size int64) testcontainers.ContainerRequest {
+	request := control.HelperRequest(img, name)
+	request.Files = []testcontainers.ContainerFile{{Reader: strings.NewReader(ownerScript), ContainerFilePath: ownerProgram, FileMode: 0o500}}
+	helper := request.HostConfigModifier
+	request.HostConfigModifier = func(h *container.HostConfig) {
+		helper(h)
+		h.Tmpfs = map[string]string{"/tc-blk": fmt.Sprintf("size=%d,mode=0700", size+(64<<20))}
+	}
+	return request
 }
 
 // GetContainerID implements the container contract for partial startup too.
