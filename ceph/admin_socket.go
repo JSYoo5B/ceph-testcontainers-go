@@ -15,7 +15,6 @@ import (
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 )
 
@@ -213,19 +212,22 @@ func (c *Container) adminSocketCommand(ctx context.Context, control testcontaine
 }
 
 func parseAdminSocketDaemon(daemon string) (kind, id string, err error) {
+	refusal := invalid(fmt.Errorf("admin socket daemon %q must be mon.<name>, mgr.<name> or osd.<id>", daemon))
 	kind, id, ok := strings.Cut(daemon, ".")
-	if !ok || !naming.DaemonName.MatchString(id) || len(id) > 64 {
-		return "", "", fmt.Errorf("admin socket daemon %q must be mon.<name>, mgr.<name> or osd.<id>", daemon)
+	if !ok {
+		return "", "", refusal
 	}
 	switch kind {
 	case "mon", "mgr":
-		return kind, id, nil
+		if validateDaemonName(kind, id) == nil {
+			return kind, id, nil
+		}
 	case "osd":
 		if n, err := strconv.Atoi(id); err == nil && n >= 0 && strconv.Itoa(n) == id {
 			return kind, id, nil
 		}
 	}
-	return "", "", fmt.Errorf("admin socket daemon %q must be mon.<name>, mgr.<name> or osd.<id>", daemon)
+	return "", "", refusal
 }
 
 // clearAdminSocket removes a socket file that a removed daemon of the same

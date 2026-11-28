@@ -11,7 +11,6 @@ import (
 
 	"github.com/testcontainers/testcontainers-go"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 )
 
@@ -141,7 +140,7 @@ func parseDebugDaemon(daemon string) (kind, name string, err error) {
 			return kind, id, nil
 		}
 	case "mds":
-		if naming.DaemonName.MatchString(name) && len(name) <= 64 {
+		if validateDaemonName("mds", name) == nil {
 			return kind, name, nil
 		}
 	}
