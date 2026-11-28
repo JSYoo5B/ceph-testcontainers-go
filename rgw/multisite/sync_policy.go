@@ -29,6 +29,9 @@ import (
 // SyncPolicyScope selects an owned zonegroup, or an existing bucket within
 // that group. An empty Zonegroup selects the original source's group. Bucket
 // policy fixes the native bucket instance ID and rejects a recreated name.
+// Bucket and Tenant follow the sync policy ID rule: at most 128 bytes, no
+// control or space character and none of ",/:$", and no leading "-". A Tenant
+// needs a Bucket.
 type SyncPolicyScope struct{ Zonegroup, Bucket, Tenant string }
 
 // SyncGroupStatus separates permission from activation. Allowed permits a
@@ -160,11 +163,14 @@ func (g SyncGroup) String() string { return "RGW sync group " + g.ID() }
 // GoString formats the sync group like String.
 func (g SyncGroup) GoString() string { return g.String() }
 
-func validRGWSyncID(id string) bool {
-	return id != "" && len(id) <= 128 && !strings.HasPrefix(id, "-") && strings.IndexFunc(id, func(r rune) bool {
-		return unicode.IsControl(r) || unicode.IsSpace(r) || strings.ContainsRune(",/:$", r)
-	}) == -1
-}
+// validRGWSyncID is the rule of sync group, flow and pipe IDs.
+func validRGWSyncID(id string) bool { return gwbase.ValidSyncID(id) }
+
+// validSyncBucket and validSyncTenant are the bucket and tenant rules of a
+// sync policy's bucket scope and of bucket selectors (gwbase.SyncBucket and
+// gwbase.SyncTenant). A selector also refuses the bucket "*".
+func validSyncBucket(bucket string) bool { return gwbase.SyncBucket.Valid(bucket) }
+func validSyncTenant(tenant string) bool { return gwbase.SyncTenant.Valid(tenant) }
 
 func validRGWSyncStatus(status SyncGroupStatus) bool {
 	return status == SyncAllowed || status == SyncEnabled || status == SyncForbidden
@@ -181,7 +187,7 @@ func (f *Fixture) CreateSyncGroup(ctx context.Context, scope SyncPolicyScope, co
 	if config.ID == "" {
 		config.ID = "tc-sync-" + uuid.NewString()
 	}
-	if !validRGWSyncID(config.ID) || !validRGWSyncStatus(config.Status) || (scope.Tenant != "" && scope.Bucket == "") || (scope.Bucket != "" && !validRGWSyncID(scope.Bucket)) || (scope.Tenant != "" && !validRGWSyncID(scope.Tenant)) {
+	if !validRGWSyncID(config.ID) || !validRGWSyncStatus(config.Status) || (scope.Tenant != "" && scope.Bucket == "") || (scope.Bucket != "" && !validSyncBucket(scope.Bucket)) || !validSyncTenant(scope.Tenant) {
 		return nil, servicehook.Invalid(errors.New("invalid RGW sync group, status or bucket scope"))
 	}
 	if f == nil {

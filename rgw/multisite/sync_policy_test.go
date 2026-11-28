@@ -16,6 +16,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwtest"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
@@ -578,3 +579,40 @@ func TestRGWSyncPendingMutationRefusesForeignDeltasAndBeforeStatePublication(t *
 // restarts: a restart holds the cluster's topology mutex and keeps its record
 // with the cluster.
 func zoneCluster() *ceph.Container { return testhelper.TestCluster(nil, testhelper.TestConfig{}) }
+
+// TestRGWSyncBucketAndTenantRulesKeepTheirVerdicts runs the shared bucket and
+// tenant tables through CreateSyncGroup's bucket scope and a pipe's bucket
+// selector: an input that the entry point refuses is ceph.ErrInvalidRequest
+// before any change (for the scope, before any command), and one it admits
+// gets past the name admission.
+func TestRGWSyncBucketAndTenantRulesKeepTheirVerdicts(t *testing.T) {
+	check := func(kind string, c gwtest.NameCase, scope SyncPolicyScope, selector SyncBucketSelector) {
+		f, cli, _, _ := newRGWSyncTestFixture()
+		before := len(cli.calls)
+		_, err := f.CreateSyncGroup(t.Context(), scope, SyncGroupConfig{ID: "scoped", Status: SyncAllowed})
+		if refused := errors.Is(err, ceph.ErrInvalidRequest) && len(cli.calls) == before; refused == c.SyncScope {
+			t.Errorf("sync scope %s %q: refused before commands %v, want admitted %v (%v)", kind, c.Name, refused, c.SyncScope, err)
+		}
+		f, cli, _, _ = newRGWSyncTestFixture()
+		g, err := f.CreateSyncGroup(t.Context(), SyncPolicyScope{}, SyncGroupConfig{ID: "group", Status: SyncAllowed})
+		if err != nil {
+			t.Fatal(err)
+		}
+		before = len(cli.calls)
+		err = g.CreatePipe(t.Context(), SyncPipeConfig{ID: "pipe", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &selector})
+		// The selector is checked after the group's policy is read and
+		// before any change, as it was in v1.0.2.
+		refused := errors.Is(err, ceph.ErrInvalidRequest) && strings.Contains(err.Error(), "sync bucket selector requires") && !slices.ContainsFunc(cli.calls[before:], func(args []string) bool {
+			return slices.Contains(args, "create") || slices.Contains(args, "modify")
+		})
+		if refused == c.SyncSelector {
+			t.Errorf("sync selector %s %q: refused before commands %v, want admitted %v (%v)", kind, c.Name, refused, c.SyncSelector, err)
+		}
+	}
+	for _, c := range gwtest.BucketNames {
+		check("bucket", c, SyncPolicyScope{Bucket: c.Name}, SyncBucketSelector{Name: c.Name})
+	}
+	for _, c := range gwtest.TenantNames {
+		check("tenant", c, SyncPolicyScope{Bucket: "bucket", Tenant: c.Name}, SyncBucketSelector{Name: "bucket", Tenant: c.Name})
+	}
+}

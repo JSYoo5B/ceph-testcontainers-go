@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -37,7 +36,9 @@ type RateLimit struct {
 // policy throttles every request that the user's credentials sign. Bucket
 // names one existing bucket that the user natively owns, in the user's
 // tenant, and the policy throttles every request to that bucket, whoever
-// signs it; the user's other buckets are not affected.
+// signs it; the user's other buckets are not affected. Bucket is at most 255
+// ASCII letters, digits, dots, underscores and hyphens and starts with a
+// letter or a digit.
 //
 // The user scope needs Ceph 20 or later. A Ceph 19 gateway stores and reports
 // a user's policy but never applies it to a request that the user's S3 keys
@@ -90,10 +91,6 @@ type rateLimitTarget struct {
 	bucket, tenant, bucketID, bucketMarker string
 }
 
-// rateLimitBucketName refuses names that radosgw-admin could read as a flag or
-// that address another tenant.
-var rateLimitBucketName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$`)
-
 // OverrideRateLimit applies limit, as a whole, to one native rate-limit scope
 // of this owned user and returns the handle that restores the prior policy.
 // It binds the scope's native identity first: the user's created key, type and
@@ -145,7 +142,7 @@ func (u *User) OverrideRateLimit(ctx context.Context, scope RateLimitScope, limi
 	if limit.MaxReadOps < 0 || limit.MaxWriteOps < 0 || limit.MaxReadBytes < 0 || limit.MaxWriteBytes < 0 {
 		return refuse(servicehook.Invalid(errors.New("RGW rate-limit budgets must be zero (unlimited) or positive")))
 	}
-	if scope.Bucket != "" && !rateLimitBucketName.MatchString(scope.Bucket) {
+	if scope.Bucket != "" && !gwbase.RateLimitBucket.Valid(scope.Bucket) {
 		return refuse(servicehook.Invalid(errors.New("RGW rate-limit bucket must be a plain bucket name of letters, digits, dots, underscores or hyphens")))
 	}
 	if err := ctx.Err(); err != nil {

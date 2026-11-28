@@ -26,7 +26,7 @@ import (
 // creating buckets. Tenant selects a native namespace; empty preserves the
 // legacy namespace. ID is the local user ID, without a tenant prefix.
 //
-// Tenant is letters, digits and underscores and must not look like an account
+// Tenant is at most 128 letters, digits and underscores and must not look like an account
 // ID; a tenant user's canonical ID is tenant$id, and buckets with the same name
 // can exist in different tenants.
 //

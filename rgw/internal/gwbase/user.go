@@ -16,7 +16,6 @@ import (
 )
 
 var (
-	tenantName  = regexp.MustCompile(`^[A-Za-z0-9_]{1,128}$`)
 	accountID   = regexp.MustCompile(`^RGW[0-9]{17}$`)
 	iamUserName = regexp.MustCompile(`^[A-Za-z0-9_+=,.@-]{1,64}$`)
 )
@@ -156,10 +155,11 @@ func FullUserID(tenant, namespace, id string) string {
 	return id
 }
 
-// ValidateTenant refuses a tenant that is not letters, digits and
-// underscores, or that is formatted as an account ID.
+// ValidateTenant refuses a user tenant that the UserTenant rule refuses: one
+// that is not letters, digits and underscores, or that is formatted as an
+// account ID.
 func ValidateTenant(tenant string) error {
-	if tenant != "" && (!tenantName.MatchString(tenant) || accountID.MatchString(tenant)) {
+	if !UserTenant.Valid(tenant) {
 		return servicehook.Invalid(errors.New("RGW tenant must use letters, digits or underscores and must not be formatted as an account ID"))
 	}
 	return nil

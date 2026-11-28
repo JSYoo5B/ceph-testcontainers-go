@@ -1210,3 +1210,24 @@ func TestRGWUserRateLimitResolvesImplicitZoneOfConfiguredRealm(t *testing.T) {
 		t.Fatalf("rate-limit calls=%d, shared user scope=%+v", seen, user.base().State.NativeScope)
 	}
 }
+
+// TestRGWBucketAndTenantRulesKeepTheirVerdicts runs the shared bucket and
+// tenant tables through the rate-limit bucket scope and the user tenant: an
+// input that the entry point refuses is ceph.ErrInvalidRequest before any
+// native command, and one it admits gets past the name admission.
+func TestRGWBucketAndTenantRulesKeepTheirVerdicts(t *testing.T) {
+	for _, c := range gwtest.BucketNames {
+		user, f := newRateLimitFixture(t)
+		_, err := user.OverrideRateLimit(t.Context(), RateLimitScope{Bucket: c.Name}, RateLimit{Enabled: true, MaxReadOps: 1})
+		refused := errors.Is(err, ceph.ErrInvalidRequest) && len(f.calls) == 0
+		if refused == c.RateLimit {
+			t.Errorf("rate-limit bucket %q: refused before commands %v, want admitted %v (%v)", c.Name, refused, c.RateLimit, err)
+		}
+	}
+	for _, c := range gwtest.TenantNames {
+		_, err := normalizeRGWUserConfig(UserConfig{ID: "user", Tenant: c.Name})
+		if (err == nil) != c.User || err != nil && !errors.Is(err, ceph.ErrInvalidRequest) {
+			t.Errorf("user tenant %q: %v, want admitted %v", c.Name, err, c.User)
+		}
+	}
+}

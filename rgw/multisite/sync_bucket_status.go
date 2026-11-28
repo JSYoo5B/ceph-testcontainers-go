@@ -257,7 +257,7 @@ func syncPipeBucketIdentity(g *SyncGroup, key string) (SyncBucketIdentity, error
 	if tenant, bucket, found := strings.Cut(name, "/"); found {
 		identity.Tenant, identity.Name = tenant, bucket
 	}
-	if !validRGWSyncID(identity.Name) || identity.Name == "*" || (identity.Tenant != "" && !validRGWSyncID(identity.Tenant)) {
+	if !validSyncBucket(identity.Name) || identity.Name == "*" || !validSyncTenant(identity.Tenant) {
 		return SyncBucketIdentity{}, errors.New("RGW native checkpoint bucket namespace is malformed")
 	}
 	return identity, nil

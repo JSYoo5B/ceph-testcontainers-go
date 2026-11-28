@@ -23,7 +23,8 @@ import (
 // instance ID is captured and stored in the pipe, preventing a recreated name
 // from silently becoming a new replication source/destination. Nil selectors
 // retain Ceph's current-bucket wildcard behavior. Same-zone replication is not
-// supported by native RGW multisite.
+// supported by native RGW multisite. Name and Tenant follow the rule of
+// SyncPolicyScope's Bucket and Tenant, and Name is not "*".
 type SyncBucketSelector struct{ Name, Tenant string }
 
 // SyncObjectTag matches an exact key/value. Multiple pairs are ORed and
@@ -228,7 +229,7 @@ func normalizeSyncTags(tags []SyncObjectTag) ([]SyncObjectTag, error) {
 
 func (g *SyncGroup) selectedBucket(ctx context.Context, master *rgwZoneState, selector SyncBucketSelector) (string, *rgwBucketInstance, error) {
 	f := g.owner
-	if !validRGWSyncID(selector.Name) || selector.Name == "*" || (selector.Tenant != "" && !validRGWSyncID(selector.Tenant)) {
+	if !validSyncBucket(selector.Name) || selector.Name == "*" || !validSyncTenant(selector.Tenant) {
 		return "", nil, servicehook.Invalid(errors.New("RGW sync bucket selector requires an existing concrete bucket and valid tenant"))
 	}
 	selected := &SyncGroup{owner: f, scope: SyncPolicyScope{Zonegroup: g.scope.Zonegroup, Bucket: selector.Name, Tenant: selector.Tenant}, realmID: g.realmID, groupID: g.groupID}
