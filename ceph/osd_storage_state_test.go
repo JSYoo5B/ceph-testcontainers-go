@@ -88,12 +88,12 @@ func TestOSDStorageStateSeams(t *testing.T) {
 	}
 
 	docker := &osdVolumeDockerFake{}
-	s.volumeDocker = func(context.Context) (osdMemoryVolumeClient, error) { return docker, nil }
+	s.volumeDocker = func(context.Context) (dockerVolumeClient, error) { return docker, nil }
 	v := s.beginVolume()
 	if s.volumeStorage() != v || !s.hasVolume() || v.newClient == nil {
 		t.Fatal("beginVolume did not publish a wired record")
 	}
-	if client, err := v.client(t.Context()); err != nil || client != osdMemoryVolumeClient(docker) {
+	if client, err := v.client(t.Context()); err != nil || client != dockerVolumeClient(docker) {
 		t.Fatalf("beginVolume did not wire the Docker seam: %v", err)
 	}
 	m := s.beginMemory(1 << 20)
@@ -162,7 +162,7 @@ func memoryRelease() storageRelease {
 		helperForgot: func() bool { return s.keeper == nil }, removed: func() bool { return s.volumeRemoved },
 		foreignOwner: func() { d.stored.Labels[osdMemoryOwnerLabel] = "foreign" },
 		failClient: func(err error) {
-			s.newClient = func(context.Context) (osdMemoryVolumeClient, error) { return nil, err }
+			s.newClient = func(context.Context) (dockerVolumeClient, error) { return nil, err }
 		},
 		markRemoved:    func() { s.volumeRemoved = true },
 		dropHelper:     func() { s.keeper = nil },
@@ -177,7 +177,7 @@ func volumeRelease() storageRelease {
 		helperForgot: func() bool { return s.helper == nil }, removed: func() bool { return s.removed },
 		foreignOwner: func() { d.stored.Labels[osdVolumeOwnerLabel] = "foreign" },
 		failClient: func(err error) {
-			s.newClient = func(context.Context) (osdMemoryVolumeClient, error) { return nil, err }
+			s.newClient = func(context.Context) (dockerVolumeClient, error) { return nil, err }
 		},
 		markRemoved:    func() { s.removed = true },
 		dropHelper:     func() { s.helper = nil },

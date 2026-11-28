@@ -36,7 +36,7 @@ type runVolume struct {
 	name      string
 	owner     string
 	removed   bool
-	newClient func(context.Context) (osdMemoryVolumeClient, error)
+	newClient func(context.Context) (dockerVolumeClient, error)
 }
 
 func newRunVolume() *runVolume {
@@ -44,7 +44,7 @@ func newRunVolume() *runVolume {
 	return &runVolume{name: "tc-ceph-run-" + owner, owner: owner}
 }
 
-func (v *runVolume) client(ctx context.Context) (osdMemoryVolumeClient, error) {
+func (v *runVolume) client(ctx context.Context) (dockerVolumeClient, error) {
 	if v.newClient != nil {
 		return v.newClient(ctx)
 	}

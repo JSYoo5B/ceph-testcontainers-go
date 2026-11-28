@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/moby/moby/api/types/container"
@@ -25,7 +24,7 @@ type osdVolumeStorage struct {
 	helperStarted          string
 	ready, removed         bool
 	discard                osdStoreDiscard
-	newClient              func(context.Context) (osdMemoryVolumeClient, error)
+	newClient              func(context.Context) (dockerVolumeClient, error)
 }
 
 func newOSDVolumeStorage() *osdVolumeStorage {
@@ -33,7 +32,7 @@ func newOSDVolumeStorage() *osdVolumeStorage {
 	return &osdVolumeStorage{name: "tc-ceph-osd-volume-" + owner, owner: owner}
 }
 
-func (s *osdVolumeStorage) client(ctx context.Context) (osdMemoryVolumeClient, error) {
+func (s *osdVolumeStorage) client(ctx context.Context) (dockerVolumeClient, error) {
 	if s.newClient != nil {
 		return s.newClient(ctx)
 	}
@@ -138,38 +137,18 @@ func (s *osdVolumeStorage) check(ctx context.Context) error {
 	return ctx.Err()
 }
 
+var osdVolumeDirectories = osdStoreDirectories{root: osdVolumeHelperPath, backend: "volume"}
+
 func (s *osdVolumeStorage) requireFreshOSD(ctx context.Context, id int) error {
-	if s.discard.marker != "" {
-		return errors.New("an earlier OSD store discard is unconfirmed; retry removal before reusing storage")
-	}
-	if id < 0 {
-		return errors.New("OSD volume directory ID must be nonnegative")
-	}
-	if err := s.check(ctx); err != nil {
-		return err
-	}
-	path := osdVolumeHelperPath + "/ceph-" + strconv.Itoa(id)
-	for _, kind := range []string{"-e", "-L"} {
-		if _, err := command(ctx, s.helper, "test", "!", kind, path); err != nil {
-			return fmt.Errorf("OSD volume directory for osd.%d is not fresh: %w", id, err)
-		}
-	}
-	return nil
+	return osdVolumeDirectories.requireFresh(ctx, &s.discard, s.check, s.helperContainer, id)
 }
 
 // Called only after this registration is purged and its container removed.
 func (s *osdVolumeStorage) discardOSD(ctx context.Context, id int) error {
-	if id < 0 {
-		return errors.New("OSD volume directory ID must be nonnegative")
-	}
-	if err := s.check(ctx); err != nil {
-		return err
-	}
-	if err := s.discard.run(ctx, s.helper, osdVolumeHelperPath+"/ceph-"+strconv.Itoa(id)); err != nil {
-		return fmt.Errorf("discard purged osd.%d volume storage: %w", id, err)
-	}
-	return nil
+	return osdVolumeDirectories.discard(ctx, &s.discard, s.check, s.helperContainer, id)
 }
+
+func (s *osdVolumeStorage) helperContainer() testcontainers.Container { return s.helper }
 
 // All tracked OSDs must have been removed. Busy/uncertain removal stays owned
 // for retry; never force removal or delete a changed/foreign volume.
