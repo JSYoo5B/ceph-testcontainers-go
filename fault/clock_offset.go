@@ -52,17 +52,13 @@ const (
 	// ClockOffsetInconclusive: the measurement cannot tell, for example
 	// because its interval contains both zero and the offset.
 	ClockOffsetInconclusive ClockOffsetState = "inconclusive"
-	// ClockOffsetRestored: Restore completed; nothing was measured.
-	ClockOffsetRestored ClockOffsetState = "restored"
 )
 
 // ClockOffsetStatus is one measurement of the daemon of an offset lease.
 type ClockOffsetStatus struct {
-	// Offset is the offset the lease applied.
-	Offset time.Duration
 	// MeasuredMin and MeasuredMax bound the daemon's own clock minus an
 	// uninstrumented reference clock in the same container, at the time of
-	// the measurement. Both are zero for ClockOffsetRestored.
+	// the measurement.
 	MeasuredMin, MeasuredMax time.Duration
 	State                    ClockOffsetState
 	// Reason explains State.
@@ -268,8 +264,9 @@ func (lease *ClockOffsetLease) isComplete(ctx context.Context) (bool, error) {
 
 // Status measures the daemon's clock now and judges it against the lease's
 // offset, for a test that needs to know that the daemon still runs with it.
-// It refuses a stopped, paused or removed container; after Restore it
-// returns ClockOffsetRestored without measuring.
+// It refuses a stopped, paused or removed container, and a restored lease
+// with an error matching ceph.ErrInvalidRequest: after Restore there is no
+// offset left to measure.
 //
 //purpose:observation
 func (lease *ClockOffsetLease) Status(ctx context.Context) (ClockOffsetStatus, error) {
@@ -280,33 +277,32 @@ func (lease *ClockOffsetLease) Status(ctx context.Context) (ClockOffsetStatus, e
 		return ClockOffsetStatus{}, err
 	}
 	defer lease.mu.Unlock()
-	status := ClockOffsetStatus{Offset: lease.Offset}
 	if lease.complete {
-		status.State, status.Reason = ClockOffsetRestored, "the lease was restored"
-		return status, nil
+		return ClockOffsetStatus{}, nshelper.InvalidRequest("the clock offset of %s was restored", lease.Daemon)
 	}
 	running, err := lease.engine.state(ctx, lease.ContainerID)
 	if err != nil {
-		return status, err
+		return ClockOffsetStatus{}, err
 	}
 	if running != clockContainerRunning {
-		return status, nshelper.InvalidRequest("the container of %s is %s; only a running daemon can be measured", lease.Daemon, running)
+		return ClockOffsetStatus{}, nshelper.InvalidRequest("the container of %s is %s; only a running daemon can be measured", lease.Daemon, running)
 	}
 	if !lease.step.AckKnown {
-		return status, errors.New("the offset write was not acknowledged; restore the lease")
+		return ClockOffsetStatus{}, errors.New("the offset write was not acknowledged; restore the lease")
 	}
 	step := lease.step
 	sample, err := lease.engine.measure(ctx, lease.target, lease.Daemon)
 	if err != nil {
-		return status, fmt.Errorf("measure %s: %w", lease.Daemon, err)
+		return ClockOffsetStatus{}, fmt.Errorf("measure %s: %w", lease.Daemon, err)
 	}
 	step.Target, step.Measured, step.SampleKnown, step.SampleLoMono, step.TargetSampleOK = sample.Target(lease.ContainerID), sample.Offset, true, sample.LoMono, true
 	file, err := lease.engine.inspect(ctx, lease.target, "", lease.ledger.Owned.Path)
 	if err != nil {
-		return status, err
+		return ClockOffsetStatus{}, err
 	}
 	step.File = file.File
 	state, reason := judgeClockStep(lease.ledger, step)
+	var status ClockOffsetStatus
 	status.MeasuredMin, status.MeasuredMax = time.Duration(sample.Offset.Lo), time.Duration(sample.Offset.Hi)
 	status.State, status.Reason = clockStatusState(state), reason
 	status.Replaced = !sameInstance(lease.ledger.Target, step.Target)

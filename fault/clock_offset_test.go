@@ -158,8 +158,8 @@ func TestClockOffsetAppliesReportsAndRestores(t *testing.T) {
 	if err := lease.Restore(t.Context()); err != nil || len(d.writes) != writes {
 		t.Fatalf("a repeated restore wrote again: %v %q", err, d.writes)
 	}
-	if status, err := lease.Status(t.Context()); err != nil || status.State != ClockOffsetRestored {
-		t.Fatalf("status after restore = %+v, %v", status, err)
+	if status, err := lease.Status(t.Context()); !errors.Is(err, ceph.ErrInvalidRequest) || status != (ClockOffsetStatus{}) {
+		t.Fatalf("status after restore = %+v, %v; want a refusal matching ceph.ErrInvalidRequest", status, err)
 	}
 }
 

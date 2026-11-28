@@ -5,6 +5,7 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -361,7 +362,7 @@ func testClockOffsetMonitors(t *testing.T) {
 	if err := cluster.Terminate(ctx); err != nil {
 		t.Fatalf("terminate with a held clock offset: %v", err)
 	}
-	if status, err := held.Status(ctx); err != nil || status.State != fault.ClockOffsetRestored {
+	if status, err := held.Status(ctx); !errors.Is(err, ceph.ErrInvalidRequest) {
 		t.Fatalf("Terminate did not restore the held lease: %+v, %v", status, err)
 	}
 }
