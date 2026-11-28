@@ -1,13 +1,15 @@
-package supervised
+package harness
 
 import (
 	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/google/uuid"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
@@ -22,7 +24,7 @@ const (
 	// shellCancelWait is how long, in seconds, ShellCancelScript waits for the
 	// supervisor to acknowledge: a second to notice the cancel marker, the
 	// grace and a second to notice the acknowledgment, with room to spare
-	// within CancelTimeout.
+	// within supervised.CancelTimeout.
 	shellCancelWait = 8
 	// ShellEndPrefix starts the supervisor trailer's last line, which
 	// carries the invocation marker, command exit status and deadline flag; RunShell removes it.
@@ -35,9 +37,9 @@ const (
 // invocation's marker, a limit in seconds (0 for none), the stop grace in
 // seconds and the command.
 //
-// It follows Script's marker protocol. It claims the marker before it starts
-// the command, writing the container instance into it, and starts nothing if
-// ShellCancelScript claimed it first. A watcher stops the command, with
+// It follows supervised.Script's marker protocol. It claims the marker
+// before it starts the command, writing the container instance into it, and
+// starts nothing if ShellCancelScript claimed it first. A watcher stops the command, with
 // SIGTERM and SIGKILL after the grace, when a cancel marker appears or the
 // limit passes; it holds none of the exec's streams, so a command that ends
 // returns at once. Removing the marker after the command was reaped
@@ -94,10 +96,10 @@ exit "$code"
 `
 
 // ShellCancelScript cancels one ShellScript invocation through its marker,
-// as CancelScript does for Script: it claims a marker that does not exist,
-// confirms one of its own claim or of an earlier container instance, and
-// otherwise writes the cancel marker and waits until the supervisor removes
-// the marker. It exits 3 when that does not happen within its wait.
+// as supervised.CancelScript does for supervised.Script: it claims a marker
+// that does not exist, confirms one of its own claim or of an earlier
+// container instance, and otherwise writes the cancel marker and waits until
+// the supervisor removes the marker. It exits 3 when that does not happen within its wait.
 const ShellCancelScript = `marker=$1 wait=$2
 mkdir -p "${marker%/*}" 2>/dev/null
 (set -C; echo claim > "$marker") 2>/dev/null && exit 0
@@ -138,8 +140,8 @@ type ShellReport struct {
 // none). When the call ends before the supervisor reports, because ctx ended
 // or the exec failed, CancelShell stops the invocation inside the container
 // before RunShell returns, also when Docker starts it only later; when that
-// fails, the error holds a NotStoppedError, and a later CancelShell with its
-// marker can confirm the stop. label names the command in errors.
+// fails, the error holds a supervised.NotStoppedError, and a later
+// CancelShell with its marker can confirm the stop. label names the command in errors.
 func RunShell(ctx context.Context, ctr testcontainers.Container, label string, limit int, argv ...string) (ShellReport, error) {
 	return RunShellLimited(ctx, ctr, label, limit, 0, argv...)
 }
@@ -162,10 +164,10 @@ func RunShellLimited(ctx context.Context, ctr testcontainers.Container, label st
 	var stderr bytes.Buffer
 	stdout := &prefixBuffer{limit: max(stdoutLimit, 0)}
 	if err != nil {
-		err = &BackendError{Op: "exec " + label + " supervisor", Err: err}
+		err = &supervised.BackendError{Op: "exec " + label + " supervisor", Err: err}
 	} else if reader != nil {
 		if _, copyErr := stdcopy.StdCopy(stdout, &stderr, reader); copyErr != nil {
-			err = &BackendError{Op: "read " + label + " supervisor", Err: copyErr}
+			err = &supervised.BackendError{Op: "read " + label + " supervisor", Err: copyErr}
 		}
 	}
 	end, stopped := -1, false
@@ -186,7 +188,7 @@ func RunShellLimited(ctx context.Context, ctr testcontainers.Container, label st
 		err = fmt.Errorf("%s supervisor ended without its report: exit=%d", label, code)
 	}
 	if cancelErr := CancelShell(ctx, ctr, label, marker); cancelErr != nil {
-		return ShellReport{}, &NotStoppedError{Marker: marker, Err: errors.Join(err, cancelErr)}
+		return ShellReport{}, &supervised.NotStoppedError{Marker: marker, Err: errors.Join(err, cancelErr)}
 	}
 	return ShellReport{}, err
 }
@@ -242,21 +244,17 @@ func shellEnd(stderr *bytes.Buffer, marker string) (int, bool) {
 // returns once it can no longer run its command. It uses its own bounded
 // context, because the caller's may have ended.
 func CancelShell(ctx context.Context, ctr testcontainers.Container, label, marker string) error {
-	cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), CancelTimeout)
+	cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), supervised.CancelTimeout)
 	defer cancel()
 	code, reader, err := ctr.Exec(cancelCtx, []string{"sh", "-c", ShellCancelScript, "sh", marker, strconv.Itoa(shellCancelWait)})
 	if err == nil && reader != nil {
-		_, _ = stdcopy.StdCopy(discard{}, discard{}, reader)
+		_, _ = stdcopy.StdCopy(io.Discard, io.Discard, reader)
 	}
 	if err != nil {
-		return &BackendError{Op: "cancel " + label + " command", Err: err}
+		return &supervised.BackendError{Op: "cancel " + label + " command", Err: err}
 	}
 	if code != 0 {
 		return fmt.Errorf("cancel %s command: canceler exited %d", label, code)
 	}
 	return nil
 }
-
-type discard struct{}
-
-func (discard) Write(p []byte) (int, error) { return len(p), nil }

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -128,7 +129,7 @@ func TestCephFSMutationKindSeparatesReadsFromWrites(t *testing.T) {
 		"exec sh":                                {"sh", "-c", "true"},
 		"exec python3":                           {"python3", "-c", "print()"},
 		"ceph fs snapshot mirror peer_add":       append([]string{"python3", "-c", supervised.Script, "0", "0", "30"}, cephCLI("fs", "snapshot", "mirror", "peer_add", "a", "uuid")...),
-		"exec rm":                                append([]string{"sh", "-c", supervised.ShellScript, "sh", "marker", "5", "1"}, "rm", "-f", "/tmp/key"),
+		"exec rm":                                append([]string{"sh", "-c", harness.ShellScript, "sh", "marker", "5", "1"}, "rm", "-f", "/tmp/key"),
 	} {
 		if kind := cephFSMutationKind(args); kind != want {
 			t.Errorf("%q classified as %q, want %q", args, kind, want)

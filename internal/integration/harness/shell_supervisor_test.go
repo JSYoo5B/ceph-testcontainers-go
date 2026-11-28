@@ -1,4 +1,4 @@
-package supervised
+package harness
 
 import (
 	"bytes"
@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -200,12 +201,12 @@ func TestRunShellStopsASupervisorThatDidNotReport(t *testing.T) {
 	if _, err := RunShell(t.Context(), ctr, "test", 0, "true"); err == nil || ctr.cancels != 1 {
 		t.Fatalf("a supervisor without its report: %v after %d cancels", err, ctr.cancels)
 	}
-	if _, unconfirmed := Unconfirmed(func() error { _, err := RunShell(t.Context(), ctr, "test", 0, "true"); return err }()); unconfirmed {
+	if _, unconfirmed := supervised.Unconfirmed(func() error { _, err := RunShell(t.Context(), ctr, "test", 0, "true"); return err }()); unconfirmed {
 		t.Fatal("a confirmed stop was reported as unconfirmed")
 	}
 	ctr.cancelFails = true
 	_, err := RunShell(t.Context(), ctr, "test", 0, "true")
-	marker, unconfirmed := Unconfirmed(err)
+	marker, unconfirmed := supervised.Unconfirmed(err)
 	if !unconfirmed || !strings.HasPrefix(marker, ShellMarkerDir+"/") {
 		t.Fatalf("an unconfirmed stop: %v", err)
 	}
