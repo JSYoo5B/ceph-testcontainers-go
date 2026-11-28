@@ -585,6 +585,16 @@ wrap, such as promotion, demotion or resync:
 _, err := mirror.DestinationRBD(ctx, "mirror", "image", "promote", "images/disk")
 ```
 
+They run under the supervisor that `RunNativeCommand` uses. The supervisor
+stops a command shortly before `ctx`'s deadline and keeps at most 16 MiB of
+its standard output; a command that it stopped or that wrote more returns an
+error that wraps `ceph.ErrNativeCommandIncomplete`. A call whose `ctx` ends
+stops the command before it returns, and a stop that cannot be confirmed
+returns a `*ceph.NativeCommandUnstoppedError`, as described in
+[Cancellation and cleanup](#cancellation-and-cleanup). The link's own setup
+commands run the same way, so a canceled setup leaves no command running for
+the next operation to race.
+
 Writer fencing, waiting for replication and split-brain resolution stay your
 test's decisions. Changing the link's mode, scope, namespace mapping or peer
 through these clients makes later typed operations refuse to run, because
@@ -763,8 +773,10 @@ _, err = gateway.Admin(ctx, "role-policy", "put", "--role-name", role.Name(), "-
 In multisite fixtures, `ZoneAdmin(ctx, name, ...)` addresses any owned zone by
 name, including those of a `multisite.WithTopology` fixture. It passes the
 zone's scope but does not add `--format json`. Like `Gateway.Admin`, it
-refuses flags that change the scope or connection and redacts a failure's
-output. Do not edit periods or zones while `AddZone`,
+refuses flags that change the scope or connection, redacts a failure's
+output and runs `radosgw-admin` supervised, in the zone's setup client: a
+call whose `ctx` ends stops the command before it returns, or returns a
+`*ceph.NativeCommandUnstoppedError`. Do not edit periods or zones while `AddZone`,
 `AddZonegroup`, `RemoveZone`, `SyncGroup.Apply` or a metadata master transition
 runs.
 
