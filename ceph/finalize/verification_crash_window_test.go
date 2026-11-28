@@ -30,7 +30,7 @@ func (d *baselineVisibilityDocker) Info(ctx context.Context, opts mobycl.InfoOpt
 }
 func TestVerificationCrashVisibleBetweenBaselineAndStartSample(t *testing.T) {
 	fx := newVerifyFixture()
-	fx.snapshot.containers = []diagnostics.Target{crashContainer("osd", "0", "osd0")}
+	fx.snapshot.Containers = []diagnostics.Target{crashContainer("osd", "0", "osd0")}
 	fx.config.Crashes = []CrashExpectation{{Name: "new-metadata", Process: "ceph-osd", Required: true, MinCount: 1, MaxCount: 1}}
 	fx.docker.clock = verifyStart.Add(5 * time.Minute)
 	v, err := newVerification(fx.config)

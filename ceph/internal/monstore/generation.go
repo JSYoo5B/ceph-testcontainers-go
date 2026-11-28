@@ -21,8 +21,8 @@ import (
 // Generations is the container side of one MON generation.
 type Generations interface {
 	// Create makes the container of launch from image without starting it,
-	// mounting launch.volume at the MON data directory, passing launch.mode to
-	// the entrypoint and giving it launch.endpoint when that is set. It returns
+	// mounting launch.Volume at the MON data directory, passing launch.Mode to
+	// the entrypoint and giving it launch.Endpoint when that is set. It returns
 	// the container ID also with an error when a partial container exists. An
 	// error without an ID is an unknown outcome.
 	Create(ctx context.Context, launch Launch, image string) (string, error)
@@ -40,7 +40,7 @@ type Generations interface {
 	Remove(ctx context.Context, id string) error
 }
 
-func checkMonStoreGenerations(g Generations, image string) error {
+func checkGenerations(g Generations, image string) error {
 	if evidence.IsNil(g) {
 		return errors.New("the MON store has no container side")
 	}
@@ -61,7 +61,7 @@ func checkMonStoreGenerations(g Generations, image string) error {
 // marks the store ready and records the address it bound; a later generation
 // must have bound the recorded one.
 func (s *Volume) StartGeneration(ctx context.Context, g Generations, image string) (string, error) {
-	if err := checkMonStoreGenerations(g, image); err != nil {
+	if err := checkGenerations(g, image); err != nil {
 		return "", err
 	}
 	later := s.Phase == Bound
@@ -150,7 +150,7 @@ func (s *Volume) StopGeneration(ctx context.Context, g Generations) error {
 // touched, the attachment that remains has RemoveRequested set, or it is the
 // next generation's.
 func (s *Volume) ReplaceGeneration(ctx context.Context, g Generations, image string) (string, error) {
-	if err := checkMonStoreGenerations(g, image); err != nil {
+	if err := checkGenerations(g, image); err != nil {
 		return "", err
 	}
 	if s.Phase != Bound || s.Attachment == nil {

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/evidence"
 )
 
 // This file records, for one verification over the fake engine, what the
@@ -272,7 +274,7 @@ func limScenarios() map[string]limScenario {
 			}},
 		"line bound": {name: "line bound", emit: func(_ *verifyFixture, g *limEmitter) {
 			g.log("mon", "log-before", "permitted", "")
-			g.log("mon", "log-long", "permitted", " "+strings.Repeat("x", maxVerificationLine))
+			g.log("mon", "log-long", "permitted", " "+strings.Repeat("x", evidence.MaxLogLine))
 			g.log("mon", "log-after", "permitted", "")
 		}},
 		"finding text bound": {name: "finding text bound", emit: func(_ *verifyFixture, g *limEmitter) {
@@ -298,7 +300,7 @@ func limScenarios() map[string]limScenario {
 			g.crash("osd1", limCrashID(2), "unexpected")
 			fx.docker.containers["osd1"].messages = map[string]string{limCrashID(2): strings.Repeat("z", 70<<10)}
 		}},
-		"container limit": {name: "container limit", setup: func(fx *verifyFixture) { fx.snapshot.omitted = 2 },
+		"container limit": {name: "container limit", setup: func(fx *verifyFixture) { fx.snapshot.Omitted = 2 },
 			emit: func(_ *verifyFixture, g *limEmitter) {
 				g.log("mon", "log-1", "permitted", "")
 			}},

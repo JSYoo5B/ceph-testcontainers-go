@@ -3,7 +3,8 @@ package finalize
 import (
 	"regexp"
 	"strings"
-	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/evidence"
 )
 
 // A MON writes each cluster log entry to its standard error twice
@@ -31,16 +32,15 @@ import (
 // envelope of its own is a record, not the rest of an entry, and the fragments
 // before it are emitted unchanged.
 type verificationDeinterleaver struct {
-	emit    func(stream string, data []byte, long, ended bool)
+	emit    func(evidence.LogLine)
 	pending map[string][]verificationFragment
 }
 
-// verificationFragment is one line of a split entry: its Docker timestamp,
-// the head of the entry it holds, the whole daemon line after the head, and
-// the line as read.
+// verificationFragment is one line of a split entry: the head of the entry
+// it holds, the whole daemon line after the head, and the line as read.
 type verificationFragment struct {
-	stamp, head, daemon string
-	data                []byte
+	head, daemon string
+	line         evidence.LogLine
 }
 
 // verificationSplitRole is the role of the containers whose standard error
@@ -57,23 +57,23 @@ const maxVerificationFragments = 32
 // six fractional digits and does not match.
 var embeddedDaemonLine = regexp.MustCompile(`(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{4}) +[0-9a-f]+ +-?\d+ `)
 
-func newVerificationDeinterleaver(emit func(string, []byte, bool, bool)) *verificationDeinterleaver {
+func newVerificationDeinterleaver(emit func(evidence.LogLine)) *verificationDeinterleaver {
 	return &verificationDeinterleaver{emit: emit, pending: map[string][]verificationFragment{}}
 }
 
-// line receives one line of a stream as read, with its Docker timestamp.
-func (d *verificationDeinterleaver) line(stream string, data []byte, long, ended bool) {
-	stamp, text, cut := strings.Cut(string(data), " ")
-	if _, err := time.Parse(time.RFC3339Nano, stamp); long || ended || !cut || err != nil {
+// line receives one line of a stream as read.
+func (d *verificationDeinterleaver) line(line evidence.LogLine) {
+	stream, text := line.Stream, line.Text
+	if line.Cut || line.Ended || line.Malformed {
 		d.flush(stream)
-		d.emit(stream, data, long, ended)
+		d.emit(line)
 		return
 	}
 	if at := daemonLineAfterStart(text); at > 0 {
 		if len(d.pending[stream]) == maxVerificationFragments {
 			d.flush(stream)
 		}
-		d.pending[stream] = append(d.pending[stream], verificationFragment{stamp: stamp, head: text[:at], daemon: text[at:], data: append([]byte(nil), data...)})
+		d.pending[stream] = append(d.pending[stream], verificationFragment{head: text[:at], daemon: text[at:], line: line})
 		return
 	}
 	if fragments := d.pending[stream]; len(fragments) > 0 {
@@ -82,20 +82,20 @@ func (d *verificationDeinterleaver) line(stream string, data []byte, long, ended
 		// a fragment, and joining the record after it would hide that record.
 		if _, whole := parseVerificationEnvelope(text); whole {
 			d.flush(stream)
-			d.emit(stream, data, long, ended)
+			d.emit(line)
 			return
 		}
 		if entry, ok := restoreClusterEntry(fragments, text); ok {
 			d.pending[stream] = nil
 			for _, fragment := range fragments {
-				d.emit(stream, []byte(fragment.stamp+" "+fragment.daemon), false, false)
+				d.emit(evidence.LogLine{Stream: stream, Time: fragment.line.Time, Text: fragment.daemon})
 			}
-			d.emit(stream, []byte(fragments[0].stamp+" "+entry), false, false)
+			d.emit(evidence.LogLine{Stream: stream, Time: fragments[0].line.Time, Text: entry})
 			return
 		}
 		d.flush(stream)
 	}
-	d.emit(stream, data, long, ended)
+	d.emit(line)
 }
 
 // daemonLineAfterStart returns where a daemon line starts after the start of
@@ -135,7 +135,7 @@ func (d *verificationDeinterleaver) flush(stream string) {
 	fragments := d.pending[stream]
 	d.pending[stream] = nil
 	for _, fragment := range fragments {
-		d.emit(stream, fragment.data, false, false)
+		d.emit(fragment.line)
 	}
 }
 

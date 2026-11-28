@@ -379,9 +379,9 @@ func TestVerificationGenerationLedgerReplacement(t *testing.T) {
 	l := runGenerationScenario(t, genScenario{name: "replacement", mutate: func(fx *verifyFixture, mon *fakeVerifyContainer, emit *genEmitter) {
 		mon.removed = true
 		fx.docker.containers["mon2"] = &fakeVerifyContainer{startedAt: verifyStart.Add(2 * time.Minute).Format(time.RFC3339Nano), process: "ceph-mon"}
-		for i, c := range fx.snapshot.containers {
+		for i, c := range fx.snapshot.Containers {
 			if c.Role == "mon" {
-				fx.snapshot.containers[i] = crashContainer("mon", "a", "mon2")
+				fx.snapshot.Containers[i] = crashContainer("mon", "a", "mon2")
 			}
 		}
 		emit.log("mon2", "log-replacement", "replacement", 3*time.Minute)

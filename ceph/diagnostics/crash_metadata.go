@@ -173,8 +173,8 @@ func CollectCrashMetadata(ctx context.Context, cluster *ceph.Container, config C
 	ctx, cancel := context.WithTimeout(ctx, config.Timeout)
 	defer cancel()
 	report := &CrashMetadataReport{SchemaVersion: 1, StartedAt: time.Now().UTC(), Containers: []CrashMetadataContainer{}}
-	snapshot, err := takeSnapshot(ctx, cluster, Config{MaxContainers: 128, AdditionalContainers: config.AdditionalContainers, RedactValues: config.RedactValues})
-	report.Closed = snapshot.closed
+	snapshot, err := takeSnapshot(ctx, cluster, config.AdditionalContainers, config.RedactValues, evidence.MaxContainers)
+	report.Closed = snapshot.Closed
 	if err != nil {
 		report.FinishedAt = time.Now().UTC()
 		return report, err
@@ -190,11 +190,11 @@ func CollectCrashMetadata(ctx context.Context, cluster *ceph.Container, config C
 
 // collectCrashMetadata reads the crash directories of the snapshot's
 // containers into report with config normalized.
-func collectCrashMetadata(ctx context.Context, config CrashMetadataConfig, snapshot diagnosticsSnapshot, docker evidence.CrashDocker, report *CrashMetadataReport) (*CrashMetadataReport, error) {
+func collectCrashMetadata(ctx context.Context, config CrashMetadataConfig, snapshot evidence.Snapshot[Target], docker evidence.CrashDocker, report *CrashMetadataReport) (*CrashMetadataReport, error) {
 	collected := &evidence.CrashReport{SchemaVersion: report.SchemaVersion, StartedAt: report.StartedAt, Closed: report.Closed,
 		Containers: []evidence.CrashContainer{}}
-	collected, err := evidence.CollectCrashes(ctx, evidence.MemberConfig(evidence.CrashConfig[Target](config)), evidence.Members(snapshot.containers),
-		snapshot.controlPlane, snapshot.omitted, snapshot.secrets, docker, collected)
+	collected, err := evidence.CollectCrashes(ctx, evidence.MemberConfig(evidence.CrashConfig[Target](config)), evidence.Members(snapshot.Containers),
+		snapshot.ControlPlane, snapshot.Omitted, snapshot.Secrets, docker, collected)
 	*report = crashMetadataReport(collected)
 	return report, err
 }

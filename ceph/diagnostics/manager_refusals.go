@@ -16,7 +16,7 @@ import (
 // ManagerRefusals is what a MGR's latest process and the owned MONs logged
 // about the refused authentication of its MonClients.
 //
-// Manager and Start are the MGR's process log window, as CollectProcessLog
+// LogSource and Start are the MGR's process log window, as CollectProcessLog
 // reads it. Refusals are the MonClient lines of that process that report
 // "(13) Permission denied"; a MGR runs several MonClients, its beacon and
 // those of its modules, and the line does not say which one was refused.
@@ -24,7 +24,7 @@ import (
 // process started, sorted by name, each with the refusals that name the
 // MGR's entity.
 type ManagerRefusals struct {
-	Manager  LogSource         `json:"manager"`
+	LogSource
 	Start    LogLine           `json:"start"`
 	Refusals []LogLine         `json:"refusals"`
 	Monitors []MonitorRefusals `json:"monitors"`
@@ -88,13 +88,13 @@ func CollectManagerRefusals(ctx context.Context, cluster *ceph.Container, manage
 	return readManagerRefusals(ctx, docker, snapshot, member, config)
 }
 
-func readManagerRefusals(ctx context.Context, docker diagnosticsDocker, snapshot diagnosticsSnapshot, manager evidence.Member, config LogConfig) (*ManagerRefusals, error) {
-	redact := evidence.Redactor(snapshot.secrets)
+func readManagerRefusals(ctx context.Context, docker diagnosticsDocker, snapshot evidence.Snapshot[Target], manager evidence.Member, config LogConfig) (*ManagerRefusals, error) {
+	redact := logRedactor(snapshot.Secrets)
 	process, err := readProcessLog(ctx, docker, manager, config, redact, isMonClientRefusal)
 	if err != nil {
 		return nil, err
 	}
-	result := &ManagerRefusals{Manager: process.LogSource, Start: process.Start, Refusals: []LogLine{}, Monitors: []MonitorRefusals{}}
+	result := &ManagerRefusals{LogSource: process.LogSource, Start: process.Start, Refusals: []LogLine{}, Monitors: []MonitorRefusals{}}
 	if len(process.Lines) > 0 {
 		result.Refusals = process.Lines
 		if process.Start.Text != "" {
@@ -102,7 +102,7 @@ func readManagerRefusals(ctx context.Context, docker diagnosticsDocker, snapshot
 		}
 	}
 	entity := "mgr." + manager.Name
-	for _, member := range snapshot.containers {
+	for _, member := range snapshot.Containers {
 		if member.Role != "mon" || member.Container == nil {
 			continue
 		}
@@ -118,22 +118,22 @@ func readManagerRefusals(ctx context.Context, docker diagnosticsDocker, snapshot
 
 // readMonitorRefusals scans one MON's log since the MGR's process start for
 // the refusals of entity.
-func readMonitorRefusals(ctx context.Context, docker diagnosticsDocker, member evidence.Member, process *ProcessLog, entity string, config LogConfig, redact func(string) string) (MonitorRefusals, error) {
+func readMonitorRefusals(ctx context.Context, docker diagnosticsDocker, member evidence.Member, process *ProcessLog, entity string, config LogConfig, redact func(string, bool) string) (MonitorRefusals, error) {
 	id := member.Container.GetContainerID()
 	run, err := inspectRun(ctx, docker, id)
 	if err != nil {
 		return MonitorRefusals{}, fmt.Errorf("inspect mon.%s: %w", member.Name, err)
 	}
-	source := LogSource{Role: member.Role, Name: member.Name, ContainerID: id, ContainerStartedAt: run.started, Running: run.running, Since: process.Since}
+	source := LogSource{Role: member.Role, Name: member.Name, ContainerID: id, ContainerStartedAt: run.Started, Running: run.Running, Since: process.Since}
 	w := &logWindow{max: config.MaxBytes, keep: func(text string) bool {
 		_, ok := monitorRefusal(text, entity)
 		return ok
 	}}
-	if err := streamLog(ctx, docker, id, process.Since, run.tty, w.add); err != nil {
+	if err := streamLog(ctx, docker, id, process.Since, run.TTY, w.add); err != nil {
 		return MonitorRefusals{}, fmt.Errorf("read the log of mon.%s: %w", member.Name, err)
 	}
 	switch {
-	case process.Start.Text == "" || run.rotates:
+	case process.Start.Text == "" || run.LogLoss() != "":
 		source.Status = LogStartNotFound
 	case w.truncated():
 		source.Status = LogTruncated
@@ -143,8 +143,8 @@ func readMonitorRefusals(ctx context.Context, docker diagnosticsDocker, member e
 	// The window keeps only refusals; each is classified on its raw text and
 	// reported with its redacted line.
 	refusals := []MonitorRefusal{}
-	for i, line := range redactLines(w.lines, redact) {
-		refusal, _ := monitorRefusal(w.lines[i].Text, entity)
+	for i, line := range w.result(redact) {
+		refusal, _ := monitorRefusal(w.lines[i].raw, entity)
 		refusal.Line = line
 		refusals = append(refusals, refusal)
 	}

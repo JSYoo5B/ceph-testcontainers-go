@@ -83,7 +83,7 @@ type GateReceipt struct {
 // error rather than a shorter list: a refusal that was not read must not
 // read as absent.
 func refusalsOf(observed *diagnostics.ManagerRefusals) ([]Refusal, error) {
-	sources := []diagnostics.LogSource{observed.Manager}
+	sources := []diagnostics.LogSource{observed.LogSource}
 	for _, monitor := range observed.Monitors {
 		sources = append(sources, monitor.LogSource)
 	}
@@ -105,7 +105,7 @@ func refusalsOf(observed *diagnostics.ManagerRefusals) ([]Refusal, error) {
 	seen := map[Refusal]bool{}
 	for _, monitor := range observed.Monitors {
 		for _, refusal := range monitor.Refusals {
-			key := Refusal{Monitor: monitor.Name, Entity: "mgr." + observed.Manager.Name, Reason: refusal.Reason, GlobalID: refusal.GlobalID}
+			key := Refusal{Monitor: monitor.Name, Entity: "mgr." + observed.Name, Reason: refusal.Reason, GlobalID: refusal.GlobalID}
 			if !seen[key] {
 				seen[key] = true
 				key.Line = refusal.Line.Text

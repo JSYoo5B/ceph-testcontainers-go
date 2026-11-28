@@ -26,6 +26,9 @@ type fakeLogEntry struct {
 	at     time.Duration
 	stream byte
 	text   string
+	// partial leaves out the newline, as Docker does for a part of a long
+	// line; bare leaves out Docker's timestamp.
+	partial, bare bool
 }
 
 // cephEntry is a native Ceph log entry at processLogEpoch plus at.
@@ -101,6 +104,12 @@ func (d *processLogDocker) ContainerLogs(_ context.Context, id string, opts dock
 			continue
 		}
 		payload := at.Format(time.RFC3339Nano) + " " + entry.text + "\n"
+		if entry.bare {
+			payload = entry.text + "\n"
+		}
+		if entry.partial {
+			payload = strings.TrimSuffix(payload, "\n")
+		}
 		header := make([]byte, 8)
 		header[0] = entry.stream
 		binary.BigEndian.PutUint32(header[4:], uint32(len(payload)))
@@ -114,7 +123,7 @@ func logMember(role, name, id string) evidence.Member {
 	return evidence.Member{Role: role, Name: name, Container: &diagnosticsTestContainer{id: id}}
 }
 
-func noRedaction(text string) string { return text }
+func noRedaction(text string, _ bool) string { return text }
 
 func lineTexts(lines []LogLine) []string {
 	var texts []string
@@ -176,7 +185,7 @@ func TestProcessLogStatus(t *testing.T) {
 			entries: append(lines, cephEntry(21*time.Second, " 0", "after"))}, 1 << 20, LogStartNotFound, 1, false},
 		"restarted":     {&fakeLogContainer{started: []time.Duration{10 * time.Second, 30 * time.Second}, entries: lines}, 1 << 20, LogChanged, 3, true},
 		"stopped":       {&fakeLogContainer{started: []time.Duration{10 * time.Second}, entries: lines}, 1 << 20, LogComplete, 3, true},
-		"cut long line": {&fakeLogContainer{started: []time.Duration{10 * time.Second}, entries: append(lines, cephEntry(14*time.Second, " 0", strings.Repeat("x", maxLogLine)))}, 1 << 20, LogTruncated, 4, true},
+		"cut long line": {&fakeLogContainer{started: []time.Duration{10 * time.Second}, entries: append(lines, cephEntry(14*time.Second, " 0", strings.Repeat("x", evidence.MaxLogLine)))}, 1 << 20, LogTruncated, 4, true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			log, err := readProcessLog(t.Context(), newProcessLogDocker(map[string]*fakeLogContainer{"x": test.ctr}), logMember("mon", "a", "x"), LogConfig{MaxBytes: test.max}, noRedaction, nil)
@@ -282,14 +291,14 @@ func TestProcessLogRedacts(t *testing.T) {
 		{at: 4 * time.Second, stream: 2, text: "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQ"},
 		{at: 5 * time.Second, stream: 2, text: "-----END PRIVATE KEY----- after"},
 	}}
-	redact := evidence.Redactor([]string{"AQBsecretsecretsecretsecretsecret=="})
+	redact := logRedactor([]string{"AQBsecretsecretsecretsecretsecret=="})
 	log, err := readProcessLog(t.Context(), newProcessLogDocker(map[string]*fakeLogContainer{"r": ctr}), logMember("rgw", "rgw", "r"), LogConfig{MaxBytes: 1 << 20}, redact, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	joined := strings.Join(lineTexts(log.Lines), "\n")
 	if strings.Contains(joined, "AQBsecret") || strings.Contains(joined, "MIIEvQ") || !strings.Contains(joined, "[REDACTED]") ||
-		!strings.Contains(joined, "before "+privateKeyMarker) || !strings.Contains(joined, privateKeyMarker+" after") || len(log.Lines) != 5 {
+		!strings.Contains(joined, "before "+evidence.PrivateKeyMarker) || !strings.Contains(joined, evidence.PrivateKeyMarker+" after") || len(log.Lines) != 5 {
 		t.Fatalf("redacted lines:\n%s", joined)
 	}
 }

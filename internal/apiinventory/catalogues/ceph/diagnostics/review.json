@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming-review/v2",
   "package": "ceph/diagnostics",
   "declarations_sha256": "a8bde8ed91949462b51fa8c73bc060af7cd441ac84f72cabc99a8ed73471eb2e",
-  "members_sha256": "b6ef2b5243d81b3b7f1f5e5a21fe9975102b177349761837816cd5571a079767",
+  "members_sha256": "b63b49dbc36cc5ef6aa261c0c64014f2d6d25d1a5e098506b000a0a0caa92e83",
   "declarations": 34,
   "members": 90,
   "review": "api-naming.md",

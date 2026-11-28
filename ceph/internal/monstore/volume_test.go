@@ -13,11 +13,11 @@ import (
 	mobycl "github.com/moby/moby/client"
 )
 
-// monStoreDockerFake is a small Docker model for the MON store records: the
+// dockerFake is a small Docker model for the MON store records: the
 // volume calls of volumeDockerFake, plus the set of existing containers and
 // the containers that use the volume. Its answers are synthetic; it says nothing
 // about Docker's behavior.
-type monStoreDockerFake struct {
+type dockerFake struct {
 	volumeDockerFake
 	existing         map[string]bool
 	users            []string
@@ -27,14 +27,14 @@ type monStoreDockerFake struct {
 	listed           int
 }
 
-func (d *monStoreDockerFake) VolumeCreate(ctx context.Context, opts mobycl.VolumeCreateOptions) (mobycl.VolumeCreateResult, error) {
+func (d *dockerFake) VolumeCreate(ctx context.Context, opts mobycl.VolumeCreateOptions) (mobycl.VolumeCreateResult, error) {
 	if d.onCreate != nil {
 		d.onCreate()
 	}
 	return d.volumeDockerFake.VolumeCreate(ctx, opts)
 }
 
-func (d *monStoreDockerFake) ContainerInspect(_ context.Context, id string, _ mobycl.ContainerInspectOptions) (mobycl.ContainerInspectResult, error) {
+func (d *dockerFake) ContainerInspect(_ context.Context, id string, _ mobycl.ContainerInspectOptions) (mobycl.ContainerInspectResult, error) {
 	if d.inspectContainer != nil {
 		return mobycl.ContainerInspectResult{}, d.inspectContainer
 	}
@@ -44,7 +44,7 @@ func (d *monStoreDockerFake) ContainerInspect(_ context.Context, id string, _ mo
 	return mobycl.ContainerInspectResult{}, errdefs.ErrNotFound
 }
 
-func (d *monStoreDockerFake) ContainerList(_ context.Context, _ mobycl.ContainerListOptions) (mobycl.ContainerListResult, error) {
+func (d *dockerFake) ContainerList(_ context.Context, _ mobycl.ContainerListOptions) (mobycl.ContainerListResult, error) {
 	d.listed++
 	if d.listErr != nil {
 		return mobycl.ContainerListResult{}, d.listErr
@@ -56,13 +56,13 @@ func (d *monStoreDockerFake) ContainerList(_ context.Context, _ mobycl.Container
 	return mobycl.ContainerListResult{Items: items}, nil
 }
 
-func newMonStoreFixture() (*State, *Volume, *monStoreDockerFake) {
+func newMonStoreFixture() (*State, *Volume, *dockerFake) {
 	return newMonStoreFixtureFor("a")
 }
 
-func newMonStoreFixtureFor(mon string) (*State, *Volume, *monStoreDockerFake) {
-	d := &monStoreDockerFake{existing: map[string]bool{}}
-	s := &State{monDocker: func(context.Context) (monStoreDocker, error) { return d, nil }}
+func newMonStoreFixtureFor(mon string) (*State, *Volume, *dockerFake) {
+	d := &dockerFake{existing: map[string]bool{}}
+	s := &State{monDocker: func(context.Context) (volumeDocker, error) { return d, nil }}
 	r, err := s.Begin(mon)
 	if err != nil {
 		panic(err)
@@ -72,7 +72,7 @@ func newMonStoreFixtureFor(mon string) (*State, *Volume, *monStoreDockerFake) {
 
 // monStoreBoundFixture drives a record through create, the first dispatch, the
 // container record and ready. The first generation container stays "existing".
-func monStoreBoundFixture(t *testing.T) (*State, *Volume, *monStoreDockerFake) {
+func monStoreBoundFixture(t *testing.T) (*State, *Volume, *dockerFake) {
 	t.Helper()
 	s, r, d := newMonStoreFixture()
 	if err := r.Create(t.Context()); err != nil {
@@ -116,9 +116,9 @@ func TestMonStoreVolumeMetadataIsValidatedAgainstTheRecord(t *testing.T) {
 	cases := map[string]func(v *volume.Volume){
 		"name":           func(v *volume.Volume) { v.Name = "other" },
 		"driver":         func(v *volume.Volume) { v.Driver = "nfs" },
-		"owner label":    func(v *volume.Volume) { v.Labels[monStoreOwnerLabel] = "foreign" },
-		"mon label":      func(v *volume.Volume) { v.Labels[monStoreMonLabel] = "b" },
-		"no mon label":   func(v *volume.Volume) { delete(v.Labels, monStoreMonLabel) },
+		"owner label":    func(v *volume.Volume) { v.Labels[ownerLabel] = "foreign" },
+		"mon label":      func(v *volume.Volume) { v.Labels[monLabel] = "b" },
+		"no mon label":   func(v *volume.Volume) { delete(v.Labels, monLabel) },
 		"driver options": func(v *volume.Volume) { v.Options = map[string]string{"type": "tmpfs"} },
 		"empty creation": func(v *volume.Volume) { v.CreatedAt = "" },
 		"changed creation": func(v *volume.Volume) {
@@ -148,7 +148,7 @@ func TestMonStoreCreateIsPublishedBeforeTheCallAndIsOrdinaryLocal(t *testing.T) 
 		t.Fatal("the record or the create request was not published before the Docker call")
 	}
 	if d.createOptions.Driver != "local" || len(d.createOptions.DriverOpts) != 0 ||
-		d.createOptions.Labels[monStoreOwnerLabel] != r.owner || d.createOptions.Labels[monStoreMonLabel] != "a" ||
+		d.createOptions.Labels[ownerLabel] != r.owner || d.createOptions.Labels[monLabel] != "a" ||
 		d.createOptions.Name != r.name || !strings.HasPrefix(r.name, "tc-ceph-mon-volume-") {
 		t.Fatalf("not an owned ordinary local volume: %+v", d.createOptions)
 	}
@@ -259,11 +259,11 @@ func TestMonStoreUnknownContainerOutcomeStaysPendingUntilTheScan(t *testing.T) {
 }
 
 func TestMonStoreConfirmGoneRequiresAbsenceByInspectAndByIndependentList(t *testing.T) {
-	cases := map[string]func(d *monStoreDockerFake){
-		"container still exists":        func(d *monStoreDockerFake) { d.existing["ctr-1"] = true },
-		"container inspect fails":       func(d *monStoreDockerFake) { d.inspectContainer = errors.New("daemon unreachable") },
-		"another container uses volume": func(d *monStoreDockerFake) { d.users = []string{"stray"} },
-		"list fails":                    func(d *monStoreDockerFake) { d.listErr = errors.New("daemon unreachable") },
+	cases := map[string]func(d *dockerFake){
+		"container still exists":        func(d *dockerFake) { d.existing["ctr-1"] = true },
+		"container inspect fails":       func(d *dockerFake) { d.inspectContainer = errors.New("daemon unreachable") },
+		"another container uses volume": func(d *dockerFake) { d.users = []string{"stray"} },
+		"list fails":                    func(d *dockerFake) { d.listErr = errors.New("daemon unreachable") },
 	}
 	for name, apply := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -313,11 +313,11 @@ func TestMonStoreReopenRequiresTheStoreAndAGoneAttachment(t *testing.T) {
 }
 
 func TestMonStoreBoundStoreWithAMissingChangedOrForeignVolumeIsNeverRecreated(t *testing.T) {
-	cases := map[string]func(d *monStoreDockerFake){
-		"missing":      func(d *monStoreDockerFake) { d.inspectErr = errdefs.ErrNotFound },
-		"foreign":      func(d *monStoreDockerFake) { d.stored.Labels[monStoreOwnerLabel] = "foreign" },
-		"changed time": func(d *monStoreDockerFake) { d.stored.CreatedAt = "replaced-volume" },
-		"inspect fail": func(d *monStoreDockerFake) { d.inspectErr = errors.New("daemon unreachable") },
+	cases := map[string]func(d *dockerFake){
+		"missing":      func(d *dockerFake) { d.inspectErr = errdefs.ErrNotFound },
+		"foreign":      func(d *dockerFake) { d.stored.Labels[ownerLabel] = "foreign" },
+		"changed time": func(d *dockerFake) { d.stored.CreatedAt = "replaced-volume" },
+		"inspect fail": func(d *dockerFake) { d.inspectErr = errors.New("daemon unreachable") },
 	}
 	for name, apply := range cases {
 		t.Run(name, func(t *testing.T) {

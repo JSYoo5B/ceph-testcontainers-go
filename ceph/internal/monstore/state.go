@@ -22,8 +22,8 @@ import (
 // registerOSD does for the OSD volume. monDocker is written only by tests,
 // before the cluster is used.
 //
-// Terminate order: releaseStores runs after the added and the primary MON
-// containers are terminated, which are the volume users; retryStores runs once
+// Terminate order: ReleaseStores runs after the added and the primary MON
+// containers are terminated, which are the volume users; RetryStores runs once
 // more after the labeled containers are removed, because one of those can be a
 // user whose create reply was lost.
 //
@@ -36,7 +36,7 @@ type State struct {
 
 	// monDocker replaces the Docker client of the store volumes in tests.
 	//testdouble:nil-default-hook
-	monDocker func(context.Context) (monStoreDocker, error)
+	monDocker func(context.Context) (volumeDocker, error)
 }
 
 // Begin allocates and publishes the record of mon before its volume exists.
@@ -47,7 +47,7 @@ func (s *State) Begin(mon string) (*Volume, error) {
 	if s.records[mon] != nil {
 		return nil, fmt.Errorf("MON %s already has a store; a second one is never allocated", mon)
 	}
-	r := newMonStoreVolume(mon)
+	r := newVolume(mon)
 	r.newClient = s.monDocker
 	if s.records == nil {
 		s.records = map[string]*Volume{}
@@ -59,9 +59,6 @@ func (s *State) Begin(mon string) (*Volume, error) {
 // Store returns the record of mon, or nil.
 func (s *State) Store(mon string) *Volume { return s.records[mon] }
 
-// count returns the number of published records.
-func (s *State) count() int { return len(s.records) }
-
 // names returns the MON names with a record, sorted.
 func (s *State) names() []string {
 	return slices.Sorted(func(yield func(string) bool) {
@@ -71,14 +68,6 @@ func (s *State) names() []string {
 			}
 		}
 	})
-}
-
-// volumeName returns the volume the MON mounts, or "" without a record.
-func (s *State) volumeName(mon string) string {
-	if r := s.records[mon]; r != nil {
-		return r.name
-	}
-	return ""
 }
 
 // DiscardFresh discards the fresh store of mon after its first generation is

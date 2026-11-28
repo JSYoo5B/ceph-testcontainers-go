@@ -93,7 +93,7 @@
       "LogSource.Status field LogStatus `json:\"status\"`"
     ],
     "ceph/diagnostics.ManagerRefusals": [
-      "ManagerRefusals.Manager field LogSource `json:\"manager\"`",
+      "ManagerRefusals embed LogSource",
       "ManagerRefusals.Monitors field []MonitorRefusals `json:\"monitors\"`",
       "ManagerRefusals.Refusals field []LogLine `json:\"refusals\"`",
       "ManagerRefusals.Start field LogLine `json:\"start\"`"

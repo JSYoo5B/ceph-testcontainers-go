@@ -137,7 +137,7 @@ func TestHostMonitorObserveRequiresTheCreatedPorts(t *testing.T) {
 	h.created[id] = generationDouble{id: id}
 	h.listeners = []monstore.Listener{{IP: "127.0.0.1", Port: 41001}, {IP: "127.0.0.1", Port: 41000}}
 	got, err := h.Observe(t.Context(), id)
-	if err != nil || !got.Equal(monstore.Endpoint{IP: "127.0.0.1", Ports: []int{41000, 41001}}) {
+	if err != nil || got.IP != "127.0.0.1" || got.Network != "" || !slices.Equal(got.Ports, []int{41000, 41001}) {
 		t.Fatalf("observe: %+v %v", got, err)
 	}
 	for name, listeners := range map[string][]monstore.Listener{

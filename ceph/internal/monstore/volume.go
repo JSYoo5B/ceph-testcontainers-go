@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	monStoreOwnerLabel = "org.testcontainers.ceph.mon-volume-owner"
-	monStoreMonLabel   = "org.testcontainers.ceph.mon-volume-mon"
+	ownerLabel = "org.testcontainers.ceph.mon-volume-owner"
+	monLabel   = "org.testcontainers.ceph.mon-volume-mon"
 )
 
 // Phase is the state of one MON store volume. The zero value is not a
@@ -72,7 +72,7 @@ type Launch struct {
 	Generation int
 	// Endpoint is the address the container must bind: the one recorded from
 	// the first generation. It is nil for the first generation, whose address
-	// the container side chooses and startGeneration records after it is ready.
+	// the container side chooses and StartGeneration records after it is ready.
 	Endpoint *Endpoint
 }
 
@@ -88,10 +88,10 @@ type Attachment struct {
 	RemoveRequested bool
 }
 
-// monStoreDocker is the Docker surface of the store records: the volume calls
+// volumeDocker is the Docker surface of the store records: the volume calls
 // of the OSD volume, the container list that finds a volume user independently
 // of the ledger, and the container inspection of a recorded attachment.
-type monStoreDocker interface {
+type volumeDocker interface {
 	VolumeCreate(context.Context, mobycl.VolumeCreateOptions) (mobycl.VolumeCreateResult, error)
 	VolumeInspect(context.Context, string, mobycl.VolumeInspectOptions) (mobycl.VolumeInspectResult, error)
 	VolumeRemove(context.Context, string, mobycl.VolumeRemoveOptions) (mobycl.VolumeRemoveResult, error)
@@ -103,7 +103,8 @@ type monStoreDocker interface {
 // Volume is the record of one MON's store: an ordinary Docker local
 // named volume owned by the cluster, one per MON name. Container.mu guards it;
 // see State. It models the OSD volume of osd_volume_storage.go with one
-// volume per MON and no helper container (design note D1, D6).
+// volume per MON and no helper container (docs/internals/mon-volume-storage.md,
+// "Ownership model").
 type Volume struct {
 	mon, name, owner, createdAt string
 	Phase                       Phase
@@ -117,15 +118,15 @@ type Volume struct {
 	// (address.go).
 	Endpoint  *Endpoint
 	hold      EndpointHold
-	newClient func(context.Context) (monStoreDocker, error)
+	newClient func(context.Context) (volumeDocker, error)
 }
 
-func newMonStoreVolume(mon string) *Volume {
+func newVolume(mon string) *Volume {
 	owner := uuid.NewString()
 	return &Volume{mon: mon, name: "tc-ceph-mon-volume-" + owner, owner: owner, Phase: Planned}
 }
 
-func (s *Volume) client(ctx context.Context) (monStoreDocker, error) {
+func (s *Volume) client(ctx context.Context) (volumeDocker, error) {
 	if s.newClient != nil {
 		return s.newClient(ctx)
 	}
@@ -136,7 +137,7 @@ func (s *Volume) client(ctx context.Context) (monStoreDocker, error) {
 // driver, owner and MON labels, no driver options, a creation timestamp that
 // has not changed.
 func (s *Volume) validate(v volume.Volume) error {
-	if v.Name != s.name || v.Driver != "local" || v.Labels[monStoreOwnerLabel] != s.owner || v.Labels[monStoreMonLabel] != s.mon || len(v.Options) != 0 || v.CreatedAt == "" {
+	if v.Name != s.name || v.Driver != "local" || v.Labels[ownerLabel] != s.owner || v.Labels[monLabel] != s.mon || len(v.Options) != 0 || v.CreatedAt == "" {
 		return fmt.Errorf("MON %s store volume identity, ownership or ordinary local driver differs", s.mon)
 	}
 	if s.createdAt != "" && v.CreatedAt != s.createdAt {
@@ -162,8 +163,8 @@ func (s *Volume) Create(ctx context.Context) (err error) {
 	defer func() { err = errors.Join(err, docker.Close()) }()
 	s.createRequested = true
 	labels := testcontainers.GenericLabels()
-	labels[monStoreOwnerLabel] = s.owner
-	labels[monStoreMonLabel] = s.mon
+	labels[ownerLabel] = s.owner
+	labels[monLabel] = s.mon
 	result, err := docker.VolumeCreate(ctx, mobycl.VolumeCreateOptions{Name: s.name, Driver: "local", Labels: labels})
 	if err != nil {
 		return fmt.Errorf("create MON %s store volume: %w", s.mon, err)

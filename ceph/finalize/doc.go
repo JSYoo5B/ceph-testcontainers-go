@@ -15,6 +15,9 @@
 // needed to run a cluster: a test that terminates its cluster with
 // testcontainers.CleanupContainer does not import it.
 //
-// The error categories are those of package ceph: a refused configuration or
-// registration matches ceph.ErrInvalidRequest.
+// [TerminateOnCleanup] and [Finalization.Verify] return an error, and a
+// refused configuration matches ceph.ErrInvalidRequest, as in package ceph.
+// [Finalization.Check], [Finalization.Cleanup], [Finalization.Capture],
+// [Finalization.CaptureWithFile] and [Finalization.TrackDebugLevel] return
+// nothing: a refused registration fails the test.
 package finalize

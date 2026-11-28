@@ -27,7 +27,7 @@ import (
 // each was created for in ports, so the caller can take the handle of the
 // generation it started and Observe can check what it bound.
 //
-// It takes no lock: its caller holds Container.mu, as every monStoreVolume
+// It takes no lock: its caller holds Container.mu, as every monstore.Volume
 // method requires.
 type monitorGenerations struct {
 	c       *Container

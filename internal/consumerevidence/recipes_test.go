@@ -183,7 +183,7 @@ func refusalCase() *diagnostics.ManagerRefusals {
 		return diagnostics.LogSource{Role: role, Name: name, Status: diagnostics.LogComplete}
 	}
 	line := func(text string) diagnostics.LogLine { return diagnostics.LogLine{Text: text} }
-	return &diagnostics.ManagerRefusals{Manager: source("mgr", "a"), Monitors: []diagnostics.MonitorRefusals{
+	return &diagnostics.ManagerRefusals{LogSource: source("mgr", "a"), Monitors: []diagnostics.MonitorRefusals{
 		{LogSource: source("mon", "a"), Refusals: []diagnostics.MonitorRefusal{
 			{Reason: "using bad ticket", GlobalID: 14263, Line: line("first")},
 			{Reason: "using bad ticket", GlobalID: 14263, Line: line("again")},
@@ -207,9 +207,9 @@ func TestRefusalsOf(t *testing.T) {
 		change func(*diagnostics.ManagerRefusals)
 		status string
 	}{
-		"truncated MGR log":   {func(r *diagnostics.ManagerRefusals) { r.Manager.Status = diagnostics.LogTruncated }, StatusTruncated},
-		"MGR start not found": {func(r *diagnostics.ManagerRefusals) { r.Manager.Status = diagnostics.LogStartNotFound }, StatusMissing},
-		"MGR restarted":       {func(r *diagnostics.ManagerRefusals) { r.Manager.Status = diagnostics.LogChanged }, StatusFailed},
+		"truncated MGR log":   {func(r *diagnostics.ManagerRefusals) { r.Status = diagnostics.LogTruncated }, StatusTruncated},
+		"MGR start not found": {func(r *diagnostics.ManagerRefusals) { r.Status = diagnostics.LogStartNotFound }, StatusMissing},
+		"MGR restarted":       {func(r *diagnostics.ManagerRefusals) { r.Status = diagnostics.LogChanged }, StatusFailed},
 		"truncated MON log":   {func(r *diagnostics.ManagerRefusals) { r.Monitors[1].Status = diagnostics.LogTruncated }, StatusTruncated},
 		"rotating MON log":    {func(r *diagnostics.ManagerRefusals) { r.Monitors[0].Status = diagnostics.LogStartNotFound }, StatusMissing},
 		"no MON log":          {func(r *diagnostics.ManagerRefusals) { r.Monitors = nil }, StatusMissing},

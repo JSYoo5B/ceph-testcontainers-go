@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/evidence"
 )
 
 const (
@@ -18,8 +19,8 @@ const (
 
 // refusalSnapshot is a cluster with the MGR m (mgr.a) and the MONs n (mon.b)
 // and o (mon.a).
-func refusalSnapshot() diagnosticsSnapshot {
-	return diagnosticsSnapshot{containers: []Target{
+func refusalSnapshot() evidence.Snapshot[Target] {
+	return evidence.Snapshot[Target]{Containers: []Target{
 		{Role: "mgr", Name: "a", Container: &diagnosticsTestContainer{id: "m"}},
 		{Role: "mon", Name: "b", Container: &diagnosticsTestContainer{id: "n"}},
 		{Role: "mon", Name: "a", Container: &diagnosticsTestContainer{id: "o"}},
@@ -56,9 +57,9 @@ func TestManagerRefusalsAttributeTheLatestProcess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Manager.Status != LogComplete || !result.Start.Time.Equal(processLogEpoch.Add(10*time.Second)) ||
+	if result.Status != LogComplete || !result.Start.Time.Equal(processLogEpoch.Add(10*time.Second)) ||
 		len(result.Refusals) != 1 || !strings.HasSuffix(result.Refusals[0].Text, mgrRefusedLine) {
-		t.Fatalf("manager = %+v, start %+v, refusals %+v", result.Manager, result.Start, result.Refusals)
+		t.Fatalf("manager = %+v, start %+v, refusals %+v", result.LogSource, result.Start, result.Refusals)
 	}
 	if want := result.Start.Time.Format(time.RFC3339Nano); docker.since["n"] != want || docker.since["o"] != want {
 		t.Fatalf("MON windows start at %q and %q, want the MGR process start %q", docker.since["n"], docker.since["o"], want)
@@ -114,10 +115,10 @@ func TestManagerRefusalsSourceStatus(t *testing.T) {
 				t.Fatal(err)
 			}
 			got := result.Monitors[1]
-			if result.Manager.Status != test.managerStatus || got.Name != "b" || got.Status != test.monitorStatus || len(got.Refusals) != test.refusals {
-				t.Fatalf("manager %+v, monitor %+v", result.Manager, got)
+			if result.Status != test.managerStatus || got.Name != "b" || got.Status != test.monitorStatus || len(got.Refusals) != test.refusals {
+				t.Fatalf("manager %+v, monitor %+v", result.LogSource, got)
 			}
-			if test.managerStatus == LogStartNotFound && (len(result.Refusals) != 1 || result.Start.Text != "" || !got.Since.Equal(result.Manager.ContainerStartedAt)) {
+			if test.managerStatus == LogStartNotFound && (len(result.Refusals) != 1 || result.Start.Text != "" || !got.Since.Equal(result.ContainerStartedAt)) {
 				t.Fatalf("without a process start the windows start at the MGR container start: %+v", result)
 			}
 		})

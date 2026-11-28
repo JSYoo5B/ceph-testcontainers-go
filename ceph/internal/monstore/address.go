@@ -41,10 +41,10 @@ import (
 // formatted nor released. Nothing here claims how a real Docker engine behaves.
 //
 // The file adds no lock and calls no method that takes one; the record is
-// guarded by Container.mu like the rest of monStoreVolume.
+// guarded by Container.mu like the rest of Volume.
 
 // Endpoint is the endpoint of a MON as the monmap pins it. Exactly one
-// of network (bridge: a Docker network name) and ports (host network: the
+// of Network (bridge: a Docker network name) and Ports (host network: the
 // listening ports, in the order the MON takes them) is set.
 type Endpoint struct {
 	IP      string
@@ -78,7 +78,7 @@ func (a Endpoint) clone() Endpoint {
 	return a
 }
 
-func (a Endpoint) Equal(b Endpoint) bool {
+func (a Endpoint) equal(b Endpoint) bool {
 	return a.IP == b.IP && a.Network == b.Network && slices.Equal(a.Ports, b.Ports)
 }
 
@@ -106,7 +106,7 @@ func (s *Volume) observeAddress(ctx context.Context, g Generations, id string) e
 		s.Endpoint = &cloned
 		return nil
 	}
-	if !s.Endpoint.Equal(observed) {
+	if !s.Endpoint.equal(observed) {
 		return fmt.Errorf("MON %s generation %d bound another address than the one its monmap pins", s.mon, s.generation)
 	}
 	return nil

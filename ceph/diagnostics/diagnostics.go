@@ -116,10 +116,10 @@ func Collect(ctx context.Context, cluster *ceph.Container, config Config) (*Repo
 	ctx, cancel := context.WithTimeout(ctx, config.Timeout)
 	defer cancel()
 	report := &Report{SchemaVersion: 1, StartedAt: time.Now().UTC(), Artifacts: []Artifact{}}
-	snapshot, err := takeSnapshot(ctx, cluster, config)
-	report.HostNetwork, report.Closed = snapshot.hostNetwork, snapshot.closed
+	snapshot, err := takeSnapshot(ctx, cluster, config.AdditionalContainers, config.RedactValues, config.MaxContainers)
+	report.HostNetwork, report.Closed = snapshot.HostNetwork, snapshot.Closed
 	inventoryFailure := func(name string, err error) string {
-		message, clipped := evidence.ErrorText(err, evidence.Redactor(snapshot.secrets), config.MaxOutputBytes)
+		message, clipped := evidence.ErrorText(err, evidence.Redactor(snapshot.Secrets), config.MaxOutputBytes)
 		report.Artifacts = append(report.Artifacts, Artifact{Kind: "inventory", Name: name, Error: message, Truncated: clipped})
 		return message
 	}
@@ -151,44 +151,17 @@ func normalizeDiagnosticsConfig(config Config) (Config, error) {
 	return Config(normalized), nil
 }
 
-type diagnosticsSnapshot struct {
-	containers []Target
-	networks   []evidence.Network
-	control    testcontainers.Container
-	// controlPlane is the separate control container that the snapshot
-	// added itself, if the cluster has one.
-	controlPlane        testcontainers.Container
-	hostNetwork, closed bool
-	publicAddress       string
-	secrets             []string
-	omitted             int
-}
-
-// takeSnapshot takes the inventory of cluster and selects the containers of
-// one collection with snapshotOf. An error returns what was taken so far,
-// enough to redact the error and report whether the cluster was closed.
-func takeSnapshot(ctx context.Context, cluster *ceph.Container, config Config) (diagnosticsSnapshot, error) {
+// takeSnapshot takes the inventory of cluster and the snapshot of one
+// collection: the cluster's containers and additional, at most limit, and
+// the secrets values together with the cluster's. An error returns what was
+// taken so far, enough to redact the error and report whether the cluster
+// was closed.
+func takeSnapshot(ctx context.Context, cluster *ceph.Container, additional []Target, values []string, limit int) (evidence.Snapshot[Target], error) {
 	if cluster == nil {
-		return diagnosticsSnapshot{secrets: slices.Clone(config.RedactValues)}, errors.New("the Ceph cluster is nil")
+		return evidence.Snapshot[Target]{Secrets: slices.Clone(values)}, errors.New("the Ceph cluster is nil")
 	}
 	inv, err := evidencehook.Inventory(ctx, cluster)
-	if err != nil {
-		inv.Members = nil
-	}
-	return snapshotOf(inv, config), err
-}
-
-// snapshotOf selects the containers of one collection from inv: the
-// cluster's own and config.AdditionalContainers, at most config.MaxContainers.
-// The secrets are config.RedactValues and the cluster's.
-func snapshotOf(inv evidence.Inventory, config Config) diagnosticsSnapshot {
-	snapshot := diagnosticsSnapshot{
-		networks: inv.Networks, control: inv.Control, controlPlane: inv.ControlPlane,
-		hostNetwork: inv.HostNetwork, closed: inv.Closed, publicAddress: inv.PublicAddress,
-		secrets: append(slices.Clone(config.RedactValues), inv.Secrets...),
-	}
-	snapshot.containers, snapshot.omitted = evidence.SelectAs(inv, config.AdditionalContainers, config.MaxContainers)
-	return snapshot
+	return evidence.SnapshotOf(inv, err, additional, values, limit)
 }
 
 // invalid marks err as a request refused before any collection.
@@ -213,21 +186,21 @@ type diagnosticTask struct {
 // cluster's lock and is only read here.
 type diagnosticCollection struct {
 	config   Config
-	snapshot diagnosticsSnapshot
+	snapshot evidence.Snapshot[Target]
 	docker   diagnosticsDocker
 	redact   func(string) string
 }
 
-func collectDiagnostics(ctx context.Context, config Config, snapshot diagnosticsSnapshot, docker diagnosticsDocker, report *Report) (*Report, error) {
-	run := diagnosticCollection{config: config, snapshot: snapshot, docker: docker, redact: evidence.Redactor(snapshot.secrets)}
+func collectDiagnostics(ctx context.Context, config Config, snapshot evidence.Snapshot[Target], docker diagnosticsDocker, report *Report) (*Report, error) {
+	run := diagnosticCollection{config: config, snapshot: snapshot, docker: docker, redact: evidence.Redactor(snapshot.Secrets)}
 	tasks := run.plan()
 	report.Artifacts = make([]Artifact, len(tasks))
 	for i, task := range tasks {
 		report.Artifacts[i] = task.artifact
 	}
 	run.execute(ctx, tasks, report.Artifacts)
-	if snapshot.omitted > 0 {
-		report.Artifacts = append(report.Artifacts, Artifact{Kind: "inventory", Name: "container-limit", Error: fmt.Sprintf("%d containers omitted by MaxContainers", snapshot.omitted)})
+	if snapshot.Omitted > 0 {
+		report.Artifacts = append(report.Artifacts, Artifact{Kind: "inventory", Name: "container-limit", Error: fmt.Sprintf("%d containers omitted by MaxContainers", snapshot.Omitted)})
 	}
 	return run.finish(ctx, report)
 }
@@ -245,7 +218,7 @@ func (run diagnosticCollection) plan() []diagnosticTask {
 func (run diagnosticCollection) containerTasks() ([]diagnosticTask, map[string]bool) {
 	tasks := []diagnosticTask{}
 	ids := make(map[string]bool)
-	for _, target := range run.snapshot.containers {
+	for _, target := range run.snapshot.Containers {
 		id := ""
 		if target.Container != nil {
 			id = target.Container.GetContainerID()
@@ -275,15 +248,15 @@ func (run diagnosticCollection) containerTasks() ([]diagnosticTask, map[string]b
 // networkTasks describes the host namespace, or inspects each distinct bridge
 // once.
 func (run diagnosticCollection) networkTasks(ids map[string]bool) []diagnosticTask {
-	if run.snapshot.hostNetwork {
+	if run.snapshot.HostNetwork {
 		return []diagnosticTask{{artifact: Artifact{Kind: "network-inspect", Name: "host"}, collect: func(context.Context) (string, bool, error) {
-			data, err := json.Marshal(map[string]any{"name": "host", "driver": "host", "shared": true, "public_address": run.snapshot.publicAddress})
+			data, err := json.Marshal(map[string]any{"name": "host", "driver": "host", "shared": true, "public_address": run.snapshot.PublicAddress})
 			return string(data), false, err
 		}}}
 	}
 	var tasks []diagnosticTask
 	seen := make(map[string]bool)
-	for _, nw := range run.snapshot.networks {
+	for _, nw := range run.snapshot.Networks {
 		if seen[nw.ID+nw.Name] {
 			continue
 		}
@@ -309,7 +282,7 @@ func (run diagnosticCollection) cephTasks() []diagnosticTask {
 	var tasks []diagnosticTask
 	for _, query := range diagnosticCephQueries {
 		tasks = append(tasks, diagnosticTask{artifact: Artifact{Kind: "ceph", Name: query.name}, collect: func(probe context.Context) (string, bool, error) {
-			return diagnosticCephCommand(probe, run.snapshot.control, query.args, run.config.MaxOutputBytes)
+			return diagnosticCephCommand(probe, run.snapshot.Control, query.args, run.config.MaxOutputBytes)
 		}})
 	}
 	return tasks
@@ -352,7 +325,7 @@ func (run diagnosticCollection) collectOne(ctx context.Context, task diagnosticT
 	cancel()
 	bound := evidence.BoundText
 	if artifact.Kind == "container-logs" {
-		data = evidence.RedactLog(data, run.snapshot.secrets, clipped, err != nil, run.redact)
+		data = evidence.RedactLog(data, run.snapshot.Secrets, clipped, err != nil, run.redact)
 		clipped = clipped || err != nil
 		bound = evidence.BoundTailText
 	} else {

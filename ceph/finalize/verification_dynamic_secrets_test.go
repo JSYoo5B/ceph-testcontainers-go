@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/diagnostics"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/evidence"
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/evidencehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
@@ -90,7 +92,7 @@ func TestVerificationRefreshesTrackedCredentialRedaction(t *testing.T) {
 	testhelper.TestSetConfig(cluster, []byte("[global]\nmon_host = synthetic-mon\n"))
 	fx := newVerifyFixture()
 	fx.config.ArchiveLogs = true
-	fx.snapshot.secrets = []string{old}
+	fx.snapshot.Secrets = []string{old}
 	v := fx.activate(t)
 	client, err := cluster.CreateClient(t.Context(), "synthetic-reader", ceph.ClientCaps{Mon: "allow r"})
 	if err != nil {
@@ -107,7 +109,7 @@ func TestVerificationRefreshesTrackedCredentialRedaction(t *testing.T) {
 	if err != nil || !slices.Contains(inventory.Secrets, fresh) {
 		t.Fatal("revoked public client credential missing from inventory", err)
 	}
-	fx.snapshot.secrets = inventory.Secrets
+	fx.snapshot.Secrets = inventory.Secrets
 	message := "opaque material " + old + " " + fresh
 	fx.line("osd0", 2*time.Minute, daemonLogLine("cluster", "ERR", message))
 	crash := "2026-10-23T01:01:00Z_synthetic"
@@ -117,7 +119,7 @@ func TestVerificationRefreshesTrackedCredentialRedaction(t *testing.T) {
 	checkVerificationSecrets(t, report, old, fresh)
 	// A later inventory that omits a previously seen value must not unmask
 	// old lines of this same activation window.
-	fx.snapshot.secrets = nil
+	fx.snapshot.Secrets = nil
 	checkVerificationSecrets(t, fx.evaluate(t, v), old, fresh)
 }
 
@@ -146,8 +148,8 @@ func TestVerificationRedactsPartialInventorySecrets(t *testing.T) {
 	fx := newVerifyFixture()
 	fx.config.ArchiveLogs = true
 	v := fx.activate(t)
-	v.snapshot = func(context.Context) (clusterSnapshot, error) {
-		return clusterSnapshot{secrets: []string{secret}}, errors.New("inventory incomplete " + secret)
+	v.snapshot = func(context.Context) (evidence.Snapshot[diagnostics.Target], error) {
+		return evidence.Snapshot[diagnostics.Target]{Secrets: []string{secret}}, errors.New("inventory incomplete " + secret)
 	}
 	fx.line("osd0", 2*time.Minute, daemonLogLine("cluster", "ERR", "opaque material "+secret))
 	report := fx.evaluate(t, v)
@@ -155,8 +157,8 @@ func TestVerificationRedactsPartialInventorySecrets(t *testing.T) {
 	if strings.Contains(string(data)+report.summary(), secret) || !strings.Contains(gapReasons(report.Logs), "inventory incomplete [REDACTED]") {
 		t.Fatal("partial inventory lost redaction or its coverage gap")
 	}
-	v.snapshot = func(context.Context) (clusterSnapshot, error) {
-		return clusterSnapshot{}, errors.New("no inventory available")
+	v.snapshot = func(context.Context) (evidence.Snapshot[diagnostics.Target], error) {
+		return evidence.Snapshot[diagnostics.Target]{}, errors.New("no inventory available")
 	}
 	report = fx.evaluate(t, v)
 	data, _ = json.Marshal(report)
@@ -168,7 +170,7 @@ func TestVerificationRedactsPartialInventorySecrets(t *testing.T) {
 func TestVerificationArchivesNewOpaqueSecrets(t *testing.T) {
 	const secret = "opaque-archive-synthetic-827"
 	lines, report, archive := archivedVerificationLines(t, VerificationConfig{}, func(fx *verifyFixture) {
-		fx.snapshot.secrets = append(fx.snapshot.secrets, secret)
+		fx.snapshot.Secrets = append(fx.snapshot.Secrets, secret)
 		fx.line("osd0", 2*time.Minute, daemonLogLine("cluster", "ERR", "opaque material "+secret))
 		crash := "2026-10-23T01:01:00Z_synthetic"
 		fx.docker.containers["osd0"].crashes = append(fx.docker.containers["osd0"].crashes, crash)
@@ -185,7 +187,7 @@ func TestVerificationArchivesCutNewSecret(t *testing.T) {
 	prefix := secret[:len(secret)-4]
 	cutEvent := stamp + " " + daemonLogLine("cluster", "ERR", "opaque material "+prefix)
 	lines, _, archive := archivedVerificationLines(t, VerificationConfig{}, func(fx *verifyFixture) {
-		fx.snapshot.secrets = append(fx.snapshot.secrets, secret)
+		fx.snapshot.Secrets = append(fx.snapshot.Secrets, secret)
 		frame := diagnosticsFrame(2, cutEvent+secret[len(secret)-4:]+" more\n")
 		fx.docker.containers["osd0"].rawLogs = frame[:8+len(cutEvent)]
 	})

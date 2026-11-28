@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/evidence"
 )
 
 // With ArchiveLogs, an evaluation keeps every line of the window, events or
@@ -269,7 +270,7 @@ func TestVerificationArchiveLogsWithholdPrivateKeyBlocks(t *testing.T) {
 			diagnosticsFrame(1, stamp(time.Minute+time.Second)+" "+payloads[3]+"\n"),
 		)
 		fx.docker.containers["mon"].rawLogs = slices.Concat(
-			diagnosticsFrame(1, stamp(time.Minute)+" "+strings.Repeat("x", maxVerificationLine)+"-----BEGIN PRIVATE KEY-----\n"),
+			diagnosticsFrame(1, stamp(time.Minute)+" "+strings.Repeat("x", evidence.MaxLogLine)+"-----BEGIN PRIVATE KEY-----\n"),
 			diagnosticsFrame(1, stamp(time.Minute+time.Second)+" "+daemonLogLine("cluster", "ERR", payloads[4])+"\n"),
 			diagnosticsFrame(2, stamp(time.Minute+time.Second)+" stderr of mon.a\n"),
 			diagnosticsFrame(1, stamp(time.Minute+2*time.Second)+" -----END PRIVATE KEY-----\n"),
@@ -281,7 +282,7 @@ func TestVerificationArchiveLogsWithholdPrivateKeyBlocks(t *testing.T) {
 			t.Errorf("the archive holds %q", payload)
 		}
 	}
-	const key = verificationKeyMarker
+	const key = evidence.PrivateKeyMarker
 	for source, want := range map[string][]string{
 		"osd.0": {
 			"stdout key " + key, "stderr between the key lines", "stdout " + key, "stdout " + key + " after the key",
@@ -314,7 +315,7 @@ func TestVerificationArchiveLogsWithholdACutSecret(t *testing.T) {
 	cutEvent := stamp(2*time.Minute) + " " + daemonLogLine("cluster", "ERR", "presented "+secret+" again")
 	cutEvent = cutEvent[:strings.Index(cutEvent, partial)+len(partial)]
 	long := stamp(time.Minute) + " long "
-	long += strings.Repeat("y", maxVerificationLine-len(long)-len(partial)) + secret + " rest\n"
+	long += strings.Repeat("y", evidence.MaxLogLine-len(long)-len(partial)) + secret + " rest\n"
 	lines, report, archive := archivedVerificationLines(t, VerificationConfig{RedactValues: []string{secret}}, func(fx *verifyFixture) {
 		frame := diagnosticsFrame(2, cutEvent+" again\n")
 		fx.docker.containers["osd0"].rawLogs = slices.Concat(
@@ -422,23 +423,47 @@ func TestVerificationArchiveLogsRefuseAMultilineSecret(t *testing.T) {
 	}
 }
 
-func TestVerificationLineRedactionMasksWholeAndCutSecrets(t *testing.T) {
-	r := verificationLineRedaction{redact: func(s string) string { return s }, secrets: []string{"opaque-token-o", "abcd"}}
-	for _, c := range []struct {
-		text      string
-		truncated bool
-		want      string
-	}{
-		{"value opaque-token-o", true, "value [REDACTED]"},
-		{"value opaque-token-", true, "value [REDACTED]"},
-		{"opaque-token-o x ab", true, "[REDACTED] x [REDACTED]"},
-		{"x abcd abc", true, "x [REDACTED] [REDACTED]"},
-		{"x abcdabc", true, "x [REDACTED]"},
-		{"plain text", true, "plain text"},
-		{"value opaque-token-o", false, "value opaque-token-o"},
+// The inputs of the process log tests of package diagnostics keep their
+// result here: a block on stderr with a stdout block that closes inside it,
+// payload lines before an end whose beginning the read did not see, and a
+// known secret split by the cut at 64 KiB. No payload or fragment of the
+// secret reaches the archive, and the ordinary lines stay.
+func TestVerificationArchiveLogsMatchTheProcessLogInputs(t *testing.T) {
+	stamp := func(after time.Duration) string { return verifyStart.Add(after).Format(time.RFC3339Nano) }
+	const secret = "AQBsplitsecretsplitsecretsplit=="
+	long := stamp(3*time.Minute) + " "
+	long += strings.Repeat("y", evidence.MaxLogLine-len(long)-len(secret)/2) + secret + " rest\n"
+	lines, _, archive := archivedVerificationLines(t, VerificationConfig{RedactValues: []string{secret}}, func(fx *verifyFixture) {
+		fx.docker.containers["osd0"].rawLogs = slices.Concat(
+			diagnosticsFrame(1, stamp(time.Minute)+" stdout before\n"),
+			diagnosticsFrame(2, stamp(time.Minute+time.Second)+" -----BEGIN PRIVATE KEY-----\n"),
+			diagnosticsFrame(1, stamp(time.Minute+2*time.Second)+" -----BEGIN PRIVATE KEY-----\n"),
+			diagnosticsFrame(2, stamp(time.Minute+3*time.Second)+" PAYLOADONE\n"),
+			diagnosticsFrame(1, stamp(time.Minute+4*time.Second)+" -----END PRIVATE KEY-----\n"),
+			diagnosticsFrame(2, stamp(time.Minute+5*time.Second)+" PAYLOADTWO\n"),
+			diagnosticsFrame(1, stamp(time.Minute+6*time.Second)+" stdout after\n"),
+			diagnosticsFrame(2, stamp(time.Minute+7*time.Second)+" -----END PRIVATE KEY-----\n"),
+		)
+		fx.docker.containers["osd1"].rawLogs = slices.Concat(
+			diagnosticsFrame(2, stamp(time.Minute)+" MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQ\n"),
+			diagnosticsFrame(1, stamp(time.Minute+time.Second)+" stdout line\n"),
+			diagnosticsFrame(2, stamp(time.Minute+2*time.Second)+" AoIBAQC7VJTUt9Us8cKj\n"),
+			diagnosticsFrame(2, stamp(time.Minute+3*time.Second)+" -----END PRIVATE KEY----- after\n"),
+			diagnosticsFrame(2, long),
+		)
+	})
+	for _, leak := range []string{"PAYLOAD", "MIIEvQ", "AoIBAQC7", secret[:len(secret)/2]} {
+		if strings.Contains(archive, leak) {
+			t.Errorf("the archive holds %q", leak)
+		}
+	}
+	const key = evidence.PrivateKeyMarker
+	for source, want := range map[string][]string{
+		"osd.0": {"stdout stdout before", "stderr " + key, "stdout " + key, "stderr " + key, "stdout " + key, "stderr " + key, "stdout stdout after", "stderr " + key},
+		"osd.1": {"stderr " + key, "stdout stdout line", "stderr " + key, "stderr " + key + " after"},
 	} {
-		if got := r.line(c.text, c.truncated); got != c.want {
-			t.Errorf("line(%q, %v) = %q, want %q", c.text, c.truncated, got, c.want)
+		if got := linesOf(lines, source); !slices.Equal(got[:len(want)], want) {
+			t.Errorf("%s lines\n%q\nwant\n%q", source, got, want)
 		}
 	}
 }
