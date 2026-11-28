@@ -17,6 +17,9 @@ const (
 	// restartStopBound bounds a Stop, which runs on after its caller's ctx
 	// ends so that it is never left half-done.
 	restartStopBound = time.Minute
+	// restartStopSettle is how long a restart still waits for its Stop once
+	// the caller's ctx ended.
+	restartStopSettle = 10 * time.Second
 )
 
 // RestartTarget is a gateway container and the cluster that owns it. Every
@@ -151,11 +154,13 @@ func (t RestartTarget) Resume(ctx context.Context) (Resumed, error) {
 // Restart stops and starts the running container once for r and confirms
 // that a new generation runs. A record whose restart is done is replaced; an
 // unsettled one is refused (Resume settles it). Stop runs with a three-second
-// grace under its own one-minute bound. From then on the restart runs on a
+// grace under its own one-minute bound. When ctx ends while Stop runs, the
+// restart still waits ten seconds for it; a Stop that has not returned by
+// then stays with the record, ctx's error is returned and the next Resume
+// waits for the Stop. Once Stop has returned, the restart runs on a
 // settlement budget (SettlementContext) that the caller's cancellation does
-// not end: when the Stop has not returned within it, the record keeps the
-// Stop and the next Resume waits for it. When Stop fails, Resume decides by
-// the run state whether the stop took effect, then Start runs.
+// not end: when Stop failed, Resume decides by the run state whether the stop
+// took effect; then Start runs.
 func (t RestartTarget) Restart(ctx context.Context, r Restart) error {
 	id := t.Container.GetContainerID()
 	state, err := t.Container.State(ctx)
@@ -182,20 +187,24 @@ func (t RestartTarget) Restart(ctx context.Context, r Restart) error {
 		grace := restartGrace
 		stopErr = t.Container.Stop(stopCtx, &grace)
 	}()
-	// Once Stop is dispatched, the restart runs on a settlement budget that
-	// the caller's cancellation does not end.
-	settle, cancelSettle := SettlementContext(ctx)
-	defer cancelSettle()
+	// A Stop that returns soon after the caller ends its ctx still settles
+	// the restart in this call; one that does not is left to the next Resume.
 	select {
 	case <-stopped:
-		record.stopping = nil
-	case <-settle.Done():
-		cause := ctx.Err()
-		if cause == nil {
-			cause = settle.Err()
+	case <-ctx.Done():
+		wait := time.NewTimer(restartStopSettle)
+		defer wait.Stop()
+		select {
+		case <-stopped:
+		case <-wait.C:
+			return fmt.Errorf("stop RGW for its restart: the Stop has not returned and the next restart settles it: %w", ctx.Err())
 		}
-		return fmt.Errorf("stop RGW for its restart: the Stop has not returned and the next restart settles it: %w", cause)
 	}
+	record.stopping = nil
+	// From here the restart runs on a settlement budget that the caller's
+	// cancellation does not end.
+	settle, cancelSettle := SettlementContext(ctx)
+	defer cancelSettle()
 	if stopErr != nil {
 		if _, err := t.Resume(settle); err != nil {
 			return errors.Join(fmt.Errorf("stop RGW for its restart: %w", stopErr), err)
