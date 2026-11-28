@@ -329,7 +329,7 @@ func (f *Fixture) ZoneAdmin(ctx context.Context, name string, args ...string) ([
 //purpose:construction,condition
 func (f *Fixture) AddZone(ctx context.Context, image string, config ZoneConfig, opts ...testcontainers.ContainerCustomizer) (*Zone, error) {
 	if f == nil || !validRGWZoneName(config.Name) {
-		return nil, errors.New("invalid RGW fixture or zone name")
+		return nil, servicehook.Invalid(errors.New("invalid RGW fixture or zone name"))
 	}
 	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
 		return nil, err
@@ -415,31 +415,31 @@ func (f *Fixture) admitZoneAddition(ctx context.Context, image string, config Zo
 		config.Zonegroup = f.realm.config.Zonegroup
 	}
 	if !validRGWZoneName(config.Name) || !validRGWZoneName(config.Zonegroup) {
-		return zoneAddition{}, errors.New("invalid RGW zone or zonegroup name")
+		return zoneAddition{}, servicehook.Invalid(errors.New("invalid RGW zone or zonegroup name"))
 	}
 	if removal := f.topology.removed[config.Name]; removal != nil {
-		return zoneAddition{}, errors.New("detached RGW zones retain configuration and cannot be adopted as fresh zones")
+		return zoneAddition{}, servicehook.Invalid(errors.New("detached RGW zones retain configuration and cannot be adopted as fresh zones"))
 	}
 	for _, removal := range f.topology.removed {
 		if !removal.converged || !removal.gatewayRemoved || !removal.clientRemoved {
-			return zoneAddition{}, errors.New("finish the pending RGW zone removal before adding zones")
+			return zoneAddition{}, servicehook.Invalid(errors.New("finish the pending RGW zone removal before adding zones"))
 		}
 		if removal.state.cluster == config.Cluster {
-			return zoneAddition{}, errors.New("detached RGW storage clusters retain configuration and cannot be adopted as fresh zones")
+			return zoneAddition{}, servicehook.Invalid(errors.New("detached RGW storage clusters retain configuration and cannot be adopted as fresh zones"))
 		}
 	}
 	if _, knownGroup := f.topology.groupIDs[config.Zonegroup]; knownGroup == createGroup {
-		return zoneAddition{}, errors.New("AddZone requires an owned zonegroup; AddZonegroup requires a fresh group name")
+		return zoneAddition{}, servicehook.Invalid(errors.New("AddZone requires an owned zonegroup; AddZonegroup requires a fresh group name"))
 	}
 	if f.closed || f.Source == nil || f.Destination == nil || f.RealmID == "" || f.realm.systemAccess == "" || f.realm.systemSecret == "" {
-		return zoneAddition{}, errors.New("RGW multisite must be initialized and running")
+		return zoneAddition{}, servicehook.Invalid(errors.New("RGW multisite must be initialized and running"))
 	}
 	if err := multicluster.RequireRoleImage(image, multicluster.RoleRGW, config.Cluster); err != nil {
 		return zoneAddition{}, fmt.Errorf("RGW zone %s gateway image: %w", config.Name, err)
 	}
 	for _, zone := range f.zoneStates() {
 		if zone.Name == config.Name {
-			return zoneAddition{}, fmt.Errorf("RGW zone %s is already owned", config.Name)
+			return zoneAddition{}, servicehook.Invalid(fmt.Errorf("RGW zone %s is already owned", config.Name))
 		}
 		if err := multicluster.ValidatePair(ctx, image, zone.cluster, config.Cluster); err != nil {
 			return zoneAddition{}, err

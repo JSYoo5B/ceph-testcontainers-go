@@ -181,8 +181,10 @@ func TestAccountQuotaValidationDriftAndCancellation(t *testing.T) {
 	}
 	a := newAccount(created)
 	f.Calls = nil
-	if err := a.SetQuota(t.Context(), rgw.Quota{MaxSizeBytes: 1, MaxObjects: 1}); err == nil || len(f.Calls) != 0 {
-		t.Fatal("native KiB rounding silently changed caller byte limit")
+	for _, quota := range []rgw.Quota{{MaxSizeBytes: 1, MaxObjects: 1}, {MaxSizeBytes: -2}, {MaxObjects: -2}} {
+		if err := a.SetQuota(t.Context(), quota); !errors.Is(err, ceph.ErrInvalidRequest) || len(f.Calls) != 0 {
+			t.Fatalf("quota %+v returned %v after %d native commands", quota, err, len(f.Calls))
+		}
 	}
 	f.UnrelatedQuota = true
 	if err := a.SetQuota(t.Context(), rgw.Quota{Enabled: true, MaxSizeBytes: 1024, MaxObjects: 1}); err == nil {

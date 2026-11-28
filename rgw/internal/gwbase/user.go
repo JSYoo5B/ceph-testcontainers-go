@@ -299,7 +299,7 @@ func (g *Core) UserCommand(ctx context.Context, u *User, args ...string) ([]byte
 // requires them, and the original type and account association.
 func (g *Core) OwnedUser(ctx context.Context, u *User) (*NativeUser, error) {
 	if !u.Active() {
-		return nil, errors.New("RGW user must be an active identity created in this cluster")
+		return nil, servicehook.Invalid(errors.New("RGW user must be an active identity created in this cluster"))
 	}
 	native, err := g.readUser(ctx, u)
 	if err != nil {

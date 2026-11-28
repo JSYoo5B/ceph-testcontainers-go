@@ -380,7 +380,7 @@ func apply(ctx context.Context, g *gwbase.Core, p *Placement) error {
 		return err
 	}
 	if !p.confirmed {
-		return errors.New("RGW placement creation has not been confirmed")
+		return servicehook.Invalid(errors.New("RGW placement creation has not been confirmed"))
 	}
 	ctx, cancel := gwbase.AdminContext(ctx, g.Cluster())
 	defer cancel()
@@ -567,7 +567,7 @@ func reload(ctx context.Context, g *gwbase.Core, p *Placement) error {
 		return err
 	}
 	if !p.confirmed {
-		return errors.New("RGW placement creation has not been confirmed")
+		return servicehook.Invalid(errors.New("RGW placement creation has not been confirmed"))
 	}
 	ctx, cancel := gwbase.AdminContext(ctx, g.Cluster())
 	defer cancel()

@@ -377,7 +377,7 @@ func (g *SyncGroup) RemovePipe(ctx context.Context, id string) error {
 		return err
 	}
 	if !validRGWSyncID(id) {
-		return errors.New("invalid RGW sync pipe ID")
+		return servicehook.Invalid(errors.New("invalid RGW sync pipe ID"))
 	}
 	return g.change(ctx, func(opCtx context.Context, master *rgwZoneState, before map[string]any) ([]string, func(map[string]any) error, error) {
 		if syncNativePipe(before, id) == nil {
@@ -405,7 +405,7 @@ func (g *SyncGroup) SetStatus(ctx context.Context, status SyncGroupStatus) error
 		return err
 	}
 	if !validRGWSyncStatus(status) {
-		return errors.New("invalid RGW sync group status")
+		return servicehook.Invalid(errors.New("invalid RGW sync group status"))
 	}
 	return g.change(ctx, func(opCtx context.Context, master *rgwZoneState, before map[string]any) ([]string, func(map[string]any) error, error) {
 		want := syncGroupWithStatus(before, status)

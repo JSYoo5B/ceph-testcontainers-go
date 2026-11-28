@@ -248,7 +248,7 @@ func (g *Core) RevokeKey(ctx context.Context, u *User, key *Key) error {
 		return nil
 	}
 	if !u.Active() {
-		return errors.New("RGW user must be an active identity created in this cluster")
+		return servicehook.Invalid(errors.New("RGW user must be an active identity created in this cluster"))
 	}
 	if key.Unstopped != nil {
 		if err := key.Unstopped.Stop(ctx); err != nil {

@@ -84,10 +84,10 @@ func setUserDefault(ctx context.Context, p *Placement, user *gwbase.User, config
 		config.StorageClass = "STANDARD"
 	}
 	if !storageClassName.MatchString(config.StorageClass) {
-		return errors.New("RGW user storage class must use an uppercase class name")
+		return servicehook.Invalid(errors.New("RGW user storage class must use an uppercase class name"))
 	}
 	if config.Tags != nil && len(config.Tags) == 0 {
-		return errors.New("radosgw-admin cannot clear placement tags with an empty list; use nil to preserve tags or nonmatching tags to revoke target access")
+		return servicehook.Invalid(errors.New("radosgw-admin cannot clear placement tags with an empty list; use nil to preserve tags or nonmatching tags to revoke target access"))
 	}
 	var err error
 	config.Tags, err = normalizeTags(config.Tags)
@@ -110,10 +110,10 @@ func setUserDefault(ctx context.Context, p *Placement, user *gwbase.User, config
 		return err
 	}
 	if !p.confirmed {
-		return errors.New("RGW placement creation has not been confirmed")
+		return servicehook.Invalid(errors.New("RGW placement creation has not been confirmed"))
 	}
 	if !user.Active() {
-		return errors.New("RGW user must be an active identity created in this cluster")
+		return servicehook.Invalid(errors.New("RGW user must be an active identity created in this cluster"))
 	}
 	if user.State.NativeScope != nil && *user.State.NativeScope != p.scope {
 		return errors.New("RGW user and placement have different native runtime scopes")

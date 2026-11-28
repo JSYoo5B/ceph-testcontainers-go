@@ -268,7 +268,7 @@ func (g *Gateway) CreateUser(ctx context.Context, config UserConfig) (*User, err
 	if config.Account != nil {
 		account = gwbase.AccountOf(config.Account)
 		if !account.Owned() {
-			return nil, errors.New("owned RGW account is required")
+			return nil, servicehook.Invalid(errors.New("owned RGW account is required"))
 		}
 		if config.Tenant == "" {
 			config.Tenant = account.Tenant
@@ -369,14 +369,14 @@ func (u *User) SetBucketQuota(ctx context.Context, quota Quota) error {
 
 func (u *User) setQuota(ctx context.Context, scope string, quota Quota) error {
 	if quota.MaxSizeBytes < -1 || quota.MaxObjects < -1 {
-		return errors.New("RGW quota limits must be -1, zero or positive")
+		return servicehook.Invalid(errors.New("RGW quota limits must be -1, zero or positive"))
 	}
 	if quota.MaxSizeBytes > 0 && quota.MaxSizeBytes%1024 != 0 {
 		return servicehook.Invalid(errors.New("positive RGW quota byte limits must be multiples of 1024"))
 	}
 	return u.withGateway(ctx, func(ctx context.Context, g *gwbase.Core, user *gwbase.User, native *gwbase.NativeUser) error {
 		if native.Info.AccountID != "" {
-			return errors.New("account-owned storage requires the account's SetQuota or SetBucketQuota")
+			return servicehook.Invalid(errors.New("account-owned storage requires the account's SetQuota or SetBucketQuota"))
 		}
 		if _, err := g.UserCommand(ctx, user, "quota", "set", "--quota-scope", scope, "--uid", user.ID,
 			"--max-size", gwbase.QuotaSizeArgument(quota.MaxSizeBytes), "--max-objects", strconv.FormatInt(quota.MaxObjects, 10)); err != nil {

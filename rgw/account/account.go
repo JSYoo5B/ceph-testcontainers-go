@@ -277,7 +277,7 @@ func (a *Account) SetBucketQuota(ctx context.Context, quota rgw.Quota) error {
 
 func setQuota(ctx context.Context, a *gwbase.Account, scope string, quota gwbase.Quota) error {
 	if quota.MaxObjects < -1 || quota.MaxSizeBytes < -1 || (quota.MaxSizeBytes > 0 && quota.MaxSizeBytes%1024 != 0) {
-		return errors.New("RGW account quota limits must be -1, zero or positive; byte limits must be multiples of 1024")
+		return servicehook.Invalid(errors.New("RGW account quota limits must be -1, zero or positive; byte limits must be multiples of 1024"))
 	}
 	if !a.Owned() {
 		return servicehook.Invalid(errors.New("RGW account is not owned by a Ceph cluster"))

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
 // SyncBucketIdentity fixes a bucket namespace and native instance. Recreating
@@ -171,7 +172,7 @@ func (g *SyncGroup) bucketCheckpoint(ctx context.Context, pipeID, sourceZone, de
 		return nil, err
 	}
 	if !validRGWSyncID(pipeID) || sourceZone == destinationZone || g.state.pending != nil {
-		return nil, errors.New("RGW bucket checkpoint requires a confirmed pipe, distinct zones and no pending mutation")
+		return nil, servicehook.Invalid(errors.New("RGW bucket checkpoint requires a confirmed pipe, distinct zones and no pending mutation"))
 	}
 	master, current, err := f.syncPolicyMaster(ctx)
 	if err != nil {

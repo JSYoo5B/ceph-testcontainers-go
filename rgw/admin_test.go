@@ -393,7 +393,7 @@ func TestRGWQuotaUsesByteLimitsAndVerifiesReadback(t *testing.T) {
 	if !slices.Equal(lastArgs[len(lastArgs)-len(want):], want) || !slices.Contains(ctr.calls[2], "enable") {
 		t.Fatalf("incorrect quota units or activation: %v", ctr.calls)
 	}
-	if err := user.SetQuota(t.Context(), Quota{MaxSizeBytes: -2}); err == nil || len(ctr.calls) != 4 {
+	if err := user.SetQuota(t.Context(), Quota{MaxSizeBytes: -2}); !errors.Is(err, ceph.ErrInvalidRequest) || len(ctr.calls) != 4 {
 		t.Fatal("invalid quota reached native mutation")
 	}
 	gateway, _ = newRGWAdminTestGateway(Config{}, rgwAdminResponse{data: old}, rgwAdminResponse{}, rgwAdminResponse{}, rgwAdminResponse{data: old})
@@ -409,9 +409,11 @@ func TestRGWQuotaRejectsUnalignedBytesBeforeNativeCommands(t *testing.T) {
 		"user": user.SetQuota, "bucket": user.SetBucketQuota,
 	} {
 		t.Run(name, func(t *testing.T) {
-			err := set(t.Context(), Quota{Enabled: true, MaxSizeBytes: 1025, MaxObjects: 8})
-			if !errors.Is(err, ceph.ErrInvalidRequest) || len(ctr.calls) != 0 {
-				t.Fatalf("unaligned quota returned %v and issued %d native commands", err, len(ctr.calls))
+			for _, quota := range []Quota{{Enabled: true, MaxSizeBytes: 1025, MaxObjects: 8}, {MaxSizeBytes: -2}, {MaxObjects: -2}} {
+				err := set(t.Context(), quota)
+				if !errors.Is(err, ceph.ErrInvalidRequest) || len(ctr.calls) != 0 {
+					t.Fatalf("quota %+v returned %v and issued %d native commands", quota, err, len(ctr.calls))
+				}
 			}
 		})
 	}

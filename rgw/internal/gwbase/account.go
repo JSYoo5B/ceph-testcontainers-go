@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
 // Account is the private identity of one account created through a gateway:
@@ -147,7 +149,7 @@ func (g *Core) OwnedAccount(ctx context.Context, a *Account) (*NativeAccount, er
 		return nil, err
 	}
 	if a == nil || a.State == nil || !a.State.Confirmed || a.State.Removed {
-		return nil, errors.New("RGW account must be active and created by this cluster")
+		return nil, servicehook.Invalid(errors.New("RGW account must be active and created by this cluster"))
 	}
 	scope, err := g.RuntimeScope(ctx)
 	if err != nil {
