@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"slices"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/mutation"
@@ -469,17 +470,12 @@ func (f *Fixture) issueS3Credentials(ctx context.Context, suffix string) error {
 	if err != nil {
 		return err
 	}
-	var credentials struct {
-		Keys []struct {
-			AccessKey string `json:"access_key"`
-			SecretKey string `json:"secret_key"`
-		} `json:"keys"`
+	access, secret, err := gwbase.CreatedKeyPair(user)
+	if err != nil {
+		return fmt.Errorf("invalid RGW S3 test credentials: %w", err)
 	}
-	if err := json.Unmarshal(user, &credentials); err != nil || len(credentials.Keys) != 1 || credentials.Keys[0].AccessKey == "" || credentials.Keys[0].SecretKey == "" {
-		return fmt.Errorf("invalid RGW S3 test credentials")
-	}
-	setGatewayCredentials(f.realm.config.Source, f.Source, credentials.Keys[0].AccessKey, credentials.Keys[0].SecretKey)
-	setGatewayCredentials(f.realm.config.Destination, f.Destination, credentials.Keys[0].AccessKey, credentials.Keys[0].SecretKey)
+	setGatewayCredentials(f.realm.config.Source, f.Source, access, secret)
+	setGatewayCredentials(f.realm.config.Destination, f.Destination, access, secret)
 	return nil
 }
 
@@ -610,8 +606,11 @@ func (r *rgwRealmAccess) admin(ctx context.Context, client testcontainers.Contai
 	return r.adminInGroup(ctx, client, r.zoneGroupName(zone), zone, args...)
 }
 
+// adminInGroup runs radosgw-admin in client, a setup client that the fixture
+// recorded for its cluster, as gwbase.AdminPrefix does.
 func (r *rgwRealmAccess) adminInGroup(ctx context.Context, client testcontainers.Container, group, zone string, args ...string) ([]byte, error) {
-	return multicluster.Exec(ctx, client, gwbase.AdminArgv(gwbase.Scope{Realm: r.config.Realm, Zonegroup: group, Zone: zone}, args...)...)
+	data, _, err := gwbase.AdminPrefix(ctx, nil, client, 0, gwbase.AdminArgv(gwbase.Scope{Realm: r.config.Realm, Zonegroup: group, Zone: zone}, args...))
+	return data, err
 }
 
 func (r *rgwRealmAccess) zoneGroupName(zone string) string {

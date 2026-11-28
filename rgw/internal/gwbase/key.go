@@ -172,24 +172,6 @@ func withoutKey(keys []NativeKey, accessKey string) []NativeKey {
 	return slices.DeleteFunc(slices.Clone(keys), func(key NativeKey) bool { return key.AccessKey == accessKey })
 }
 
-// SupervisedUserCommand runs a radosgw-admin command of u through g as
-// UserCommand does, under the gateway's shell supervisor: a call whose ctx
-// ends stops the command before it returns, and a stop that cannot be
-// confirmed returns a *ceph.NativeCommandUnstoppedError.
-func (g *Core) SupervisedUserCommand(ctx context.Context, u *User, args ...string) ([]byte, error) {
-	if u.State.NativeScope == nil {
-		return g.AdminCommand(ctx, args...)
-	}
-	scope, err := g.RuntimeScope(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if scope != *u.State.NativeScope {
-		return nil, errors.New("RGW user's native runtime scope changed")
-	}
-	return g.SupervisedCommand(ctx, scope, args...)
-}
-
 // settle reads the user's keys after a mutation on a fresh settlement budget.
 func (g *Core) settle(ctx context.Context, u *User) (*NativeUser, error) {
 	settleCtx, cancel := SettlementContext(ctx)
@@ -226,7 +208,7 @@ func (g *Core) CreateKey(ctx context.Context, u *User) (*Key, error) {
 	}
 	key := &Key{AccessKey: accessKey, Status: KeyPending}
 	u.State.Issued = append(u.State.Issued, key)
-	_, cmdErr := g.SupervisedUserCommand(ctx, u, "key", "create", "--uid", u.ID, "--key-type", "s3", "--access-key", accessKey, "--gen-secret")
+	_, cmdErr := g.UserCommand(ctx, u, "key", "create", "--uid", u.ID, "--key-type", "s3", "--access-key", accessKey, "--gen-secret")
 	errors.As(cmdErr, &key.Unstopped)
 	cause := cmdErr
 	if cause == nil {
@@ -305,7 +287,7 @@ func (g *Core) RevokeKey(ctx context.Context, u *User, key *Key) error {
 	}
 	prior := key.Status
 	key.Status = KeyRevoking
-	_, cmdErr := g.SupervisedUserCommand(ctx, u, "key", "rm", "--uid", u.ID, "--key-type", "s3", "--access-key", key.AccessKey)
+	_, cmdErr := g.UserCommand(ctx, u, "key", "rm", "--uid", u.ID, "--key-type", "s3", "--access-key", key.AccessKey)
 	errors.As(cmdErr, &key.Unstopped)
 	after, err := g.settle(ctx, u)
 	if err != nil {

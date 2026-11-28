@@ -233,7 +233,7 @@ func (g *Core) CreateUser(ctx context.Context, spec UserSpec) (*User, error) {
 	if spec.MaxBuckets != nil {
 		args = append(args, "--max-buckets", strconv.Itoa(*spec.MaxBuckets))
 	}
-	data, err := g.SupervisedUserCommand(ctx, user, args...)
+	data, err := g.UserCommand(ctx, user, args...)
 	if err != nil {
 		errors.As(err, &user.State.UnstoppedCreate)
 		return user, err
@@ -275,9 +275,11 @@ func (g *Core) UserExists(ctx context.Context, u *User) (bool, error) {
 	return slices.Contains(users, u.ID), nil
 }
 
-// UserCommand runs a radosgw-admin command of u through g: in the user's
-// captured native scope, after checking that g still runs in it, or in g's
-// configured scope.
+// UserCommand runs a radosgw-admin command of u through g, supervised: in the
+// user's captured native scope, after checking that g still runs in it, or in
+// g's configured scope. A call whose ctx ends stops the command before it
+// returns, and a stop that cannot be confirmed returns a
+// *ceph.NativeCommandUnstoppedError.
 func (g *Core) UserCommand(ctx context.Context, u *User, args ...string) ([]byte, error) {
 	if u.State.NativeScope != nil {
 		scope, err := g.RuntimeScope(ctx)
@@ -361,6 +363,24 @@ func (g *Core) ValidateCreationIdentity(ctx context.Context, u *User, native *Na
 		return errors.New("RGW account root's original account lifetime or tenant changed")
 	}
 	return nil
+}
+
+// CreatedKeyPair decodes the reply of a radosgw-admin user create that
+// generated one S3 key pair and returns that pair.
+func CreatedKeyPair(data []byte) (accessKey, secretKey string, err error) {
+	var reply struct {
+		Keys []struct {
+			AccessKey string `json:"access_key"`
+			SecretKey string `json:"secret_key"`
+		} `json:"keys"`
+	}
+	if err := json.Unmarshal(data, &reply); err != nil {
+		return "", "", errors.New("decode RGW S3 credentials")
+	}
+	if len(reply.Keys) != 1 || reply.Keys[0].AccessKey == "" || reply.Keys[0].SecretKey == "" {
+		return "", "", errors.New("RGW did not generate one S3 access/secret key pair")
+	}
+	return reply.Keys[0].AccessKey, reply.Keys[0].SecretKey, nil
 }
 
 // DecodeUser decodes the native user information of the CLI or Admin Ops.

@@ -309,11 +309,16 @@ func (f *Fixture) zoneStates() []*rgwZoneState {
 // concurrently with AddZone or external metadata master transitions.
 //
 // It passes the zone's realm, zonegroup and zone but does not add --format.
-// Arguments are checked as rgw.Gateway.Admin checks them: control characters
+// Arguments are refused as rgw.Gateway.Admin refuses them: control characters
 // and flags that would change the zone scope or Ceph connection are refused
-// with ceph.ErrInvalidRequest. A failure keeps a *ceph.NativeFailure with the
-// exit code and errno but no reason, because the native output can include
-// secret keys.
+// with ceph.ErrInvalidRequest. The command runs in the zone's CLI client under
+// the process supervisor, as rgw.Gateway.Admin runs it in a gateway: the
+// supervisor stops it shortly before ctx's deadline and the error says where
+// it was, a call whose ctx ends stops the command before it returns, and a
+// stop that cannot be confirmed returns a *ceph.NativeCommandUnstoppedError,
+// whose Stop retries it, as does Terminate of the client's cluster. A failure
+// keeps a *ceph.NativeFailure with the exit code and errno but no reason,
+// because the native output can include secret keys.
 //
 //purpose:native
 func (f *Fixture) ZoneAdmin(ctx context.Context, name string, args ...string) ([]byte, error) {
@@ -336,11 +341,7 @@ func (f *Fixture) ZoneAdmin(ctx context.Context, name string, args ...string) ([
 	if client == nil {
 		return nil, fmt.Errorf("RGW zone %s has no running owned CLI client", name)
 	}
-	data, err := f.realm.admin(ctx, client, name, args...)
-	if err != nil {
-		return nil, gwbase.RedactAdminFailure(err)
-	}
-	return data, nil
+	return f.realm.admin(ctx, client, name, args...)
 }
 
 // AddZone joins another fresh storage cluster to the existing realm/zonegroup.
