@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "fault",
-  "count": 51,
+  "count": 64,
   "entries": [
     {
       "current": "fault.AllPackets",
@@ -15,6 +15,13 @@
       "kind": "function",
       "signature": "func(ctx context.Context, c *ceph.Container, ctr testcontainers.Container, limit CPULimit) (*CPULimitLease, error)",
       "proposed": "fault.ApplyCPULimit",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.ApplyClockOffset",
+      "kind": "function",
+      "signature": "func(ctx context.Context, c *ceph.Container, ctr testcontainers.Container, spec ClockOffset) (*ClockOffsetLease, error)",
+      "proposed": "fault.ApplyClockOffset",
       "decision": "baseline"
     },
     {
@@ -82,6 +89,82 @@
       "current": "fault.CPULimitStatus",
       "kind": "type",
       "proposed": "fault.CPULimitStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.ClockHelperImage",
+      "kind": "const",
+      "proposed": "fault.ClockHelperImage",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.ClockOffset",
+      "kind": "type",
+      "proposed": "fault.ClockOffset",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.ClockOffsetApplied",
+      "kind": "const",
+      "proposed": "fault.ClockOffsetApplied",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.ClockOffsetInconclusive",
+      "kind": "const",
+      "proposed": "fault.ClockOffsetInconclusive",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.ClockOffsetLease",
+      "kind": "type",
+      "proposed": "fault.ClockOffsetLease",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.ClockOffsetLease.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*ClockOffsetLease",
+      "proposed": "fault.ClockOffsetLease.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.ClockOffsetLease.Status",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (ClockOffsetStatus, error)",
+      "receiver": "*ClockOffsetLease",
+      "proposed": "fault.ClockOffsetLease.Status",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.ClockOffsetNotApplied",
+      "kind": "const",
+      "proposed": "fault.ClockOffsetNotApplied",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.ClockOffsetPending",
+      "kind": "const",
+      "proposed": "fault.ClockOffsetPending",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.ClockOffsetRestored",
+      "kind": "const",
+      "proposed": "fault.ClockOffsetRestored",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.ClockOffsetState",
+      "kind": "type",
+      "proposed": "fault.ClockOffsetState",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.ClockOffsetStatus",
+      "kind": "type",
+      "proposed": "fault.ClockOffsetStatus",
       "decision": "baseline"
     },
     {

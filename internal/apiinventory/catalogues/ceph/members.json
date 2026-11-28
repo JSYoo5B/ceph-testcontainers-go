@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "ceph",
-  "count": 321,
+  "count": 332,
   "types": {
     "ceph.AuthConfig": [
       "AuthConfig.AllowedCiphers field []CephxCipher",
@@ -27,9 +27,22 @@
       "ClientMessengerPolicy.MonitorsAndManagers field []MessengerConnectionMode",
       "ClientMessengerPolicy.OtherDaemons field []MessengerConnectionMode"
     ],
+    "ceph.ClockInterposer": [
+      "ClockInterposer.Architecture field string",
+      "ClockInterposer.Build field string",
+      "ClockInterposer.Compiler field string",
+      "ClockInterposer.HelperImage field string",
+      "ClockInterposer.Libc field string",
+      "ClockInterposer.SHA256 field string",
+      "ClockInterposer.SourceCommit field string",
+      "ClockInterposer.SourceRepository field string",
+      "ClockInterposer.SourceTag field string",
+      "ClockInterposer.SourceTree field string"
+    ],
     "ceph.ClusterFacts": [
       "ClusterFacts.AddressFamily field AddressFamily",
       "ClusterFacts.CephVersion field string",
+      "ClusterFacts.ClockInterposer field ClockInterposer",
       "ClusterFacts.ClusterNetworkName field string",
       "ClusterFacts.HasSeparateClusterNetwork field bool",
       "ClusterFacts.Images field ImageSet",

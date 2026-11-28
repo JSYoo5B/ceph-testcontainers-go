@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 315,
+  "count": 321,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -250,6 +250,34 @@
       "signature": "func() string",
       "receiver": "ClientRevocationHandle",
       "proposed": "ceph.ClientRevocationHandle.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClockConfig",
+      "kind": "type",
+      "proposed": "ceph.ClockConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClockConfig.WithHelperImage",
+      "kind": "method",
+      "signature": "func(image string) ClockConfig",
+      "receiver": "ClockConfig",
+      "proposed": "ceph.ClockConfig.WithHelperImage",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClockConfig.WithMonitors",
+      "kind": "method",
+      "signature": "func(names ...string) ClockConfig",
+      "receiver": "ClockConfig",
+      "proposed": "ceph.ClockConfig.WithMonitors",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClockInterposer",
+      "kind": "type",
+      "proposed": "ceph.ClockInterposer",
       "decision": "baseline"
     },
     {
@@ -564,6 +592,14 @@
       "current": "ceph.DaemonOptions",
       "kind": "type",
       "proposed": "ceph.DaemonOptions",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DaemonOptions.WithClockInstrumentation",
+      "kind": "method",
+      "signature": "func() DaemonOptions",
+      "receiver": "DaemonOptions",
+      "proposed": "ceph.DaemonOptions.WithClockInstrumentation",
       "decision": "baseline"
     },
     {
@@ -2094,6 +2130,13 @@
       "kind": "function",
       "signature": "func(config AuthConfig) Option",
       "proposed": "ceph.WithAuth",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithClockConfig",
+      "kind": "function",
+      "signature": "func(clock ClockConfig) Option",
+      "proposed": "ceph.WithClockConfig",
       "decision": "baseline"
     },
     {
