@@ -235,11 +235,24 @@ func (c *Container) queryMonitorQuorumReport(ctx context.Context) (monitorQuorum
 	if err != nil {
 		return monitorQuorumReport{}, err
 	}
+	_, report, err := decodeMonitorQuorumSample(ctx, data)
+	return report, err
+}
+
+// decodeMonitorQuorumSample decodes one quorum_status output through the
+// validating decoder, decodeMonitorQuorum, and then the fields it does not
+// carry. The quorum watch and the MON settling barrier read quorum_status
+// through it.
+func decodeMonitorQuorumSample(ctx context.Context, data []byte) (QuorumStatus, monitorQuorumReport, error) {
 	status, err := decodeMonitorQuorum(ctx, data)
 	if err != nil {
-		return monitorQuorumReport{}, err
+		return QuorumStatus{}, monitorQuorumReport{}, err
 	}
-	return decodeMonitorQuorumReport(data, status)
+	report, err := decodeMonitorQuorumReport(data, status)
+	if err != nil {
+		return QuorumStatus{}, monitorQuorumReport{}, err
+	}
+	return status, report, nil
 }
 
 // decodeMonitorQuorumReport decodes the fields of a validated quorum_status

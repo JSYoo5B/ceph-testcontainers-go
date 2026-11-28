@@ -524,7 +524,7 @@ func (w *rotationWorld) quorumStatus() string {
 	for _, name := range rotationMonitorNames {
 		mons = append(mons, fmt.Sprintf(`{"name":%q,"public_addrs":{"addrvec":[{"type":"v2","addr":"%s:3300","nonce":0}]}}`, name, rotationMonitorIPs[name]))
 	}
-	return fmt.Sprintf(`{"election_epoch":%d,"quorum_names":["a","b","c"],"quorum_leader_name":"a","monmap":{"epoch":%d,"mons":[%s]}}`, w.election, w.monEpoch, strings.Join(mons, ","))
+	return fmt.Sprintf(`{"election_epoch":%d,"quorum_names":["a","b","c"],"quorum_leader_name":"a","monmap":{"fsid":"9b2d8f1e-0c5a-4f3e-8a6b-1d2c3e4f5a6b","epoch":%d,"mons":[%s]}}`, w.election, w.monEpoch, strings.Join(mons, ","))
 }
 
 // barrier runs auth add through the MON that mon_host_override names, and
