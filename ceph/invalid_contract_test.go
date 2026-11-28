@@ -41,9 +41,11 @@ import (
 // refusals share mdsReadOnlyInvalid; three more in cephfs/subvolume for its
 // clone watch; five more in rbd/mirror for its receiver and image watches
 // (an invalid configuration, Stop of an unstarted watch, a terminated mirror,
-// a terminated cluster and a receiver cohort without a daemon); and six more
+// a terminated cluster and a receiver cohort without a daemon); and five more
 // in cephfs/mirror for the refused config, path, fixture and unstarted Stop
-// of its directory watch and the terminated mirror or cluster that ends one.
+// of its directory watch and for cephFSRefusal, the one refusal of a nil or
+// terminated mirror or a terminated cluster that ends a watch or a wait and
+// that every public method of the mirror shares.
 // cephfs/quiesce and cephfs/snapschedule have four more each for their
 // watches: the unstarted handle, the refused config, Stop of an unstarted
 // watch and the ownership loss that ends one.
@@ -79,7 +81,7 @@ var invalidCallSites = map[string]int{
 	"cephfs/subvolume": 34, "cephfs/quiesce": 8, "cephfs/internal/fsbase": 9,
 	"cephfs/session": 11, "cephfs/snapschedule": 16,
 	"rgw/account": 10, "rgw/placement": 23, "rgw/notification": 5, "rgw/internal/gwbase": 21,
-	"rbd/mirror": 34, "cephfs/mirror": 24,
+	"rbd/mirror": 33, "cephfs/mirror": 17,
 }
 
 // countInvalidCalls counts, in the non-test files of dir, the calls of a bare

@@ -79,7 +79,8 @@ func TestCephFSMirrorDaemonRemovalRetainsFailedResourceAndPolicy(t *testing.T) {
 	a := &Daemon{Container: aContainer, DaemonName: "a"}
 	b := &Daemon{Container: bContainer, DaemonName: "b"}
 	mirror := &Container{Container: aContainer, roster: cephFSDaemonRoster{daemons: []*Daemon{a, b}, initial: a},
-		peerID: "owned-peer", SourceClientEntity: "client.owned", DestinationClientEntity: "client.peer", Directories: []string{"/data"}}
+		peer: cephFSMirrorPeer{id: "owned-peer"}, SourceClientEntity: "client.owned", DestinationClientEntity: "client.peer", registered: []string{"/data"},
+		pair: cephFSMirrorPair{sourceClient: "client.owned", destinationClient: "client.peer"}}
 	a.owner, b.owner = mirror, mirror
 	inventory := mirror.Daemons()
 	inventory[0] = nil
@@ -102,7 +103,7 @@ func TestCephFSMirrorDaemonRemovalRetainsFailedResourceAndPolicy(t *testing.T) {
 	if err := b.Remove(t.Context()); err != nil || len(mirror.Daemons()) != 0 {
 		t.Fatalf("last daemon or already-missing removal failed: %v", err)
 	}
-	if mirror.peerID != "owned-peer" || mirror.SourceClientEntity != "client.owned" || mirror.DestinationClientEntity != "client.peer" || !reflect.DeepEqual(mirror.Directories, []string{"/data"}) {
+	if mirror.peer.id != "owned-peer" || mirror.SourceClientEntity != "client.owned" || mirror.DestinationClientEntity != "client.peer" || !reflect.DeepEqual(mirror.registered, []string{"/data"}) {
 		t.Fatal("daemon lifecycle changed peer/auth/directory policy")
 	}
 }
@@ -419,7 +420,7 @@ func (control *cephFSMirrorNativeControlFake) Exec(ctx context.Context, argument
 			code, stderr = 2, []byte("Error ENOENT: "+args[5]+" is not tracked\n")
 		}
 	case len(args) >= 3 && args[0] == "fs" && args[1] == "get":
-		output = []byte(`{"id":1,"mdsmap":{"metadata_pool":7}}`)
+		output = []byte(fmt.Sprintf(`{"id":1,"mdsmap":{"fs_name":%q,"metadata_pool":7}}`, args[2]))
 	case len(args) >= 4 && reflect.DeepEqual(args[:4], []string{"osd", "pool", "ls", "detail"}):
 		output = []byte(`[{"pool_id":1,"pool_name":".mgr"},{"pool_id":7,"pool_name":"source-metadata"}]`)
 	case len(args) >= 2 && args[0] == "service" && args[1] == "dump":
@@ -433,9 +434,9 @@ func (control *cephFSMirrorNativeControlFake) Exec(ctx context.Context, argument
 		if !reflect.DeepEqual(args, []string{"ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "status", "source@1"}) {
 			return 0, nil, errors.New("incorrect mirror admin socket query")
 		}
-		output = []byte(`{"rados_inst":"172.20.0.8:0/1234","peers":{"owned-peer":{}},"snap_dirs":{"dir_count":0}}`)
+		output = []byte(`{"rados_inst":"172.20.0.8:0/1234","peers":{"` + cephFSObserverDraftPeer + `":{"remote":{"client_name":"client.peer","cluster_name":"destination","fs_name":"destination"}}},"snap_dirs":{"dir_count":0}}`)
 	case len(args) == 5 && reflect.DeepEqual(args, []string{"fs", "snapshot", "mirror", "daemon", "status"}):
-		output = []byte(`[{"daemon_id":4249,"filesystems":[{"name":"source","peers":[{"uuid":"owned-peer"}]}]}]`)
+		output = []byte(`[{"daemon_id":4249,"filesystems":[{"name":"source","peers":[{"uuid":"` + cephFSObserverDraftPeer + `"}]}]}]`)
 	case len(args) >= 6 && reflect.DeepEqual(args[:5], []string{"fs", "snapshot", "mirror", "show", "distribution"}):
 		output = []byte(`{"mapping":{"4262":"0 directories"}}`)
 	case len(args) >= 5 && reflect.DeepEqual(args[:4], []string{"fs", "snapshot", "mirror", "ls"}):
@@ -478,21 +479,24 @@ func (control *cephFSMirrorNativeControlFake) Exec(ctx context.Context, argument
 func TestCephFSMirrorNativeBarrierAndRebalanceUseRealJSONAndPrivateOwnership(t *testing.T) {
 	control := &cephFSMirrorNativeControlFake{directories: map[string]bool{"/owned": true, "/foreign": true}}
 	mirror := &Container{
-		source: &ceph.Container{Container: control}, destination: &ceph.Container{Container: &cephFSObserverDraftControl{filesystemID: 2, metadataPool: 9}},
-		peerID: "owned-peer", SourceFilesystem: "source", DestinationFilesystem: "destination", sourceFilesystem: "source", destinationFilesystem: "destination",
-		roster:      cephFSDaemonRoster{sourceID: "owned-auth", daemons: []*Daemon{{Container: control, DaemonName: "a"}}},
-		Directories: []string{"/owned", "/foreign"}, directories: cephFSDirectoryOwnership{owned: map[string]bool{"/owned": true}},
+		pair: cephFSMirrorPair{
+			source: &ceph.Container{Container: control}, destination: &ceph.Container{Container: &cephFSObserverDraftControl{filesystemID: 2, metadataPool: 9}},
+			sourceFilesystem: "source", destinationFilesystem: "destination",
+		},
+		peer: cephFSMirrorPeer{id: cephFSObserverDraftPeer}, SourceFilesystem: "source", DestinationFilesystem: "destination",
+		roster:     cephFSDaemonRoster{sourceID: "owned-auth", daemons: []*Daemon{{Container: control, DaemonName: "a"}}},
+		registered: []string{"/owned", "/foreign"}, directories: cephFSDirectoryOwnership{owned: map[string]bool{"/owned": true}},
 	}
 	if err := mirror.loadFilesystemIdentity(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if mirror.filesystemID != 1 || mirror.metadataPool != "source-metadata" {
-		t.Fatalf("native metadata identity mismatch: id=%d pool=%q", mirror.filesystemID, mirror.metadataPool)
+	if mirror.pair.sourceFilesystemID != 1 || mirror.pair.metadataPool != "source-metadata" {
+		t.Fatalf("native metadata identity mismatch: id=%d pool=%q", mirror.pair.sourceFilesystemID, mirror.pair.metadataPool)
 	}
 	if err := mirror.RebalanceDirectories(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(control.mutations, []string{"remove:/owned", "add:/owned"}) || !control.directories["/foreign"] || !reflect.DeepEqual(mirror.Directories, []string{"/owned", "/foreign"}) {
+	if !reflect.DeepEqual(control.mutations, []string{"remove:/owned", "add:/owned"}) || !control.directories["/foreign"] || !reflect.DeepEqual(mirror.registered, []string{"/owned", "/foreign"}) {
 		t.Fatalf("rebalance adopted public caller-added membership: mutations=%v policies=%v", control.mutations, control.directories)
 	}
 }
@@ -710,5 +714,18 @@ func TestCephFSMirrorRebalanceHonorsCancellationWhileWaitingForAnIdlePolicy(t *t
 	err := rebalanceCephFSMirrorDirectories(ctx, []string{"/daemon-a"}, list, model.state, model.mutate, map[string]bool{}, time.Millisecond)
 	if !errors.Is(err, context.Canceled) || len(model.actions) != 0 {
 		t.Fatalf("cancellation during the idle wait: %v, actions %v", err, model.actions)
+	}
+}
+
+// TestAddDaemonAdmitsDotsAndALeadingHyphen runs dotted, leading-hyphen and
+// plain names through the admission of AddDaemon, which runs before any
+// container starts.
+func TestAddDaemonAdmitsDotsAndALeadingHyphen(t *testing.T) {
+	m, _, _, _, _ := newPeerRemovalFixture()
+	for name, admitted := range map[string]bool{"standby": true, "a.b": true, ".a": true, "-a": true, "a": false, "": false, "a b": false, "a/b": false} {
+		err := m.roster.admit(name)
+		if (err == nil) != admitted || (err != nil && !errors.Is(err, ceph.ErrInvalidRequest)) {
+			t.Errorf("admit(%q): %v", name, err)
+		}
 	}
 }

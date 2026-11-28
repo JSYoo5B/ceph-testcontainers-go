@@ -223,7 +223,7 @@ func testCephFSOriginalProcessQuiescenceRecovery(t *testing.T, host bool, kind s
 		t.Fatal("initial public Begin did not lose exactly one real successful original removal reply")
 	}
 	originalIntentLostReply := true // Both nonnil receipt and exact cause verified.
-	if kind == "directory" && !slices.Contains(mirror.Directories, directory) {
+	if kind == "directory" && !slices.Contains(mirror.RegisteredDirectories(), directory) {
 		t.Fatal("uncertain native reply discarded original directory desire before explicit acknowledgment")
 	}
 	lostReplyLog, err := json.Marshal(struct {
@@ -301,7 +301,7 @@ func testCephFSOriginalProcessQuiescenceRecovery(t *testing.T, host bool, kind s
 	}
 	// No old observation is supplied to Ack. Each invocation must query fresh G
 	// evidence under the fixture gate, with every original full CID now removed.
-	if kind == "directory" && !slices.Contains(mirror.Directories, directory) {
+	if kind == "directory" && !slices.Contains(mirror.RegisteredDirectories(), directory) {
 		t.Fatal("read-only G/legacy observations reconciled uncertain directory desire before explicit Ack")
 	}
 	for _, stage := range []string{"accepted", "accepted-repeat"} {
@@ -319,7 +319,7 @@ func testCephFSOriginalProcessQuiescenceRecovery(t *testing.T, host bool, kind s
 		if complete, _ := legacyStatus(ctx); complete {
 			t.Fatal("accepted acknowledgment promoted Drained/Released")
 		}
-		if kind == "directory" && slices.Contains(mirror.Directories, directory) {
+		if kind == "directory" && slices.Contains(mirror.RegisteredDirectories(), directory) {
 			t.Fatal("accepted acknowledgment did not reconcile uncertain original directory desire")
 		}
 		cephFSLogProcessRecoveryAcknowledgment(t, stage, true, attempt.Observation, counter, ackCommands)

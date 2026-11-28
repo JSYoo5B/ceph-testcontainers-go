@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"slices"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/google/uuid"
@@ -523,14 +525,11 @@ func (d *Daemon) Remove(ctx context.Context, opts ...testcontainers.TerminateOpt
 	return nil
 }
 
+// validateRBDMirrorDaemonName is the daemon name rule of AddDaemon: 1 to 63
+// ASCII letters, digits, underscores or hyphens, not starting with a hyphen.
 func validateRBDMirrorDaemonName(name string) error {
-	if name == "" || len(name) > 63 || name[0] == '-' {
+	if !naming.ValidMirrorDaemonName(name, naming.MirrorDaemonRule{}) {
 		return servicehook.Invalid(errors.New("RBD mirror daemon name must contain 1 to 63 ASCII letters, digits, underscores or hyphens, without a leading hyphen"))
-	}
-	for _, char := range name {
-		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') && (char < '0' || char > '9') && char != '_' && char != '-' {
-			return servicehook.Invalid(errors.New("RBD mirror daemon name must contain only ASCII letters, digits, underscores or hyphens"))
-		}
 	}
 	return nil
 }

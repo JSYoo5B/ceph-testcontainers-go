@@ -184,7 +184,7 @@ func (p *directoryObservationPin) running(ctx context.Context) error {
 	for _, site := range []struct {
 		name    string
 		cluster *ceph.Container
-	}{{"source", m.source}, {"destination", m.destination}} {
+	}{{"source", m.pair.source}, {"destination", m.pair.destination}} {
 		if site.cluster == nil {
 			continue
 		}
@@ -194,31 +194,28 @@ func (p *directoryObservationPin) running(ctx context.Context) error {
 		closed := servicehook.Closed(site.cluster)
 		servicehook.Unlock(site.cluster)
 		if closed {
-			return directoryWatchEnded{servicehook.Invalid(fmt.Errorf("the %s cluster has been terminated", site.name))}
+			return directoryWatchEnded{cephFSRefusal("the " + site.name + " cluster has been terminated")}
 		}
 	}
 	return nil
 }
 
-// admit refuses a read of a terminated mirror or of a replaced policy. Every
-// refusal ends the watch.
+// admit refuses a read of a replaced policy; directoryStatus has already
+// refused a terminated mirror. Every refusal ends the watch.
 func (p *directoryObservationPin) admit(context.Context) error {
 	m := p.mirror
-	if m.closed {
-		return servicehook.Invalid(errors.New("the CephFS mirror has been terminated"))
-	}
 	if !m.directories.owns(p.directory) {
 		return cephFSObserveGuard("CephFS mirror does not own the observed directory policy")
 	}
 	directoryGeneration, peerGeneration := m.directories.generation(p.directory), m.ops.peerGeneration
 	if !p.pinned {
-		p.pinned, p.directoryGeneration, p.peerGeneration, p.peerID = true, directoryGeneration, peerGeneration, m.peerID
+		p.pinned, p.directoryGeneration, p.peerGeneration, p.peerID = true, directoryGeneration, peerGeneration, m.peer.id
 		return nil
 	}
 	switch {
 	case directoryGeneration != p.directoryGeneration:
 		return cephFSObserveGuard("CephFS observed directory policy was registered again")
-	case peerGeneration != p.peerGeneration || m.peerID != p.peerID:
+	case peerGeneration != p.peerGeneration || m.peer.id != p.peerID:
 		return cephFSObserveGuard("CephFS observed peer was removed or replaced")
 	}
 	return nil
@@ -279,7 +276,7 @@ func directoryStatusEqual(a, b DirectoryStatus) bool {
 	fields := func(s DirectoryStatus) compared {
 		return compared{s.SourceFilesystem, s.DestinationFilesystem, s.SourceFilesystemID, s.DestinationFilesystemID,
 			s.Directory, s.PeerID, s.MappingState, s.InstanceID, s.DaemonName, s.State,
-			s.SnapshotsSynced, s.SnapshotsDeleted, s.SnapsRenamed, s.Ready}
+			s.SnapshotsSynced, s.SnapshotsDeleted, s.SnapshotsRenamed, s.Ready}
 	}
 	return fields(a) == fields(b) && snapshotEqual(a.CurrentSnapshot, b.CurrentSnapshot) &&
 		snapshotEqual(a.LastSyncedSnapshot, b.LastSyncedSnapshot) && maps.Equal(a.DaemonProblems, b.DaemonProblems)

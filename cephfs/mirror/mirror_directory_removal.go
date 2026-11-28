@@ -41,7 +41,7 @@ var errCephFSUncertainRemoval = errors.New("an uncertain native CephFS mirror di
 // finds the path gone from the policy completes the request.
 func uncertainRemoval(ctx context.Context, m *Container, directory string) error {
 	state := "unread"
-	if mapping, err := m.readCephFSObservedMapping(ctx, directory); err == nil {
+	if mapping, err := readDirectoryMapping(ctx, m.pair, directory); err == nil {
 		state = mapping.State
 	}
 	return &cephFSObservationError{message: fmt.Sprintf("%v: the native policy still tracks %s, %s", errCephFSUncertainRemoval, directory, state), cause: errCephFSUncertainRemoval}
@@ -101,33 +101,27 @@ type DirectoryRemovalDaemonStatus struct {
 //
 //purpose:condition,lifetime
 func (mirror *Container) BeginDirectoryRemoval(ctx context.Context, directory string) (*DirectoryRemoval, error) {
-	if mirror == nil {
-		return nil, cephFSObserveGuard("CephFS directory removal fixture is unavailable")
-	}
-	return mirror.beginDirectoryRemoval(ctx, directory, mirror.peerRemovalClusterIdentities)
+	return mirror.beginDirectoryRemoval(ctx, directory, mirror.originalClusterIdentities)
 }
 
 func (mirror *Container) beginDirectoryRemoval(ctx context.Context, directory string, readClusters func(context.Context) ([2]string, error)) (*DirectoryRemoval, error) {
-	if mirror == nil {
-		return nil, cephFSObserveGuard("CephFS directory removal fixture is unavailable")
-	}
 	directory, err := normalizeMirrorDirectory(directory)
 	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
+	if err := mirror.lock(ctx); err != nil {
 		return nil, err
 	}
 	defer mirror.mu.Unlock()
-	if err := mirror.ops.guardDirectoryAdditionOverlap(); err != nil {
+	if err := mirror.ops.guardPendingAddition(); err != nil {
 		return nil, err
 	}
 	if r := mirror.ops.directoryRemoval; r != nil && r.directory == directory && r.generation == mirror.directories.generation(directory) && !r.superseded {
 		return r, r.resumeRetained(ctx)
 	}
-	if err := mirror.ops.guardPeerRemovalOverlap(); err != nil {
+	if err := mirror.ops.guardAnyPending(); err != nil {
 		return nil, err
 	}
 	if err := mirror.confirmCephFSRefreshHandle(true); err != nil {
@@ -139,7 +133,7 @@ func (mirror *Container) beginDirectoryRemoval(ctx context.Context, directory st
 	if len(mirror.roster.daemons) == 0 {
 		return nil, cephFSObserveGuard("strict CephFS directory removal requires a live owned daemon cohort")
 	}
-	scope, err := mirror.captureOriginalScope(ctx, "CephFS directory removal", mirror.peerID, readClusters)
+	scope, err := mirror.captureOriginalScope(ctx, "CephFS directory removal", mirror.peer.id, readClusters)
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +165,6 @@ func (r *DirectoryRemoval) resumeRetained(ctx context.Context) error {
 // owner, the daemon cohort is captured and confirmed, and a second read finds
 // the same policy and owner. It records the owner. Container.mu is held.
 func (r *DirectoryRemoval) preflight(ctx context.Context) error {
-	mirror := r.scope.mirror
 	if err := r.peerPolicy(ctx); err != nil {
 		return err
 	}
@@ -182,7 +175,7 @@ func (r *DirectoryRemoval) preflight(ctx context.Context) error {
 	if !present {
 		return cephFSObserveGuard("original CephFS directory policy is absent before removal")
 	}
-	mapping, err := mirror.readCephFSObservedMapping(ctx, r.directory)
+	mapping, err := readDirectoryMapping(ctx, r.scope.pair, r.directory)
 	if err != nil {
 		return err
 	}
@@ -203,7 +196,7 @@ func (r *DirectoryRemoval) preflight(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	mapping, err = mirror.readCephFSObservedMapping(ctx, r.directory)
+	mapping, err = readDirectoryMapping(ctx, r.scope.pair, r.directory)
 	if err != nil {
 		return err
 	}
@@ -211,13 +204,6 @@ func (r *DirectoryRemoval) preflight(ctx context.Context) error {
 		return cephFSObserveGuard("original CephFS directory owner changed during removal preflight")
 	}
 	return ctx.Err()
-}
-
-func (ops *mirrorOperations) guardDirectoryRemovalOverlap() error {
-	if ops.directoryRemoval != nil && !ops.directoryRemoval.terminal() {
-		return cephFSObserveGuard("explicit CephFS directory release is incomplete")
-	}
-	return nil
 }
 
 // checkHandle is called only under mirror.mu. The removal shares the original
@@ -232,7 +218,10 @@ func (r *DirectoryRemoval) checkDirectoryRemovalHandle(allowRetired bool) error 
 		return cephFSObserveGuard("CephFS directory removal original identity is unavailable")
 	}
 	m := r.scope.mirror
-	if m.closed || r.superseded || m.ops.directoryRemoval != r || m.directories.generation(r.directory) != r.generation || r.generation == 0 || m.ops.peerGeneration != r.scope.generation {
+	if m.closed {
+		return errCephFSMirrorTerminated()
+	}
+	if r.superseded || m.ops.directoryRemoval != r || m.directories.generation(r.directory) != r.generation || r.generation == 0 || m.ops.peerGeneration != r.scope.generation {
 		return cephFSObserveGuard("CephFS directory removal owner is closed or superseded")
 	}
 	if !r.scope.sameFixture(false) {
@@ -320,7 +309,7 @@ func (r *DirectoryRemoval) resume(ctx context.Context) error {
 	if r.requestAttempted || r.scope.mirror.directories.releasePending(r.directory) {
 		return uncertainRemoval(ctx, r.scope.mirror, r.directory)
 	}
-	mapping, err := r.scope.mirror.readCephFSObservedMapping(ctx, r.directory)
+	mapping, err := readDirectoryMapping(ctx, r.scope.pair, r.directory)
 	if err != nil {
 		return err
 	}
@@ -347,7 +336,7 @@ func (r *DirectoryRemoval) resume(ctx context.Context) error {
 		r.forgetDesiredPolicy()
 		return ctx.Err()
 	}
-	mapping, err = r.scope.mirror.readCephFSObservedMapping(ctx, r.directory)
+	mapping, err = readDirectoryMapping(ctx, r.scope.pair, r.directory)
 	if err != nil {
 		return err
 	}
@@ -363,7 +352,7 @@ func (r *DirectoryRemoval) resume(ctx context.Context) error {
 	r.requestAttempted = true
 	m := r.scope.mirror
 	m.directories.markReleasePending(r.directory)
-	if _, err := r.scope.source.Ceph(ctx, "fs", "snapshot", "mirror", "remove", r.scope.sourceFilesystem, r.directory); err != nil {
+	if _, err := r.scope.pair.source.Ceph(ctx, "fs", "snapshot", "mirror", "remove", r.scope.pair.sourceFilesystem, r.directory); err != nil {
 		return cephFSObserveQuery("remove original CephFS mirror directory", err)
 	}
 	r.requestAcknowledged = true
@@ -372,41 +361,25 @@ func (r *DirectoryRemoval) resume(ctx context.Context) error {
 }
 
 func (r *DirectoryRemoval) confirmCohort(ctx context.Context, requireOwnerPath bool) error {
-	watchers, err := r.scope.watchers(ctx)
-	if err != nil {
-		return err
-	}
-	if err := r.cohort.checkWatchers(watchers); err != nil {
-		return err
-	}
+	var ownerState string
 	owner := false
-	for _, w := range r.cohort.witnesses {
-		if err := multicluster.LockObservation(ctx, &w.daemon.mu); err != nil {
-			return err
-		}
-		state, err := r.observeDaemon(ctx, w, watchers)
-		w.daemon.mu.Unlock()
-		if err != nil {
-			return err
-		}
-		if w.instanceID == r.ownerID {
-			owner = true
-			if requireOwnerPath && state == "released" {
-				return cephFSObserveGuard("CephFS mapped owner lacked the original directory path witness")
+	_, err, _ := r.cohort.observe(ctx, r.releaseCheck(), "released", func(name, state, _ string) {
+		for _, w := range r.cohort.witnesses {
+			if w.name == name && w.instanceID == r.ownerID {
+				owner, ownerState = true, state
 			}
 		}
+	})
+	if err != nil {
+		return err
 	}
 	if !owner {
 		return cephFSObserveGuard("CephFS directory owner is outside the original owned cohort")
 	}
-	after, err := r.scope.watchers(ctx)
-	if err != nil {
-		return err
+	if requireOwnerPath && ownerState == "released" {
+		return cephFSObserveGuard("CephFS mapped owner lacked the original directory path witness")
 	}
-	if !equalCephFSRemovalWatchers(watchers, after) {
-		return cephFSObserveGuard("CephFS directory removal watchers changed during preflight")
-	}
-	return errors.Join(r.cohort.checkWatchers(after), ctx.Err())
+	return ctx.Err()
 }
 
 func (r *DirectoryRemoval) initialStatus() DirectoryRemovalStatus {
@@ -415,7 +388,7 @@ func (r *DirectoryRemoval) initialStatus() DirectoryRemovalStatus {
 		return result
 	}
 	o := r.scope
-	result = DirectoryRemovalStatus{Directory: r.directory, PeerID: o.peerID, SourceFilesystem: o.sourceFilesystem, DestinationFilesystem: o.destinationFilesystem, SourceFilesystemID: o.sourceID, DestinationFilesystemID: o.destinationID, Daemons: make(map[string]DirectoryRemovalDaemonStatus)}
+	result = DirectoryRemovalStatus{Directory: r.directory, PeerID: o.peerID, SourceFilesystem: o.pair.sourceFilesystem, DestinationFilesystem: o.pair.destinationFilesystem, SourceFilesystemID: o.pair.sourceFilesystemID, DestinationFilesystemID: o.pair.destinationFilesystemID, Daemons: make(map[string]DirectoryRemovalDaemonStatus)}
 	for _, w := range r.cohort.witnesses {
 		result.Daemons[w.name] = DirectoryRemovalDaemonStatus{ContainerID: w.containerID, InstanceID: w.instanceID, State: "unobserved"}
 	}
@@ -462,35 +435,20 @@ func (r *DirectoryRemoval) statusWithAdmission(ctx context.Context, admitted *bo
 	if present {
 		return result, ctx.Err()
 	}
-	watchers, err := r.scope.watchers(ctx)
-	if err != nil {
-		return result, err
-	}
-	if err := r.cohort.checkWatchers(watchers); err != nil {
-		return result, err
-	}
-	all, errs, guarded := r.observeCohort(ctx, watchers, result.Daemons)
-	if guarded {
-		return result, errors.Join(errs...)
-	}
-	after, err := r.scope.watchers(ctx)
-	if err != nil {
-		return result, errors.Join(append(errs, err)...)
-	}
-	if !equalCephFSRemovalWatchers(watchers, after) {
-		all = false
-		errs = append(errs, cephFSObserveGuard("CephFS directory release original watcher set changed"))
-	}
-	if err := r.cohort.checkWatchers(after); err != nil {
-		all = false
-		errs = append(errs, err)
+	all, observed, stopped := r.cohort.observe(ctx, r.releaseCheck(), "released", func(name, state, problem string) {
+		entry := result.Daemons[name]
+		entry.State, entry.Problem = state, problem
+		result.Daemons[name] = entry
+	})
+	if stopped {
+		return result, observed
 	}
 	if err := r.peerPolicy(ctx); err != nil {
-		return result, errors.Join(append(errs, err)...)
+		return result, errors.Join(observed, err)
 	}
 	present, err = r.policy(ctx)
 	if err != nil {
-		return result, errors.Join(append(errs, err)...)
+		return result, errors.Join(observed, err)
 	}
 	if present {
 		all = false
@@ -498,50 +456,17 @@ func (r *DirectoryRemoval) statusWithAdmission(ctx context.Context, admitted *bo
 		result.PolicyRemoved = true
 	}
 	if err := r.checkHandle(); err != nil {
-		return result, errors.Join(append(errs, err)...)
+		return result, errors.Join(observed, err)
 	}
 	if err := ctx.Err(); err != nil {
-		return result, errors.Join(append(errs, err)...)
+		return result, errors.Join(observed, err)
 	}
-	result.Released = result.PolicyRemoved && all && len(errs) == 0
+	result.Released = result.PolicyRemoved && all
 	if result.Released {
 		r.completed = true
 		r.forgetDesiredPolicy()
 	}
-	return result, errors.Join(errs...)
-}
-
-// observeCohort observes each original daemon under its own lock and records
-// its state and problem in daemons. It reports whether every daemon has
-// released the directory, the observation errors, and whether a guard
-// refusal ended the observation early. Container.mu is held.
-func (r *DirectoryRemoval) observeCohort(ctx context.Context, watchers map[string]string, daemons map[string]DirectoryRemovalDaemonStatus) (bool, []error, bool) {
-	all := true
-	var errs []error
-	for _, w := range r.cohort.witnesses {
-		entry := daemons[w.name]
-		if err := multicluster.LockObservation(ctx, &w.daemon.mu); err != nil {
-			all = false
-			errs = append(errs, err)
-			break
-		}
-		state, err := r.observeDaemon(ctx, w, watchers)
-		w.daemon.mu.Unlock()
-		entry.State = state
-		if err != nil {
-			all = false
-			entry.Problem = err.Error()
-			errs = append(errs, err)
-		}
-		if state != "released" {
-			all = false
-		}
-		daemons[w.name] = entry
-		if errors.Is(err, errCephFSObservationGuard) {
-			return all, errs, true
-		}
-	}
-	return all, errs, false
+	return result, observed
 }
 
 // WaitReleased drops fixture/member locks after each bounded observation and
@@ -565,79 +490,52 @@ func waitCephFSDirectoryReleasedWithAdmission(ctx context.Context, interval time
 		func(status *DirectoryRemovalStatus) { status.Released = false })
 }
 
-func (r *DirectoryRemoval) observeDaemon(ctx context.Context, w cephFSRemovalWitness, watchers map[string]string) (string, error) {
-	if w.daemon == nil || w.daemon.Container == nil || w.daemon.removed {
-		return "retired", cephFSObserveQuery("CephFS directory release original daemon is unavailable", nil)
+// releaseCheck observes a witness's sync cycle of the directory: released
+// once the peer stats of its original session, which still sees the peer and
+// lists its command, no longer include the path.
+func (r *DirectoryRemoval) releaseCheck() cephFSWitnessCheck {
+	return cephFSWitnessCheck{
+		subject: "CephFS directory release",
+		read: func(ctx context.Context, w *cephFSRemovalWitness, before cephFSDaemonSession) (string, error) {
+			if !before.peerPresent {
+				return "session-changed", cephFSObserveGuard("CephFS directory release original peer filesystem session changed")
+			}
+			if state, err := r.requirePeerCommand(ctx, w.daemon); err != nil {
+				return state, err
+			}
+			data, err := adminSocket(ctx, w.daemon, "fs", "mirror", "peer", "status", r.scope.pair.sessionName(), r.scope.peerID)
+			if err != nil {
+				return "unavailable", cephFSObserveQuery("read original CephFS directory release peer stats", err)
+			}
+			if data, err = cephFSPeerStatusDirectories(data, r.scope.peerID); err != nil {
+				return "unavailable", err
+			}
+			present, err := decodeCephFSDirectoryRemovalStats(data, r.directory)
+			if err != nil {
+				return "unavailable", err
+			}
+			if state, err := r.requirePeerCommand(ctx, w.daemon); err != nil {
+				return state, err
+			}
+			if present {
+				return "tracked", nil
+			}
+			return "released", nil
+		},
 	}
-	if w.daemon.DaemonName != w.name || w.daemon.GetContainerID() != w.containerID {
-		return "session-changed", cephFSObserveGuard("CephFS directory release original container identity changed")
-	}
-	state, err := w.daemon.State(ctx)
-	if err != nil {
-		return "unavailable", cephFSObserveQuery("inspect original CephFS directory release process", err)
-	}
-	if !normalCephFSRemovalProcess(state) {
-		return "stopped", cephFSObserveQuery("CephFS directory release original process is not normal", nil)
-	}
-	if !sameCephFSRemovalStartedAt(state.StartedAt, w.startedAt) {
-		return "session-changed", cephFSObserveGuard("CephFS directory release original process generation changed")
-	}
-	before, err := r.scope.session(ctx, w.daemon)
-	if err != nil {
-		return "unavailable", err
-	}
-	if before.address != w.address || watchers[w.address] != w.instanceID || !before.peerPresent {
-		return "session-changed", cephFSObserveGuard("CephFS directory release original peer filesystem session changed")
-	}
-	registered, err := r.scope.catalog(ctx, w.daemon)
+}
+
+// requirePeerCommand refuses a daemon whose admin socket no longer lists the
+// original peer's status command.
+func (r *DirectoryRemoval) requirePeerCommand(ctx context.Context, daemon *Daemon) (string, error) {
+	registered, err := r.scope.catalog(ctx, daemon)
 	if err != nil {
 		return "unavailable", err
 	}
 	if !registered {
 		return "session-changed", cephFSObserveGuard("CephFS directory release original peer command disappeared")
 	}
-	data, err := multicluster.Exec(ctx, w.daemon, "ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "peer", "status", fmt.Sprintf("%s@%d", r.scope.sourceFilesystem, r.scope.sourceID), r.scope.peerID)
-	if err != nil {
-		return "unavailable", cephFSObserveQuery("read original CephFS directory release peer stats", err)
-	}
-	if data, err = cephFSPeerStatusDirectories(data, r.scope.peerID); err != nil {
-		return "unavailable", err
-	}
-	present, err := decodeCephFSDirectoryRemovalStats(data, r.directory)
-	if err != nil {
-		return "unavailable", err
-	}
-	registered, err = r.scope.catalog(ctx, w.daemon)
-	if err != nil {
-		return "unavailable", err
-	}
-	if !registered {
-		return "session-changed", cephFSObserveGuard("CephFS directory release peer command disappeared during observation")
-	}
-	after, err := r.scope.session(ctx, w.daemon)
-	if err != nil {
-		return "unavailable", err
-	}
-	if after != before {
-		return "session-changed", cephFSObserveGuard("CephFS directory release original session changed during observation")
-	}
-	state, err = w.daemon.State(ctx)
-	if err != nil {
-		return "unavailable", cephFSObserveQuery("confirm original CephFS directory release process", err)
-	}
-	if !normalCephFSRemovalProcess(state) {
-		return "stopped", cephFSObserveQuery("CephFS directory release original process stopped during observation", nil)
-	}
-	if !sameCephFSRemovalStartedAt(state.StartedAt, w.startedAt) || w.daemon.GetContainerID() != w.containerID {
-		return "session-changed", cephFSObserveGuard("CephFS directory release original process changed during observation")
-	}
-	if err := ctx.Err(); err != nil {
-		return "unavailable", err
-	}
-	if present {
-		return "tracked", nil
-	}
-	return "released", nil
+	return "", nil
 }
 
 // Native peer_status is a flat object once cephFSPeerStatusDirectories has

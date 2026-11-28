@@ -16,6 +16,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/google/uuid"
 	mobycl "github.com/moby/moby/client"
@@ -113,25 +114,23 @@ type Container struct {
 	// SourceClientEntity and DestinationClientEntity are the Cephx entities
 	// that the fixture created on each side for the daemons and the peer.
 	SourceClientEntity, DestinationClientEntity string
-	// Directories lists the paths registered through this fixture:
-	// Config.Directories, then later additions, without removed paths. Run
-	// fills it from Config.Directories before it registers them, so the
-	// Container that a failed Run returns may list paths Ceph never registered.
-	// The directory methods update it, so read it while none of them runs.
-	// Paths registered directly with the Ceph CLI are not included.
+	// Directories is a copy of what RegisteredDirectories returns, which
+	// the directory methods replace after each change.
+	//
+	// Deprecated: Use RegisteredDirectories, which takes a copy under the
+	// fixture's lock while the directory methods may run.
 	Directories []string
 
-	owned                                     multicluster.Resources
-	mu                                        sync.Mutex
-	source, destination                       *ceph.Container
-	sourceFilesystem, destinationFilesystem   string
-	destinationSite, peerID                   string
-	filesystemID                              int
-	metadataPool                              string
-	metadataPoolID, destinationMetadataPoolID int64
-	filesystemIdentityConfirmed               bool
-	destinationFilesystemID                   int
-	pendingPeerImport                         *cephFSPeerIdentity
+	owned multicluster.Resources
+	mu    sync.Mutex
+	// registered is the list RegisteredDirectories returns.
+	registered []string
+	// pair is the source/destination identity that Run records; the
+	// exported descriptors above are copies a caller may edit, never a
+	// native selector.
+	pair cephFSMirrorPair
+	// peer is the owned peer and the import in flight.
+	peer cephFSMirrorPeer
 	// ops is the explicit peer and directory operations in flight. It
 	// decides which of them, and which daemon and directory changes, may
 	// overlap.
@@ -145,16 +144,35 @@ type Container struct {
 	directories cephFSDirectoryOwnership
 }
 
-// mirrorOperations is the ledger of a mirror's explicit operations in flight:
-// the peer drain, the directory release and the directory addition, with the
-// peer generation that lets a completed addition be superseded. Its overlap
-// guards keep two of these operations from running against the same native
-// state. Every method requires the caller to hold Container.mu.
-type mirrorOperations struct {
-	peerRemoval       *PeerRemoval
-	directoryRemoval  *DirectoryRemoval
-	directoryAddition *DirectoryAddition
-	peerGeneration    uint64
+// cephFSMirrorPair is the identity of a mirror's two filesystems that Run
+// records: the clusters, the filesystem names and IDs, the source metadata
+// pool and both metadata pool IDs, the client entities and the destination
+// site. The IDs and pools are read from the clusters once, and
+// identityConfirmed says they were. It is comparable, so a receipt keeps a
+// copy and finds any later change with ==. Every native selector reads it,
+// never the exported descriptors of Container.
+type cephFSMirrorPair struct {
+	source, destination                             *ceph.Container
+	sourceFilesystem, destinationFilesystem         string
+	sourceFilesystemID, destinationFilesystemID     int
+	metadataPool                                    string
+	sourceMetadataPoolID, destinationMetadataPoolID int64
+	identityConfirmed                               bool
+	sourceClient, destinationClient                 string
+	destinationSite                                 string
+}
+
+// peerIdentity is the destination the owned peer must name.
+func (p cephFSMirrorPair) peerIdentity() cephFSPeerIdentity {
+	return cephFSPeerIdentity{ClientName: p.destinationClient, SiteName: p.destinationSite, FilesystemName: p.destinationFilesystem}
+}
+
+// cephFSMirrorPeer is the peer a mirror owns: its native UUID, empty when
+// none is owned, and the destination identity of an import whose outcome is
+// not yet known.
+type cephFSMirrorPeer struct {
+	id            string
+	pendingImport *cephFSPeerIdentity
 }
 
 // peer_list in Tentacle's mgr mirroring/fs/snapshot_mirror.py reports
@@ -200,19 +218,16 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	if err != nil {
 		return nil, err
 	}
-	config, image := carrier.config, img
-	if _, err := multicluster.NormalizeInitialMirrorDaemonCount(config.DaemonCount, config.NoInitialDaemons); err != nil {
-		return nil, fmt.Errorf("CephFS %w", err)
+	image := img
+	config, err := normalizeCephFSMirrorConfig(carrier.config)
+	if err != nil {
+		return nil, err
 	}
 	if err := multicluster.ValidatePair(ctx, image, config.Source, config.Destination); err != nil {
 		return nil, err
 	}
 	if err := multicluster.RequireRoleImage(image, multicluster.RoleCephFS, config.Source, config.Destination); err != nil {
 		return nil, fmt.Errorf("configure CephFS mirror daemon image: %w", err)
-	}
-	config, err = normalizeCephFSMirrorConfig(config)
-	if err != nil {
-		return nil, err
 	}
 	if _, err := cephFSManagerCandidates(ctx, config.Source); err != nil {
 		return nil, err
@@ -221,10 +236,14 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	sourceID, destinationID := "tc-cephfs-mirror-"+suffix, "tc-cephfs-peer-"+suffix
 	mirror := &Container{
 		SourceFilesystem: config.SourceFilesystem, DestinationFilesystem: config.DestinationFilesystem,
-		sourceFilesystem: config.SourceFilesystem, destinationFilesystem: config.DestinationFilesystem,
 		SourceClientEntity: "client." + sourceID, DestinationClientEntity: "client." + destinationID,
-		Directories: append([]string(nil), config.Directories...),
-		source:      config.Source, destination: config.Destination, destinationSite: config.DestinationSite,
+		Directories: slices.Clone(config.Directories), registered: slices.Clone(config.Directories),
+		pair: cephFSMirrorPair{
+			source: config.Source, destination: config.Destination,
+			sourceFilesystem: config.SourceFilesystem, destinationFilesystem: config.DestinationFilesystem,
+			sourceClient: "client." + sourceID, destinationClient: "client." + destinationID,
+			destinationSite: config.DestinationSite,
+		},
 		roster: cephFSDaemonRoster{image: image, sourceID: sourceID, opts: slices.Clone(opts), processClientFactory: config.OriginalProcessClientFactory},
 	}
 	if err := mirror.enableMirroring(ctx, config); err != nil {
@@ -274,14 +293,14 @@ func (mirror *Container) enableMirroring(ctx context.Context, config Config) err
 	if err := mirror.AttachManagers(ctx); err != nil {
 		return err
 	}
-	keyring, err := config.Source.Ceph(ctx, "auth", "get-or-create", mirror.SourceClientEntity,
+	keyring, err := config.Source.Ceph(ctx, "auth", "get-or-create", mirror.pair.sourceClient,
 		"mon", "profile cephfs-mirror", "mds", "allow r fsname="+config.SourceFilesystem,
 		"osd", "allow rw tag cephfs metadata="+config.SourceFilesystem+", allow r tag cephfs data="+config.SourceFilesystem, "mgr", "allow r")
 	if err != nil {
 		return fmt.Errorf("create source CephFS mirror credentials: %w", err)
 	}
 	mirror.roster.keyring = slices.Clone(keyring)
-	if _, err := config.Destination.Ceph(ctx, "fs", "authorize", config.DestinationFilesystem, mirror.DestinationClientEntity, "/", "rwps"); err != nil {
+	if _, err := config.Destination.Ceph(ctx, "fs", "authorize", config.DestinationFilesystem, mirror.pair.destinationClient, "/", "rwps"); err != nil {
 		return fmt.Errorf("authorize destination CephFS mirror peer: %w", err)
 	}
 	if _, err := config.Source.Ceph(ctx, "fs", "snapshot", "mirror", "enable", config.SourceFilesystem); err != nil {
@@ -295,7 +314,7 @@ func (mirror *Container) waitForDaemonRegistrations(ctx context.Context, count i
 	defer cancel()
 	var lastErr error
 	for {
-		serviceData, err := mirror.source.Ceph(waitCtx, "service", "dump", "--format", "json")
+		serviceData, err := mirror.pair.source.Ceph(waitCtx, "service", "dump", "--format", "json")
 		var ownedIDs map[string]bool
 		if err == nil {
 			ownedIDs, err = cephFSMirrorOwnedInstanceIDs(serviceData, mirror.roster.sourceID)
@@ -305,11 +324,11 @@ func (mirror *Container) waitForDaemonRegistrations(ctx context.Context, count i
 		}
 		var data []byte
 		if err == nil {
-			data, err = mirror.source.Ceph(waitCtx, "fs", "snapshot", "mirror", "daemon", "status")
+			data, err = mirror.pair.source.Ceph(waitCtx, "fs", "snapshot", "mirror", "daemon", "status")
 		}
 		if err == nil {
 			var registered int
-			registered, err = countCephFSMirrorRegistrations(data, mirror.SourceFilesystem, mirror.peerID, ownedIDs)
+			registered, err = countCephFSMirrorRegistrations(data, mirror.pair.sourceFilesystem, mirror.peer.id, ownedIDs)
 			if err == nil && registered == count {
 				// Service reporting and directory policy discovery are independent
 				// async paths. Verify every owned GID reached the policy before
@@ -318,7 +337,7 @@ func (mirror *Container) waitForDaemonRegistrations(ctx context.Context, count i
 				watcherIDs, err = mirror.ownedFilesystemWatcherIDs(waitCtx)
 				var distribution []byte
 				if err == nil {
-					distribution, err = mirror.source.Ceph(waitCtx, "fs", "snapshot", "mirror", "show", "distribution", mirror.SourceFilesystem)
+					distribution, err = mirror.pair.source.Ceph(waitCtx, "fs", "snapshot", "mirror", "show", "distribution", mirror.pair.sourceFilesystem)
 				}
 				if err == nil {
 					err = cephFSMirrorPolicyKnowsInstances(distribution, watcherIDs)
@@ -369,21 +388,12 @@ func cephFSMirrorOwnedInstanceIDs(data []byte, sourceID string) (map[string]bool
 }
 
 func (mirror *Container) loadFilesystemIdentity(ctx context.Context) error {
-	mirror.filesystemIdentityConfirmed = false
-	data, err := mirror.source.Ceph(ctx, "fs", "get", mirror.SourceFilesystem, "--format", "json")
+	mirror.pair.identityConfirmed = false
+	source, err := readFilesystemIdentity(ctx, mirror.pair.source, mirror.pair.sourceFilesystem, "inspect mirrored filesystem identity")
 	if err != nil {
-		return fmt.Errorf("inspect mirrored filesystem identity: %w", err)
+		return fmt.Errorf("inspect mirrored source filesystem identity: %w", err)
 	}
-	var filesystem struct {
-		ID     int `json:"id"`
-		MDSMap struct {
-			MetadataPool *int64 `json:"metadata_pool"`
-		} `json:"mdsmap"`
-	}
-	if err := json.Unmarshal(data, &filesystem); err != nil || filesystem.ID <= 0 || filesystem.MDSMap.MetadataPool == nil || *filesystem.MDSMap.MetadataPool < 0 {
-		return errors.New("source did not return mirrored filesystem ID and metadata pool")
-	}
-	data, err = mirror.source.Ceph(ctx, "osd", "pool", "ls", "detail", "--format", "json")
+	data, err := mirror.pair.source.Ceph(ctx, "osd", "pool", "ls", "detail", "--format", "json")
 	if err != nil {
 		return fmt.Errorf("inspect mirrored filesystem metadata pool: %w", err)
 	}
@@ -394,71 +404,49 @@ func (mirror *Container) loadFilesystemIdentity(ctx context.Context) error {
 	if err := json.Unmarshal(data, &pools); err != nil {
 		return fmt.Errorf("decode mirrored filesystem metadata pools: %w", err)
 	}
+	poolName := ""
 	for _, pool := range pools {
-		if pool.ID != nil && *pool.ID == *filesystem.MDSMap.MetadataPool && pool.Name != "" {
-			mirror.filesystemID, mirror.metadataPool = filesystem.ID, pool.Name
-			mirror.metadataPoolID = *filesystem.MDSMap.MetadataPool
-			if mirror.destination != nil {
-				data, err := mirror.destination.Ceph(ctx, "fs", "get", mirror.DestinationFilesystem, "--format", "json")
-				if err != nil {
-					return fmt.Errorf("inspect destination mirrored filesystem identity: %w", err)
-				}
-				var remote struct {
-					ID     int `json:"id"`
-					MDSMap struct {
-						MetadataPool *int64 `json:"metadata_pool"`
-					} `json:"mdsmap"`
-				}
-				if json.Unmarshal(data, &remote) != nil || remote.ID <= 0 || remote.MDSMap.MetadataPool == nil || *remote.MDSMap.MetadataPool < 0 {
-					return errors.New("destination did not return mirrored filesystem ID and metadata pool")
-				}
-				mirror.destinationFilesystemID, mirror.destinationMetadataPoolID = remote.ID, *remote.MDSMap.MetadataPool
-				mirror.filesystemIdentityConfirmed = true
-			}
-			return nil
+		if pool.ID != nil && *pool.ID == source.metadataPool && pool.Name != "" {
+			poolName = pool.Name
+			break
 		}
 	}
-	return fmt.Errorf("mirrored filesystem metadata pool ID %d was not found in native pool listing", *filesystem.MDSMap.MetadataPool)
+	if poolName == "" {
+		return fmt.Errorf("mirrored filesystem metadata pool ID %d was not found in native pool listing", source.metadataPool)
+	}
+	mirror.pair.sourceFilesystemID, mirror.pair.metadataPool, mirror.pair.sourceMetadataPoolID = source.id, poolName, source.metadataPool
+	destination, err := readFilesystemIdentity(ctx, mirror.pair.destination, mirror.pair.destinationFilesystem, "inspect destination mirrored filesystem identity")
+	if err != nil {
+		return fmt.Errorf("inspect mirrored destination filesystem identity: %w", err)
+	}
+	mirror.pair.destinationFilesystemID, mirror.pair.destinationMetadataPoolID = destination.id, destination.metadataPool
+	mirror.pair.identityConfirmed = true
+	return nil
 }
 
 // ServiceDaemon's RADOS session and FSMirror's filesystem RADOS session have
 // different GIDs. Resolve each owned process through its exact admin-socket
 // rados_inst address and the native mirror index object's watcher list.
 func (mirror *Container) ownedFilesystemWatcherIDs(ctx context.Context) (map[string]bool, error) {
-	control, err := mirror.source.ClientContainer(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("select CephFS source control handle: %w", err)
-	}
-	if control == nil {
-		return nil, errors.New("CephFS source control container is unavailable")
-	}
-	data, err := multicluster.Exec(ctx, control, "rados", "--pool", mirror.metadataPool, "listwatchers", "cephfs_mirror")
-	if err != nil {
-		return nil, fmt.Errorf("list mirrored filesystem watchers: %w", err)
-	}
-	watchers, err := parseCephFSMirrorWatchers(data)
+	watchers, err := readWatchers(ctx, mirror.pair, "list mirrored filesystem watchers")
 	if err != nil {
 		return nil, err
 	}
 	ids := make(map[string]bool)
 	for _, daemon := range mirror.roster.daemons {
-		data, err := multicluster.Exec(ctx, daemon, "ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "status", fmt.Sprintf("%s@%d", mirror.SourceFilesystem, mirror.filesystemID))
+		session, err := readDaemonSession(ctx, daemon, mirror.pair, "inspect filesystem session for mirror daemon "+daemon.DaemonName)
 		if err != nil {
-			return nil, fmt.Errorf("inspect filesystem session for mirror daemon %s: %w", daemon.DaemonName, err)
+			return nil, err
 		}
-		var status struct {
-			RadosInstance string                     `json:"rados_inst"`
-			Peers         map[string]json.RawMessage `json:"peers"`
+		if session.failed {
+			return nil, fmt.Errorf("mirror daemon %s filesystem session is unavailable", daemon.DaemonName)
 		}
-		if err := json.Unmarshal(data, &status); err != nil {
-			return nil, fmt.Errorf("decode mirror daemon filesystem session: %w", err)
-		}
-		if _, exists := status.Peers[mirror.peerID]; !exists {
+		if _, exists := session.peers[mirror.peer.id]; !exists {
 			return nil, fmt.Errorf("mirror daemon %s has not discovered its peer", daemon.DaemonName)
 		}
-		id := watchers[status.RadosInstance]
+		id := watchers[session.address]
 		if id == "" {
-			return nil, fmt.Errorf("mirror daemon %s filesystem session %q is not a native watcher", daemon.DaemonName, status.RadosInstance)
+			return nil, fmt.Errorf("mirror daemon %s filesystem session %q is not a native watcher", daemon.DaemonName, session.address)
 		}
 		if ids[id] {
 			return nil, fmt.Errorf("owned mirror daemons share filesystem watcher instance %s", id)
@@ -544,6 +532,23 @@ func countCephFSMirrorRegistrations(data []byte, filesystem, peerID string, owne
 	return len(registered), nil
 }
 
+// RegisteredDirectories lists the paths registered through this fixture:
+// Config.Directories, then later additions, without removed paths. Run lists
+// Config.Directories before it registers them, so the Container that a failed
+// Run returns may list paths Ceph never registered. Paths registered directly
+// with the Ceph CLI are not included. The returned slice is a copy taken
+// under the fixture's lock.
+//
+//purpose:observation
+func (mirror *Container) RegisteredDirectories() []string {
+	if mirror == nil {
+		return nil
+	}
+	mirror.mu.Lock()
+	defer mirror.mu.Unlock()
+	return slices.Clone(mirror.registered)
+}
+
 // Daemons returns the owned daemon inventory sorted by DaemonName, including
 // stopped and partially started processes. The returned slice is a copy.
 // Native assignment convergence is asynchronous.
@@ -562,6 +567,8 @@ func (mirror *Container) Daemons() []*Daemon {
 // directories and peer. It does not bootstrap a second peer. Constructor
 // customizers apply to every daemon, followed by the customizers supplied here.
 // A non-nil partial result remains owned and may be removed or terminated.
+// daemonName is 1 to 63 ASCII letters, digits, dots, underscores or hyphens,
+// in any position, and unique within the fixture.
 // Native peer discovery and assignment are asynchronous. Redistributing existing
 // directories depends on the native MGR; Ceph 20.2.4 raises a DirectoryState
 // error during live expansion. Use RebalanceDirectories to explicitly reconcile
@@ -571,27 +578,24 @@ func (mirror *Container) Daemons() []*Daemon {
 //
 //purpose:construction,condition
 func (mirror *Container) AddDaemon(ctx context.Context, daemonName string, opts ...testcontainers.ContainerCustomizer) (*Daemon, error) {
-	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
+	if err := mirror.lock(ctx); err != nil {
 		return nil, err
 	}
 	defer mirror.mu.Unlock()
-	if err := mirror.ops.guardPeerRemovalOverlap(); err != nil {
+	if err := mirror.ops.guardAnyPending(); err != nil {
 		return nil, err
 	}
-	if mirror.closed {
-		return nil, servicehook.Invalid(errors.New("CephFS mirror has been terminated"))
-	}
-	if mirror.source == nil || mirror.destination == nil || !mirror.roster.configured() {
+	if mirror.pair.source == nil || mirror.pair.destination == nil || !mirror.roster.configured() {
 		return nil, errors.New("CephFS mirror is not initialized")
 	}
 	if err := mirror.roster.admit(daemonName); err != nil {
 		return nil, err
 	}
-	sourceFacts, err := ceph.FactsOf(mirror.source)
+	sourceFacts, err := ceph.FactsOf(mirror.pair.source)
 	if err != nil {
 		return nil, err
 	}
-	destinationFacts, err := ceph.FactsOf(mirror.destination)
+	destinationFacts, err := ceph.FactsOf(mirror.pair.destination)
 	if err != nil {
 		return nil, err
 	}
@@ -599,7 +603,7 @@ func (mirror *Container) AddDaemon(ctx context.Context, daemonName string, opts 
 	if !sourceFacts.UsesHostNetwork {
 		peerNetwork = destinationFacts.NetworkName
 	}
-	container, err := testcontainers.Run(ctx, mirror.roster.image, mirror.roster.customizers(mirror.source, peerNetwork, opts)...)
+	container, err := testcontainers.Run(ctx, mirror.roster.image, mirror.roster.customizers(mirror.pair.source, peerNetwork, opts)...)
 	var daemon *Daemon
 	if container != nil {
 		daemon = mirror.registerDaemonContainer(container, daemonName)
@@ -613,6 +617,23 @@ func (mirror *Container) AddDaemon(ctx context.Context, daemonName string, opts 
 	return daemon, nil
 }
 
+// lock takes Container.mu for a public method. A nil and a terminated
+// fixture are refused before anything else, as requests the fixture can
+// never serve; after success the caller unlocks.
+func (mirror *Container) lock(ctx context.Context) error {
+	if mirror == nil {
+		return cephFSRefusal("CephFS mirror fixture is unavailable")
+	}
+	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
+		return err
+	}
+	if mirror.closed {
+		mirror.mu.Unlock()
+		return errCephFSMirrorTerminated()
+	}
+	return nil
+}
+
 // Called under mirror.mu. Register partial startup results before propagating
 // an error so either Daemon.Remove or Terminate can release them later.
 func (mirror *Container) registerDaemonContainer(container testcontainers.Container, daemonName string) *Daemon {
@@ -620,7 +641,7 @@ func (mirror *Container) registerDaemonContainer(container testcontainers.Contai
 	if mirror.roster.add(daemon) {
 		mirror.Container = daemon
 	}
-	mirror.owned.AddOwned(daemon, mirror.source, container)
+	mirror.owned.AddOwned(daemon, mirror.pair.source, container)
 	return daemon
 }
 
@@ -637,13 +658,10 @@ func (daemon *Daemon) Remove(ctx context.Context, opts ...testcontainers.Termina
 		return servicehook.Invalid(errors.New("CephFS mirror daemon is not owned by a mirror"))
 	}
 	mirror := daemon.owner
-	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
+	if err := mirror.lock(ctx); err != nil {
 		return err
 	}
 	defer mirror.mu.Unlock()
-	if mirror.closed {
-		return servicehook.Invalid(errors.New("CephFS mirror has been terminated"))
-	}
 	if !mirror.roster.has(daemon) {
 		return fmt.Errorf("CephFS mirror does not own daemon %q", daemon.DaemonName)
 	}
@@ -681,7 +699,7 @@ func (mirror *Container) Terminate(ctx context.Context, opts ...testcontainers.T
 //
 //purpose:condition
 func (mirror *Container) AttachManagers(ctx context.Context) error {
-	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
+	if err := mirror.lock(ctx); err != nil {
 		return err
 	}
 	defer mirror.mu.Unlock()
@@ -691,21 +709,18 @@ func (mirror *Container) AttachManagers(ctx context.Context) error {
 // Called under mirror.mu; Terminate uses the same lock so the Docker client
 // cannot close while a topology reconciliation is using it.
 func (mirror *Container) attachManagers(ctx context.Context) error {
-	if mirror.closed {
-		return servicehook.Invalid(errors.New("CephFS mirror has been terminated"))
-	}
-	if mirror.source == nil || mirror.destination == nil {
+	if mirror.pair.source == nil || mirror.pair.destination == nil {
 		return errors.New("CephFS mirror is not initialized")
 	}
-	sourceFacts, err := ceph.FactsOf(mirror.source)
+	sourceFacts, err := ceph.FactsOf(mirror.pair.source)
 	if err != nil {
 		return err
 	}
-	destinationFacts, err := ceph.FactsOf(mirror.destination)
+	destinationFacts, err := ceph.FactsOf(mirror.pair.destination)
 	if err != nil {
 		return err
 	}
-	ids, err := cephFSManagerCandidates(ctx, mirror.source)
+	ids, err := cephFSManagerCandidates(ctx, mirror.pair.source)
 	if err != nil {
 		return err
 	}
@@ -902,14 +917,11 @@ func (mirror *Container) AddDirectory(ctx context.Context, directory string) err
 	if err != nil {
 		return err
 	}
-	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
+	if err := mirror.lock(ctx); err != nil {
 		return err
 	}
 	defer mirror.mu.Unlock()
-	if mirror.closed {
-		return servicehook.Invalid(errors.New("CephFS mirror has been terminated"))
-	}
-	if err := mirror.ops.guardPeerRemovalOverlap(); err != nil {
+	if err := mirror.ops.guardAnyPending(); err != nil {
 		return err
 	}
 	if err := mirror.confirmDirectoryFilesystems(ctx); err != nil {
@@ -919,10 +931,8 @@ func (mirror *Container) AddDirectory(ctx context.Context, directory string) err
 		if err := mirror.confirmDirectoryAbsent(ctx, directory); err != nil {
 			return err
 		}
-		if mirror.directories.pendingRelease[directory] {
-			mirror.forgetDirectory(directory)
-		} else {
-			delete(mirror.directories.rebalanceRelease, directory)
+		if mirror.directories.settleAbsent(directory) {
+			mirror.unlistDirectory(directory)
 		}
 	}
 	// Even an uncertain native re-add invalidates the old cycle receipt; it
@@ -931,7 +941,7 @@ func (mirror *Container) AddDirectory(ctx context.Context, directory string) err
 		r.superseded = true
 	}
 	mirror.ops.supersedeDirectoryAddition(directory)
-	if _, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "add", mirror.sourceFilesystem, directory); err != nil {
+	if _, err := mirror.pair.source.Ceph(ctx, "fs", "snapshot", "mirror", "add", mirror.pair.sourceFilesystem, directory); err != nil {
 		return fmt.Errorf("add CephFS mirror directory %q: %w", directory, err)
 	}
 	mirror.registerDirectory(directory, true)
@@ -960,14 +970,11 @@ func (mirror *Container) RemoveDirectory(ctx context.Context, directory string) 
 	if err != nil {
 		return err
 	}
-	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
+	if err := mirror.lock(ctx); err != nil {
 		return err
 	}
 	defer mirror.mu.Unlock()
-	if mirror.closed {
-		return servicehook.Invalid(errors.New("CephFS mirror has been terminated"))
-	}
-	if err := mirror.ops.guardDirectoryAdditionOverlap(); err != nil {
+	if err := mirror.ops.guardPendingAddition(); err != nil {
 		return err
 	}
 	if r := mirror.ops.directoryRemoval; r != nil && r.directory == directory && !r.completed {
@@ -982,7 +989,7 @@ func (mirror *Container) RemoveDirectory(ctx context.Context, directory string) 
 			return r.resume(ctx)
 		}
 	}
-	if err := mirror.ops.guardPeerRemovalOverlap(); err != nil {
+	if err := mirror.ops.guardAnyPending(); err != nil {
 		return err
 	}
 	if err := mirror.confirmDirectoryFilesystems(ctx); err != nil {
@@ -1006,7 +1013,7 @@ func (mirror *Container) RemoveDirectory(ctx context.Context, directory string) 
 		}
 		mirror.ops.supersedeDirectoryAddition(directory)
 		mirror.directories.markReleasePending(directory)
-		if _, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "remove", mirror.sourceFilesystem, directory); err != nil {
+		if _, err := mirror.pair.source.Ceph(ctx, "fs", "snapshot", "mirror", "remove", mirror.pair.sourceFilesystem, directory); err != nil {
 			return fmt.Errorf("remove CephFS mirror directory %q: %w", directory, err)
 		}
 	}
@@ -1047,17 +1054,14 @@ func (mirror *Container) RemoveDirectory(ctx context.Context, directory string) 
 //
 //purpose:condition
 func (mirror *Container) RebalanceDirectories(ctx context.Context) error {
-	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
+	if err := mirror.lock(ctx); err != nil {
 		return err
 	}
 	defer mirror.mu.Unlock()
-	if err := mirror.ops.guardPeerRemovalOverlap(); err != nil {
+	if err := mirror.ops.guardAnyPending(); err != nil {
 		return err
 	}
-	if mirror.closed {
-		return servicehook.Invalid(errors.New("CephFS mirror has been terminated"))
-	}
-	if mirror.peerID == "" {
+	if mirror.peer.id == "" {
 		return errors.New("CephFS mirror is not initialized")
 	}
 	if err := mirror.confirmDirectoryFilesystems(ctx); err != nil {
@@ -1097,7 +1101,7 @@ func (mirror *Container) RebalanceDirectories(ctx context.Context) error {
 				return err
 			}
 			mirror.ops.supersedeDirectoryAddition(directory)
-			_, err := mirror.source.Ceph(commandCtx, "fs", "snapshot", "mirror", operation, mirror.sourceFilesystem, directory)
+			_, err := mirror.pair.source.Ceph(commandCtx, "fs", "snapshot", "mirror", operation, mirror.pair.sourceFilesystem, directory)
 			if err == nil && operation == "add" {
 				mirror.registerDirectory(directory, false)
 			}
@@ -1105,15 +1109,23 @@ func (mirror *Container) RebalanceDirectories(ctx context.Context) error {
 		}, pending, 500*time.Millisecond)
 }
 
+// describes reports whether the exported descriptors still name pair: the
+// filesystem names and both client entities. A caller may edit them; an
+// edited descriptor is refused, never used as a native selector.
+func (mirror *Container) describes(pair cephFSMirrorPair) bool {
+	return mirror.SourceFilesystem == pair.sourceFilesystem && mirror.DestinationFilesystem == pair.destinationFilesystem &&
+		mirror.SourceClientEntity == pair.sourceClient && mirror.DestinationClientEntity == pair.destinationClient
+}
+
 // originalDirectoryFilesystemNames requires the names captured at construction
 // before any public descriptor can be used as a native selector.
 func (mirror *Container) originalDirectoryFilesystemNames() bool {
-	return mirror.sourceFilesystem != "" && mirror.destinationFilesystem != "" &&
-		mirror.SourceFilesystem == mirror.sourceFilesystem && mirror.DestinationFilesystem == mirror.destinationFilesystem
+	return mirror.pair.sourceFilesystem != "" && mirror.pair.destinationFilesystem != "" &&
+		mirror.SourceFilesystem == mirror.pair.sourceFilesystem && mirror.DestinationFilesystem == mirror.pair.destinationFilesystem
 }
 
 func (mirror *Container) confirmDirectoryFilesystems(ctx context.Context) error {
-	if !mirror.originalDirectoryFilesystemNames() || !mirror.filesystemIdentityConfirmed || mirror.source == nil || mirror.destination == nil {
+	if !mirror.originalDirectoryFilesystemNames() || !mirror.pair.identityConfirmed || mirror.pair.source == nil || mirror.pair.destination == nil {
 		return cephFSObserveGuard("CephFS mirror original directory filesystem descriptors or identities are unavailable or changed")
 	}
 	if err := mirror.checkCephFSOriginalFilesystemIdentities(ctx, "read original CephFS directory filesystem", "CephFS original directory filesystem or metadata pool identity differs"); err != nil {
@@ -1141,7 +1153,7 @@ func (mirror *Container) confirmDirectoryAbsent(ctx context.Context, directory s
 // nativePolicyDirectories lists the directories that the source filesystem's
 // native mirroring policy tracks.
 func (mirror *Container) nativePolicyDirectories(ctx context.Context) ([]string, error) {
-	data, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "ls", mirror.sourceFilesystem)
+	data, err := mirror.pair.source.Ceph(ctx, "fs", "snapshot", "mirror", "ls", mirror.pair.sourceFilesystem)
 	if err != nil {
 		return nil, fmt.Errorf("list CephFS mirror directories: %w", err)
 	}
@@ -1153,28 +1165,11 @@ func (mirror *Container) nativePolicyDirectories(ctx context.Context) ([]string,
 }
 
 // nativePolicyState returns the state of directory in the native mirroring
-// policy, such as "mapped" or "unmapping", or an error matching
-// fs.ErrNotExist once the policy no longer tracks it. The null state that
-// v20.2.4 reports for a transient UNASSOCIATED directory is "unassociated".
+// policy, as readDirectoryMapping reads it, or an error matching
+// fs.ErrNotExist once the policy no longer tracks it.
 func (mirror *Container) nativePolicyState(ctx context.Context, directory string) (string, error) {
-	data, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "dirmap", mirror.sourceFilesystem, directory)
-	if err != nil {
-		return "", fmt.Errorf("read CephFS mirror directory %q state: %w", directory, err)
-	}
-	var status struct {
-		State json.RawMessage `json:"state"`
-	}
-	if err := json.Unmarshal(data, &status); err != nil || len(status.State) == 0 {
-		return "", fmt.Errorf("source did not return the state of CephFS mirror directory %q", directory)
-	}
-	if string(status.State) == "null" {
-		return "unassociated", nil
-	}
-	var state string
-	if err := json.Unmarshal(status.State, &state); err != nil || state == "" {
-		return "", fmt.Errorf("source did not return the state of CephFS mirror directory %q", directory)
-	}
-	return state, nil
+	mapping, err := readDirectoryMapping(ctx, mirror.pair, directory)
+	return mapping.State, err
 }
 
 // waitNativePolicyIdle is the admission of a single native directory remove,
@@ -1297,13 +1292,17 @@ func waitCephFSMirrorDirectoryReleased(ctx context.Context, list func(context.Co
 
 // PeerIDs lists configured source filesystem peers in UUID order. These are
 // monitor policies, not a guarantee that daemon synchronization has stopped.
+// The original filesystem names and native identities must still match.
 //
 //purpose:observation
 func (mirror *Container) PeerIDs(ctx context.Context) ([]string, error) {
-	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
+	if err := mirror.lock(ctx); err != nil {
 		return nil, err
 	}
 	defer mirror.mu.Unlock()
+	if err := mirror.confirmDirectoryFilesystems(ctx); err != nil {
+		return nil, err
+	}
 	peers, err := mirror.peerRecords(ctx)
 	if err != nil {
 		return nil, err
@@ -1316,44 +1315,26 @@ func (mirror *Container) PeerIDs(ctx context.Context) ([]string, error) {
 	return ids, nil
 }
 
-func (mirror *Container) peerRecords(ctx context.Context) (map[string]json.RawMessage, error) {
-	if mirror.source == nil {
+func (mirror *Container) peerRecords(ctx context.Context) (map[string]cephFSPeerIdentity, error) {
+	if mirror.pair.source == nil {
 		return nil, errors.New("CephFS mirror is not initialized")
 	}
-	data, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "peer_list", mirror.SourceFilesystem)
-	if err != nil {
-		return nil, fmt.Errorf("list CephFS mirror peers: %w", err)
-	}
-	var peers map[string]json.RawMessage
-	if err := json.Unmarshal(data, &peers); err != nil {
-		return nil, fmt.Errorf("decode CephFS mirror peers: %w", err)
-	}
-	if peers == nil {
-		return nil, errors.New("CephFS mirror peer list is not a JSON object")
-	}
-	for id := range peers {
-		if _, err := uuid.Parse(id); err != nil {
-			return nil, fmt.Errorf("invalid CephFS mirror peer UUID %q: %w", id, err)
-		}
-	}
-	return peers, nil
+	return readPeerList(ctx, mirror.pair, "list CephFS mirror peers")
 }
 
 // RemovePeer unregisters only the peer this mirror bootstrapped. It preserves
 // destination data, snapshots and credentials. Daemon changes are asynchronous;
 // policy acknowledgement does not prove native replayer teardown. For a retained
 // strict same-session drain receipt, use BeginPeerRemoval and WaitDrained.
+// The original filesystem names and native identities must still match.
 //
 //purpose:condition,lifetime
 func (mirror *Container) RemovePeer(ctx context.Context, id string) error {
-	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
+	if err := mirror.lock(ctx); err != nil {
 		return err
 	}
 	defer mirror.mu.Unlock()
-	if mirror.closed {
-		return servicehook.Invalid(errors.New("CephFS mirror has been terminated"))
-	}
-	if err := mirror.ops.guardDirectoryAdditionOverlap(); err != nil {
+	if err := mirror.ops.guardPendingAddition(); err != nil {
 		return err
 	}
 	if mirror.ops.peerRemoval != nil && mirror.ops.peerRemoval.scope.peerID == id && !mirror.ops.peerRemoval.completed {
@@ -1365,17 +1346,20 @@ func (mirror *Container) RemovePeer(ctx context.Context, id string) error {
 		}
 		return mirror.ops.peerRemoval.resume(ctx)
 	}
-	if err := mirror.ops.guardPeerRemovalOverlap(); err != nil {
+	if err := mirror.ops.guardAnyPending(); err != nil {
 		return err
 	}
-	if id == "" || id != mirror.peerID {
+	if id == "" || id != mirror.peer.id {
 		return errors.New("CephFS mirror does not own this peer")
 	}
+	if err := mirror.confirmDirectoryFilesystems(ctx); err != nil {
+		return err
+	}
 	mirror.ops.supersedePeerDirectoryAddition(id)
-	if _, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "peer_remove", mirror.SourceFilesystem, id); err != nil {
+	if _, err := mirror.pair.source.Ceph(ctx, "fs", "snapshot", "mirror", "peer_remove", mirror.pair.sourceFilesystem, id); err != nil {
 		return fmt.Errorf("remove CephFS mirror peer: %w", err)
 	}
-	mirror.peerID = ""
+	mirror.peer.id = ""
 	return nil
 }
 
@@ -1393,16 +1377,13 @@ func (mirror *Container) RemovePeer(ctx context.Context, id string) error {
 //
 //purpose:condition
 func (mirror *Container) RebootstrapPeer(ctx context.Context) (string, error) {
-	if mirror == nil {
-		return "", cephFSObserveGuard("CephFS mirror fixture is unavailable")
-	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
+	if err := mirror.lock(ctx); err != nil {
 		return "", err
 	}
 	defer mirror.mu.Unlock()
-	if err := mirror.ops.guardPeerRemovalOverlap(); err != nil {
+	if err := mirror.ops.guardAnyPending(); err != nil {
 		return "", err
 	}
 	if err := mirror.confirmCephFSRefreshHandle(false); err != nil {
@@ -1419,16 +1400,15 @@ func (mirror *Container) RebootstrapPeer(ctx context.Context) (string, error) {
 		return "", err
 	}
 	if len(peers) != 0 {
-		if mirror.pendingPeerImport == nil {
+		if mirror.peer.pendingImport == nil {
 			return "", errors.New("remove the existing CephFS mirror peer before bootstrapping")
 		}
 		return mirror.reconcilePendingPeer(peers)
 	}
-	expected := mirror.pendingPeerImport
+	expected := mirror.peer.pendingImport
 	if expected == nil {
-		expected = &cephFSPeerIdentity{
-			ClientName: mirror.DestinationClientEntity, SiteName: mirror.destinationSite, FilesystemName: mirror.DestinationFilesystem,
-		}
+		identity := mirror.pair.peerIdentity()
+		expected = &identity
 	}
 	token, err := mirror.createPeerBootstrapToken(ctx, expected)
 	if err != nil {
@@ -1436,8 +1416,8 @@ func (mirror *Container) RebootstrapPeer(ctx context.Context) (string, error) {
 	}
 	// An error from Exec cannot prove the manager did not apply the command.
 	// Keep the attempted identity before import, including on import failure.
-	mirror.pendingPeerImport = expected
-	if _, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "peer_bootstrap", "import", mirror.SourceFilesystem, token); err != nil {
+	mirror.peer.pendingImport = expected
+	if _, err := mirror.pair.source.Ceph(ctx, "fs", "snapshot", "mirror", "peer_bootstrap", "import", mirror.pair.sourceFilesystem, token); err != nil {
 		return "", cephFSObserveQuery("import destination CephFS peer", err)
 	}
 	if err := mirror.checkCephFSRefreshFilesystems(ctx); err != nil {
@@ -1456,7 +1436,7 @@ func (mirror *Container) RebootstrapPeer(ctx context.Context) (string, error) {
 // roll. The filesystems are rechecked before and after the monitor read and
 // the context last. Container.mu is held.
 func (mirror *Container) createPeerBootstrapToken(ctx context.Context, expected *cephFSPeerIdentity) (string, error) {
-	bootstrap, err := mirror.destination.Ceph(ctx, "fs", "snapshot", "mirror", "peer_bootstrap", "create",
+	bootstrap, err := mirror.pair.destination.Ceph(ctx, "fs", "snapshot", "mirror", "peer_bootstrap", "create",
 		expected.FilesystemName, expected.ClientName, expected.SiteName)
 	if err != nil {
 		return "", cephFSObserveQuery("create destination CephFS peer bootstrap token", err)
@@ -1473,7 +1453,7 @@ func (mirror *Container) createPeerBootstrapToken(ctx context.Context, expected 
 	if err := mirror.checkCephFSRefreshFilesystems(ctx); err != nil {
 		return "", err
 	}
-	observer, err := ceph.Observe(mirror.destination)
+	observer, err := ceph.Observe(mirror.pair.destination)
 	if err != nil {
 		return "", err
 	}
@@ -1481,9 +1461,7 @@ func (mirror *Container) createPeerBootstrapToken(ctx context.Context, expected 
 	if err != nil {
 		return "", err
 	}
-	normalized, err := normalizeCephFSBootstrapToken(token.Token, cephFSPeerIdentity{
-		ClientName: mirror.DestinationClientEntity, SiteName: mirror.destinationSite, FilesystemName: mirror.DestinationFilesystem,
-	}, monitors)
+	normalized, err := normalizeCephFSBootstrapToken(token.Token, mirror.pair.peerIdentity(), monitors)
 	if err != nil {
 		return "", err
 	}
@@ -1498,34 +1476,27 @@ func (mirror *Container) createPeerBootstrapToken(ctx context.Context, expected 
 
 // Called under mirror.mu. A failed match retains the pending identity so a
 // later retry can recover, but never grants ownership of an unrelated peer.
-func (mirror *Container) reconcilePendingPeer(peers map[string]json.RawMessage) (string, error) {
-	id, err := matchPendingCephFSPeer(peers, mirror.pendingPeerImport)
+func (mirror *Container) reconcilePendingPeer(peers map[string]cephFSPeerIdentity) (string, error) {
+	id, err := matchPendingCephFSPeer(peers, mirror.peer.pendingImport)
 	if err != nil {
 		return "", err
 	}
-	if mirror.peerID != id {
+	if mirror.peer.id != id {
 		mirror.ops.peerGeneration++
 	}
-	mirror.peerID = id
-	mirror.pendingPeerImport = nil
+	mirror.peer.id = id
+	mirror.peer.pendingImport = nil
 	return id, nil
 }
 
-func matchPendingCephFSPeer(peers map[string]json.RawMessage, expected *cephFSPeerIdentity) (string, error) {
+func matchPendingCephFSPeer(peers map[string]cephFSPeerIdentity, expected *cephFSPeerIdentity) (string, error) {
 	if expected == nil || expected.ClientName == "" || expected.SiteName == "" || expected.FilesystemName == "" {
 		return "", errors.New("no CephFS peer import is pending")
 	}
 	if len(peers) != 1 {
 		return "", fmt.Errorf("pending CephFS bootstrap has %d peers, want one", len(peers))
 	}
-	for id, raw := range peers {
-		if _, err := uuid.Parse(id); err != nil {
-			return "", fmt.Errorf("invalid pending CephFS peer UUID %q: %w", id, err)
-		}
-		var observed cephFSPeerIdentity
-		if err := json.Unmarshal(raw, &observed); err != nil {
-			return "", fmt.Errorf("decode pending CephFS peer identity: %w", err)
-		}
+	for id, observed := range peers {
 		if observed != *expected {
 			return "", errors.New("existing CephFS peer does not match this pending bootstrap destination")
 		}
@@ -1548,7 +1519,7 @@ func normalizeCephFSMirrorConfig(config Config) (Config, error) {
 	}
 	config.DaemonCount = count
 	for _, name := range []string{config.SourceFilesystem, config.DestinationFilesystem} {
-		if !validCephFSMirrorFilesystemName(name) {
+		if !naming.PoolResource.MatchString(name) {
 			return config, servicehook.Invalid(errors.New("source and destination CephFS names must use letters, digits, underscores, dots or hyphens, starting with a letter, digit or underscore"))
 		}
 	}
@@ -1569,7 +1540,7 @@ func normalizeCephFSMirrorConfig(config Config) (Config, error) {
 			return config, err
 		}
 		for _, previous := range directories {
-			if directory == previous || directory == "/" || previous == "/" || strings.HasPrefix(directory, previous+"/") || strings.HasPrefix(previous, directory+"/") {
+			if cephFSDirectoriesOverlap(directory, previous) {
 				return config, servicehook.Invalid(fmt.Errorf("CephFS mirror directories %q and %q overlap", previous, directory))
 			}
 		}
@@ -1579,14 +1550,9 @@ func normalizeCephFSMirrorConfig(config Config) (Config, error) {
 	return config, nil
 }
 
-func validCephFSMirrorFilesystemName(name string) bool {
-	if name == "" || name[0] == '.' || name[0] == '-' {
-		return false
-	}
-	for _, character := range name {
-		if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '.' || character == '_' || character == '-') {
-			return false
-		}
-	}
-	return true
+// cephFSDirectoriesOverlap reports two normalized paths that Ceph's
+// directory policy cannot hold together: the same path, the root with any
+// path, or one path inside the other.
+func cephFSDirectoriesOverlap(a, b string) bool {
+	return a == b || a == "/" || b == "/" || strings.HasPrefix(a, b+"/") || strings.HasPrefix(b, a+"/")
 }

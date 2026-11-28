@@ -6,13 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
-
-	"github.com/google/uuid"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
 // Snapshot identifies a source snapshot reported by the native
@@ -32,14 +31,18 @@ const cephFSObservationMaxSnapshotID = ^uint64(0) - 2
 // an application checkpoint. DaemonProblems reports other unavailable members.
 // Native counters reset on daemon restart/directory reassignment.
 type DirectoryStatus struct {
-	SourceFilesystem, DestinationFilesystem         string
-	SourceFilesystemID, DestinationFilesystemID     int
-	Directory, PeerID, MappingState, InstanceID     string
-	DaemonName, State, FailureReason                string
-	CurrentSnapshot, LastSyncedSnapshot             *Snapshot
-	SnapshotsSynced, SnapshotsDeleted, SnapsRenamed uint64
-	DaemonProblems                                  map[string]string
-	Ready                                           bool
+	SourceFilesystem, DestinationFilesystem             string
+	SourceFilesystemID, DestinationFilesystemID         int
+	Directory, PeerID, MappingState, InstanceID         string
+	DaemonName, State, FailureReason                    string
+	CurrentSnapshot, LastSyncedSnapshot                 *Snapshot
+	SnapshotsSynced, SnapshotsDeleted, SnapshotsRenamed uint64
+	// SnapsRenamed holds the same count as SnapshotsRenamed.
+	//
+	// Deprecated: Use SnapshotsRenamed.
+	SnapsRenamed   uint64
+	DaemonProblems map[string]string
+	Ready          bool
 }
 
 // DirectoryStatus uses current owned processes and exact native filesystem,
@@ -60,9 +63,6 @@ func (mirror *Container) DirectoryStatus(ctx context.Context, directory string) 
 	if err != nil {
 		return result, cephFSObserveGuard("CephFS mirror directory must be an absolute path")
 	}
-	if mirror == nil {
-		return result, cephFSObserveGuard("CephFS mirror fixture is unavailable")
-	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	return mirror.directoryStatus(ctx, directory, nil)
@@ -75,7 +75,7 @@ func (mirror *Container) DirectoryStatus(ctx context.Context, directory string) 
 // released before it returns.
 func (mirror *Container) directoryStatus(ctx context.Context, directory string, admit func(context.Context) error) (DirectoryStatus, error) {
 	var result DirectoryStatus
-	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
+	if err := mirror.lock(ctx); err != nil {
 		return result, err
 	}
 	defer mirror.mu.Unlock()
@@ -84,21 +84,21 @@ func (mirror *Container) directoryStatus(ctx context.Context, directory string, 
 			return result, err
 		}
 	}
-	if mirror.closed || mirror.source == nil || mirror.destination == nil || mirror.pendingPeerImport != nil || mirror.peerID == "" || mirror.filesystemID <= 0 || mirror.destinationFilesystemID <= 0 || !mirror.filesystemIdentityConfirmed || mirror.metadataPoolID < 0 || mirror.destinationMetadataPoolID < 0 {
+	if mirror.pair.source == nil || mirror.pair.destination == nil || mirror.peer.pendingImport != nil || mirror.peer.id == "" || mirror.pair.sourceFilesystemID <= 0 || mirror.pair.destinationFilesystemID <= 0 || !mirror.pair.identityConfirmed || mirror.pair.sourceMetadataPoolID < 0 || mirror.pair.destinationMetadataPoolID < 0 {
 		return result, cephFSObserveGuard("CephFS mirror filesystem and peer identities are not confirmed")
 	}
 	if !mirror.directories.owns(directory) {
 		return result, cephFSObserveGuard("CephFS mirror does not own this current directory policy")
 	}
 	result = DirectoryStatus{
-		SourceFilesystem: mirror.SourceFilesystem, DestinationFilesystem: mirror.DestinationFilesystem,
-		SourceFilesystemID: mirror.filesystemID, DestinationFilesystemID: mirror.destinationFilesystemID,
-		Directory: directory, PeerID: mirror.peerID,
+		SourceFilesystem: mirror.pair.sourceFilesystem, DestinationFilesystem: mirror.pair.destinationFilesystem,
+		SourceFilesystemID: mirror.pair.sourceFilesystemID, DestinationFilesystemID: mirror.pair.destinationFilesystemID,
+		Directory: directory, PeerID: mirror.peer.id,
 	}
 	if err := mirror.checkCephFSObservedIdentities(ctx); err != nil {
 		return result, err
 	}
-	mapping, err := mirror.readCephFSObservedMapping(ctx, directory)
+	mapping, err := readDirectoryMapping(ctx, mirror.pair, directory)
 	if err != nil {
 		return result, err
 	}
@@ -109,7 +109,7 @@ func (mirror *Container) directoryStatus(ctx context.Context, directory string, 
 		}
 		return result, ctx.Err()
 	}
-	watchers, err := mirror.readFilesystemWatchers(ctx)
+	watchers, err := readWatchers(ctx, mirror.pair, "read CephFS filesystem watchers")
 	if err != nil {
 		return result, err
 	}
@@ -137,27 +137,6 @@ func (mirror *Container) directoryStatus(ctx context.Context, directory string, 
 		return result, &cephFSObservationPartialError{problems: observationErrors}
 	}
 	return result, nil
-}
-
-// readFilesystemWatchers reads the watchers of the source filesystem's
-// cephfs_mirror object, by watcher address.
-func (mirror *Container) readFilesystemWatchers(ctx context.Context) (map[string]string, error) {
-	control, err := mirror.source.ClientContainer(ctx)
-	if err != nil {
-		return nil, cephFSObserveQuery("read CephFS filesystem watchers", err)
-	}
-	if control == nil {
-		return nil, cephFSObserveQuery("CephFS source control container is unavailable", nil)
-	}
-	data, err := multicluster.Exec(ctx, control, "rados", "--pool", mirror.metadataPool, "listwatchers", "cephfs_mirror")
-	if err != nil {
-		return nil, cephFSObserveQuery("read CephFS filesystem watchers", err)
-	}
-	watchers, err := parseCephFSMirrorWatchers(data)
-	if err != nil {
-		return nil, cephFSObserveGuard("decode CephFS filesystem watchers")
-	}
-	return watchers, nil
 }
 
 type cephFSDirectorySession struct {
@@ -195,7 +174,7 @@ func (mirror *Container) selectDirectoryDaemon(ctx context.Context, instanceID s
 		if watchers[address] != instanceID {
 			continue
 		}
-		if peer != (cephFSPeerIdentity{ClientName: mirror.DestinationClientEntity, SiteName: mirror.destinationSite, FilesystemName: mirror.DestinationFilesystem}) {
+		if peer != mirror.pair.peerIdentity() {
 			return nil, nil, cephFSObserveGuard("CephFS selected daemon peer destination differs")
 		}
 		if selected != nil {
@@ -218,31 +197,34 @@ func (mirror *Container) observeDaemonSession(ctx context.Context, daemon *Daemo
 	if stateErr != nil {
 		return "", cephFSPeerIdentity{}, cephFSObserveQuery("inspect CephFS mirror process", stateErr), nil
 	}
-	if state == nil || !state.Running || state.Paused || state.Restarting || state.Dead {
+	if !normalCephFSMirrorProcess(state) {
 		return "", cephFSPeerIdentity{}, cephFSObserveQuery("owned CephFS mirror process is not running normally", nil), nil
 	}
-	data, execErr := multicluster.Exec(ctx, daemon, "ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "status", fmt.Sprintf("%s@%d", mirror.SourceFilesystem, mirror.filesystemID))
-	if execErr != nil {
-		return "", cephFSPeerIdentity{}, cephFSObserveQuery("read CephFS mirror filesystem session", execErr), nil
-	}
-	address, peer, failed, err := decodeCephFSObservedSession(data, mirror.peerID)
+	session, err := readDaemonSession(ctx, daemon, mirror.pair, "read CephFS mirror filesystem session")
 	if err != nil {
-		return "", cephFSPeerIdentity{}, nil, err
+		if errors.Is(err, errCephFSObservationGuard) {
+			return "", cephFSPeerIdentity{}, nil, err
+		}
+		return "", cephFSPeerIdentity{}, err, nil
 	}
-	if failed {
+	if session.failed {
 		return "", cephFSPeerIdentity{}, cephFSObserveQuery("owned CephFS filesystem session or peer is unavailable", nil), nil
 	}
-	return address, peer, nil, nil
+	peer, present := session.peers[mirror.peer.id]
+	if !present {
+		return "", cephFSPeerIdentity{}, cephFSObserveQuery("owned CephFS filesystem session or peer is unavailable", nil), nil
+	}
+	return session.address, peer, nil, nil
 }
 
 // readDirectoryReplay reads the selected daemon's replay state of directory
 // into result.
 func (mirror *Container) readDirectoryReplay(ctx context.Context, selected *Daemon, directory string, result *DirectoryStatus) error {
-	data, err := multicluster.Exec(ctx, selected, "ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "peer", "status", fmt.Sprintf("%s@%d", mirror.SourceFilesystem, mirror.filesystemID), mirror.peerID)
+	data, err := adminSocket(ctx, selected, "fs", "mirror", "peer", "status", mirror.pair.sessionName(), mirror.peer.id)
 	if err != nil {
 		return cephFSObserveQuery("read CephFS mirror directory replay", err)
 	}
-	if data, err = cephFSPeerStatusDirectories(data, mirror.peerID); err != nil {
+	if data, err = cephFSPeerStatusDirectories(data, mirror.peer.id); err != nil {
 		return err
 	}
 	replay, present, err := decodeCephFSObservedReplay(data, directory)
@@ -252,7 +234,8 @@ func (mirror *Container) readDirectoryReplay(ctx context.Context, selected *Daem
 	if present {
 		result.State, result.FailureReason = replay.State, replay.FailureReason
 		result.CurrentSnapshot, result.LastSyncedSnapshot = replay.Current, replay.Last
-		result.SnapshotsSynced, result.SnapshotsDeleted, result.SnapsRenamed = replay.Synced, replay.Deleted, replay.Renamed
+		result.SnapshotsSynced, result.SnapshotsDeleted, result.SnapshotsRenamed = replay.Synced, replay.Deleted, replay.Renamed
+		result.SnapsRenamed = replay.Renamed
 		result.Ready = replay.State == "idle" || replay.State == "syncing"
 	}
 	return nil
@@ -262,7 +245,7 @@ func (mirror *Container) readDirectoryReplay(ctx context.Context, selected *Daem
 // and peer identities, then the selected session and watcher association.
 // Replay is published only after those identities agree with the selection.
 func (mirror *Container) confirmDirectoryUnchanged(ctx context.Context, directory string, mapping cephFSObservedMapping, selected cephFSDirectorySession) error {
-	after, err := mirror.readCephFSObservedMapping(ctx, directory)
+	after, err := readDirectoryMapping(ctx, mirror.pair, directory)
 	if err != nil {
 		return err
 	}
@@ -279,10 +262,10 @@ func (mirror *Container) confirmDirectoryUnchanged(ctx context.Context, director
 	if unavailable != nil {
 		return unavailable
 	}
-	if address != selected.address || peer != (cephFSPeerIdentity{ClientName: mirror.DestinationClientEntity, SiteName: mirror.destinationSite, FilesystemName: mirror.DestinationFilesystem}) {
+	if address != selected.address || peer != mirror.pair.peerIdentity() {
 		return cephFSObserveQuery("CephFS selected filesystem session changed during observation", nil)
 	}
-	watchers, err := mirror.readFilesystemWatchers(ctx)
+	watchers, err := readWatchers(ctx, mirror.pair, "read CephFS filesystem watchers")
 	if err != nil {
 		return err
 	}
@@ -338,7 +321,7 @@ func (mirror *Container) waitDirectory(ctx context.Context, directory string, re
 		return DirectoryStatus{}, cephFSObserveGuard("CephFS mirror directory must be an absolute path")
 	}
 	if mirror == nil {
-		return DirectoryStatus{}, cephFSObserveGuard("CephFS mirror fixture is unavailable")
+		return DirectoryStatus{}, cephFSRefusal("CephFS mirror fixture is unavailable")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Minute)
 	defer cancel()
@@ -346,12 +329,10 @@ func (mirror *Container) waitDirectory(ctx context.Context, directory string, re
 	return waitCephFSObservedDirectory(ctx, time.Second, func(attempt context.Context) (DirectoryStatus, error) {
 		attempt, cancel := context.WithTimeout(attempt, 30*time.Second)
 		defer cancel()
-		return mirror.directoryStatus(attempt, directory, func(ctx context.Context) error {
-			if mirror.closed {
-				return cephFSObserveGuard("the CephFS mirror has been terminated")
-			}
-			return pin.admit(ctx)
-		})
+		if err := pin.running(attempt); err != nil {
+			return DirectoryStatus{}, err
+		}
+		return mirror.directoryStatus(attempt, directory, pin.admit)
 	}, ready)
 }
 
@@ -423,6 +404,17 @@ func (e *cephFSObservationError) Is(target error) bool {
 func cephFSObserveGuard(message string) error {
 	return &cephFSObservationError{message: message, permanent: true}
 }
+
+// cephFSRefusal refuses a request that the fixture can never serve: a nil
+// or terminated mirror, or a terminated cluster. It matches
+// ceph.ErrInvalidRequest, and it is a permanent guard, so a wait or a watch
+// ends on it at once.
+func cephFSRefusal(message string) error {
+	return &cephFSObservationError{message: message, cause: servicehook.Invalid(errors.New(message)), permanent: true}
+}
+
+// errCephFSMirrorTerminated refuses every request to a terminated mirror.
+func errCephFSMirrorTerminated() error { return cephFSRefusal("CephFS mirror has been terminated") }
 func cephFSObserveQuery(operation string, cause error) error {
 	return &cephFSObservationError{message: operation + " failed", cause: cause}
 }
@@ -431,113 +423,17 @@ func (mirror *Container) checkCephFSObservedIdentities(ctx context.Context) erro
 	if err := mirror.checkCephFSOriginalFilesystemIdentities(ctx, "read CephFS filesystem identity", "CephFS original filesystem or metadata pool identity differs"); err != nil {
 		return err
 	}
-	data, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "peer_list", mirror.SourceFilesystem)
+	peers, err := readPeerList(ctx, mirror.pair, "read CephFS mirror peer policy")
 	if err != nil {
-		return cephFSObserveQuery("read CephFS mirror peer policy", err)
-	}
-	var peers map[string]json.RawMessage
-	if json.Unmarshal(data, &peers) != nil || peers == nil {
-		return cephFSObserveGuard("decode CephFS mirror peer policy object")
-	}
-	for id := range peers {
-		parsed, err := uuid.Parse(id)
-		if err != nil || parsed.String() != id {
-			return cephFSObserveGuard("decode CephFS mirror peer policy UUID")
-		}
+		return err
 	}
 	if len(peers) != 1 {
 		return cephFSObserveGuard("CephFS owned peer policy changed")
 	}
-	entry, exists := peers[mirror.peerID]
-	if !exists {
-		return cephFSObserveGuard("CephFS owned peer policy destination differs")
-	}
-	var peer *struct {
-		ClientName     *string `json:"client_name"`
-		SiteName       *string `json:"site_name"`
-		FilesystemName *string `json:"fs_name"`
-	}
-	if json.Unmarshal(entry, &peer) != nil || peer == nil || peer.ClientName == nil || peer.SiteName == nil || peer.FilesystemName == nil || *peer.ClientName == "" || *peer.SiteName == "" || *peer.FilesystemName == "" {
-		return cephFSObserveGuard("decode CephFS mirror peer policy destination identity")
-	}
-	if (cephFSPeerIdentity{ClientName: *peer.ClientName, SiteName: *peer.SiteName, FilesystemName: *peer.FilesystemName}) != (cephFSPeerIdentity{ClientName: mirror.DestinationClientEntity, SiteName: mirror.destinationSite, FilesystemName: mirror.DestinationFilesystem}) {
+	if peer, exists := peers[mirror.peer.id]; !exists || peer != mirror.pair.peerIdentity() {
 		return cephFSObserveGuard("CephFS owned peer policy destination differs")
 	}
 	return nil
-}
-
-type cephFSObservedMapping struct{ State, InstanceID string }
-
-func (mirror *Container) readCephFSObservedMapping(ctx context.Context, directory string) (cephFSObservedMapping, error) {
-	var result cephFSObservedMapping
-	data, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "dirmap", mirror.SourceFilesystem, directory)
-	if err != nil {
-		return result, cephFSObserveQuery("read CephFS directory mapping", err)
-	}
-	var native struct {
-		State      json.RawMessage `json:"state"`
-		InstanceID *string         `json:"instance_id"`
-	}
-	if json.Unmarshal(data, &native) != nil || len(native.State) == 0 {
-		return result, cephFSObserveGuard("decode CephFS directory mapping state")
-	}
-	// v20.2.4 emits null for a transient UNASSOCIATED state.
-	if string(native.State) == "null" {
-		result.State = "unassociated"
-	} else if json.Unmarshal(native.State, &result.State) != nil || !slices.Contains([]string{"mapped", "mapping", "unmapping", "shuffling", "resolving", "stalled"}, result.State) {
-		return result, cephFSObserveGuard("decode CephFS directory mapping state")
-	}
-	if native.InstanceID != nil {
-		result.InstanceID = *native.InstanceID
-	}
-	if result.State == "mapped" {
-		if id, err := strconv.ParseUint(result.InstanceID, 10, 64); err != nil || id == 0 {
-			return result, cephFSObserveGuard("decode CephFS mapped filesystem watcher identity")
-		}
-	}
-	return result, nil
-}
-
-func decodeCephFSObservedSession(data []byte, peerID string) (string, cephFSPeerIdentity, bool, error) {
-	var peer cephFSPeerIdentity
-	// Explicit JSON tags for fields with underscores.
-	var tagged struct {
-		State         json.RawMessage `json:"state"`
-		RadosInstance *string         `json:"rados_inst"`
-		Peers         map[string]struct {
-			Remote *struct {
-				ClientName     *string `json:"client_name"`
-				ClusterName    *string `json:"cluster_name"`
-				FilesystemName *string `json:"fs_name"`
-			} `json:"remote"`
-		} `json:"peers"`
-	}
-	if json.Unmarshal(data, &tagged) != nil {
-		return "", peer, false, cephFSObserveGuard("decode CephFS daemon filesystem session")
-	}
-	if len(tagged.State) != 0 {
-		var state string
-		if json.Unmarshal(tagged.State, &state) != nil {
-			return "", peer, false, cephFSObserveGuard("decode CephFS daemon filesystem failure state")
-		}
-		if state == "failed" || state == "blocklisted" {
-			return "", peer, true, nil
-		}
-		return "", peer, false, cephFSObserveGuard("decode CephFS daemon filesystem failure state")
-	}
-	if tagged.RadosInstance == nil || *tagged.RadosInstance == "" || tagged.Peers == nil {
-		return "", peer, false, cephFSObserveGuard("decode CephFS daemon filesystem session identity")
-	}
-	entry, present := tagged.Peers[peerID]
-	if !present {
-		return *tagged.RadosInstance, peer, true, nil
-	}
-	remote := entry.Remote
-	if remote == nil || remote.ClientName == nil || remote.ClusterName == nil || remote.FilesystemName == nil || *remote.ClientName == "" || *remote.ClusterName == "" || *remote.FilesystemName == "" {
-		return "", peer, false, cephFSObserveGuard("decode CephFS daemon peer destination identity")
-	}
-	peer = cephFSPeerIdentity{ClientName: *remote.ClientName, SiteName: *remote.ClusterName, FilesystemName: *remote.FilesystemName}
-	return *tagged.RadosInstance, peer, false, nil
 }
 
 type cephFSObservedReplay struct {
@@ -621,25 +517,19 @@ func (mirror *Container) checkCephFSOriginalFilesystemIdentities(ctx context.Con
 		return cephFSObserveGuard(mismatch)
 	}
 	for _, site := range []struct {
-		name   string
-		id     int
-		poolID int64
-		read   func(context.Context, ...string) ([]byte, error)
+		cluster *ceph.Container
+		name    string
+		id      int
+		poolID  int64
 	}{
-		{mirror.sourceFilesystem, mirror.filesystemID, mirror.metadataPoolID, mirror.source.Ceph},
-		{mirror.destinationFilesystem, mirror.destinationFilesystemID, mirror.destinationMetadataPoolID, mirror.destination.Ceph},
+		{mirror.pair.source, mirror.pair.sourceFilesystem, mirror.pair.sourceFilesystemID, mirror.pair.sourceMetadataPoolID},
+		{mirror.pair.destination, mirror.pair.destinationFilesystem, mirror.pair.destinationFilesystemID, mirror.pair.destinationMetadataPoolID},
 	} {
-		data, err := site.read(ctx, "fs", "get", site.name, "--format", "json")
-		if err != nil {
-			return cephFSObserveQuery(readOperation, err)
+		identity, err := readFilesystemIdentity(ctx, site.cluster, site.name, readOperation)
+		if err != nil && !errors.Is(err, errCephFSObservationGuard) {
+			return err
 		}
-		var native struct {
-			ID     *int `json:"id"`
-			MDSMap *struct {
-				MetadataPool *int64 `json:"metadata_pool"`
-			} `json:"mdsmap"`
-		}
-		if json.Unmarshal(data, &native) != nil || native.ID == nil || *native.ID != site.id || native.MDSMap == nil || native.MDSMap.MetadataPool == nil || *native.MDSMap.MetadataPool != site.poolID {
+		if err != nil || identity.id != site.id || identity.metadataPool != site.poolID {
 			return cephFSObserveGuard(mismatch)
 		}
 	}
