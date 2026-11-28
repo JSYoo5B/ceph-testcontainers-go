@@ -18,6 +18,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/placement"
 	"github.com/testcontainers/testcontainers-go"
@@ -272,13 +273,12 @@ func rgwPlacementWaitCreateBucket(t *testing.T, parent context.Context, client h
 
 // rgwPlacementRecoverRestart checks both sides of the restart on a real
 // gateway. The peer changes and restores a live field the placement pinned.
-func rgwPlacementRecoverRestart(t *testing.T, ctx context.Context, target *placement.Placement, gateway, peer *rgw.Gateway) {
+func rgwPlacementRecoverRestart(t *testing.T, ctx context.Context, cluster *ceph.Container, target *placement.Placement, gateway, peer *rgw.Gateway) {
 	t.Helper()
 	applyCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	interrupted := &interruptedPlacementRestart{Container: gateway.Container, cancel: cancel}
-	gateway.Container = interrupted
-	defer func() { gateway.Container = interrupted.Container }()
+	defer swapGatewayContainer(cluster, gateway, interrupted)()
 	err := target.Apply(applyCtx, gateway)
 	if err == nil || !errors.Is(applyCtx.Err(), context.Canceled) || interrupted.startAttempts != 1 || interrupted.starts != 0 {
 		t.Fatalf("first restart: err=%v, caller=%v, attempts=%d starts=%d", err, applyCtx.Err(), interrupted.startAttempts, interrupted.starts)
@@ -360,11 +360,11 @@ func testRGWPlacementStorageClasses(t *testing.T, options ...testcontainers.Cont
 	if err != nil {
 		t.Fatal(err)
 	}
-	rgwPlacementRecoverRestart(t, ctx, target, gateway, peer)
+	rgwPlacementRecoverRestart(t, ctx, cluster, target, gateway, peer)
 	cycle := &cycleBeforeStopReply{Container: gateway.Container}
-	gateway.Container = cycle
+	restore := swapGatewayContainer(cluster, gateway, cycle)
 	err = target.Apply(ctx, gateway)
-	gateway.Container = cycle.Container
+	restore()
 	stateAfterStop, inspectErr := gateway.State(ctx)
 	if err == nil || inspectErr != nil || cycle.externalStart == "" || stateAfterStop == nil || stateAfterStop.Running || stateAfterStop.StartedAt != cycle.externalStart {
 		t.Fatalf("expected the externally stopped generation to remain stopped: state=%v, inspect=%v, Apply=%v", stateAfterStop, inspectErr, err)
@@ -474,4 +474,23 @@ func rgwPlacementRequest(t *testing.T, ctx context.Context, client harness.S3HTT
 		t.Fatalf("S3 storageclass %s returned %d: %s %v", storageClass, response.StatusCode, data, err)
 	}
 	return data
+}
+
+// swapGatewayContainer puts seam, a wrapper that injects a fault around the
+// gateway's container, in gateway.Container and registers it as cluster's
+// service of the gateway: typed operations run only through the container
+// handle that the cluster registered. The returned function puts the
+// original container back in both.
+func swapGatewayContainer(cluster *ceph.Container, gateway *rgw.Gateway, seam testcontainers.Container) func() {
+	service := "rgw"
+	if gateway.GatewayName != "default" {
+		service += ":" + gateway.GatewayName
+	}
+	original := gateway.Container
+	gateway.Container = seam
+	testhelper.TestRecordService(cluster, service, seam)
+	return func() {
+		gateway.Container = original
+		testhelper.TestRecordService(cluster, service, original)
+	}
 }

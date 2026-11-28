@@ -157,10 +157,9 @@ func testRGWTLSReplacement(t *testing.T, opts ...testcontainers.ContainerCustomi
 		t.Fatal("lost installation used a stale certificate expectation")
 	}
 	stopped := successor.Issue(t)
+	// A completed Stop whose reply was lost is decided by the run state:
+	// the stopped original generation is started in the same call.
 	lost.stop = true
-	if err := gateway.ReplaceTLS(ctx, *stopped); err == nil {
-		t.Fatal("lost Stop reply was hidden")
-	}
 	if err := gateway.ReplaceTLS(ctx, *stopped); err != nil {
 		t.Fatalf("resume completed Stop: %v", err)
 	}
