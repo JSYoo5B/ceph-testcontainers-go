@@ -57,7 +57,7 @@ func (c *rgwScriptCLI) Exec(ctx context.Context, args []string, opts ...tcexec.P
 func newPhaseFixture(source, destination *rgwScriptCLI) *Fixture {
 	f := newPairFixture(realmSpec{Realm: "realm", Zonegroup: "us", SourceZone: "a", DestinationZone: "b", destinationZonegroup: "us"})
 	f.realm.sourceClient, f.realm.destinationClient = source, destination
-	f.realm.systemAccess, f.realm.systemSecret = "ACCESS", "SECRET"
+	f.realm.system = systemKeys("ACCESS", "SECRET")
 	return f
 }
 
@@ -310,13 +310,13 @@ func TestRGWZoneAdditionRefusesBeforeCreatingAnything(t *testing.T) {
 		"unknown group":   {config: ZoneConfig{Name: "d", Zonegroup: "asia"}, want: "requires an owned zonegroup"},
 		"known new group": {config: ZoneConfig{Name: "d", Zonegroup: "eu"}, createGroup: true, want: "requires an owned zonegroup"},
 		"closed":          {config: ZoneConfig{Name: "d"}, change: func(f *Fixture) { f.closed = true }, want: "initialized and running"},
-		"no credentials":  {config: ZoneConfig{Name: "d"}, change: func(f *Fixture) { f.realm.systemSecret = "" }, want: "initialized and running"},
+		"no credentials":  {config: ZoneConfig{Name: "d"}, change: func(f *Fixture) { f.realm.system = systemKeys(f.realm.systemAccess(), "") }, want: "initialized and running"},
 		"already owned":   {config: ZoneConfig{Name: "a"}, want: "already owned"},
 		"essential image": {config: ZoneConfig{Name: "d", Cluster: splitRoleCluster("image")}, want: "not its rgw image"},
 	}
 	for name, tc := range cases {
 		f, cli, _, _, _ := rgwRemovalFixture()
-		f.realm.systemAccess, f.realm.systemSecret = "ACCESS", "SECRET"
+		f.realm.system = systemKeys("ACCESS", "SECRET")
 		if tc.change != nil {
 			tc.change(f)
 		}
@@ -491,7 +491,7 @@ func TestRGWPeriodPullRequiresSystemCredentialsAndThePeerEndpoint(t *testing.T) 
 	if !slices.Equal(cli.ops, want) {
 		t.Fatalf("pulls: %q", cli.ops)
 	}
-	f.realm.systemSecret = ""
+	f.realm.system = systemKeys(f.realm.systemAccess(), "")
 	if err := f.PullDestinationPeriod(t.Context()); err == nil {
 		t.Fatal("a pull without system credentials was accepted")
 	}
@@ -749,11 +749,28 @@ func TestRGWBucketInstanceMatchesOnlyItsExactNativeIdentity(t *testing.T) {
 	}
 }
 
+// TestRGWFixtureFormatsOnlyItsRealm formats a fixture with known system keys
+// and S3 keys, as a pointer and as a value: neither prints a key. A value
+// does not reach the pointer-receiver Format, so it is the keys' place
+// behind pointers that keeps them out. The value is taken through reflect so
+// that the test does not copy the fixture's mutex in source.
 func TestRGWFixtureFormatsOnlyItsRealm(t *testing.T) {
 	f := newPhaseFixture(&rgwScriptCLI{}, &rgwScriptCLI{})
-	f.realm.systemAccess, f.realm.systemSecret = "SYSTEMACCESSKEY", "SYSTEMSECRETKEY"
-	text := fmt.Sprintf("%v %+v %#v %s %d", f, f, f, f, f)
-	if strings.Contains(text, "SYSTEMACCESSKEY") || strings.Contains(text, "SYSTEMSECRETKEY") || !strings.Contains(text, "RGW multisite fixture realm") {
+	f.realm.system = systemKeys("SYSTEMACCESSKEY", "SYSTEMSECRETKEY")
+	f.Source = &rgw.Gateway{AccessKey: "S3ACCESSKEY", SecretKey: "S3SECRETKEY"}
+	f.topology.additional = map[string]*rgwZoneState{"c": {Zone: Zone{Name: "c", Gateway: &rgw.Gateway{AccessKey: "S3ACCESSKEY", SecretKey: "S3SECRETKEY"}}}}
+	value := reflect.ValueOf(f).Elem().Interface()
+	for name, text := range map[string]string{
+		"pointer": fmt.Sprintf("%v %+v %#v %s %d", f, f, f, f, f),
+		"value":   fmt.Sprintf("%v %+v %#v %s %d", value, value, value, value, value),
+	} {
+		for _, key := range []string{"SYSTEMACCESSKEY", "SYSTEMSECRETKEY", "S3ACCESSKEY", "S3SECRETKEY"} {
+			if strings.Contains(text, key) {
+				t.Errorf("formatting the fixture as a %s prints %s: %s", name, key, text)
+			}
+		}
+	}
+	if text := fmt.Sprint(f); text != "RGW multisite fixture realm" {
 		t.Fatalf("formatted fixture: %s", text)
 	}
 	var none *Fixture

@@ -75,7 +75,7 @@ func (f *Fixture) metadataLogRequests(region string, now time.Time) func([]strin
 	day := stamp[:8]
 	scope := day + "/" + region + "/s3/aws4_request"
 	hash := fmt.Sprintf("%x", sha256.Sum256(nil))
-	key := metadataLogHMAC([]byte("AWS4"+f.realm.systemSecret), day)
+	key := metadataLogHMAC([]byte("AWS4"+f.realm.systemSecret()), day)
 	key = metadataLogHMAC(key, region)
 	key = metadataLogHMAC(key, "s3")
 	key = metadataLogHMAC(key, "aws4_request")
@@ -85,7 +85,7 @@ func (f *Fixture) metadataLogRequests(region string, now time.Time) func([]strin
 			"\n\n" + signed + "\n" + hash
 		toSign := fmt.Sprintf("%s\n%s\n%s\n%x", algorithm, stamp, scope, sha256.Sum256([]byte(canonical)))
 		auth := fmt.Sprintf("%s Credential=%s/%s, SignedHeaders=%s, Signature=%x", algorithm,
-			f.realm.systemAccess, scope, signed, metadataLogHMAC(key, toSign))
+			f.realm.systemAccess(), scope, signed, metadataLogHMAC(key, toSign))
 		return append(args, "--silent", "--fail", "--noproxy", "*", "--max-filesize", "4096",
 			"--header", "x-amz-date: "+stamp, "--header", "x-amz-content-sha256: "+hash,
 			"--header", "Authorization: "+auth, endpoint.String())

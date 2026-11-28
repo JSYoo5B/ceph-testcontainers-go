@@ -119,9 +119,38 @@ type rgwRealmAccess struct {
 	config                          realmSpec
 	sourceClient, destinationClient testcontainers.Container
 	sourceURL, destinationURL       string
-	systemAccess, systemSecret      string
+	system                          systemCredentials
 	scopeMu                         sync.RWMutex
 	zoneGroups                      map[string]string
+}
+
+// systemCredentials holds the realm system user's keys in a closure. fmt
+// prints a function as its address for every verb, and formatting a Fixture
+// value reaches neither the pointer-receiver Format nor any method of an
+// unexported field, so this keeps the keys out of every formatted fixture.
+type systemCredentials func() (access, secret string)
+
+// systemKeys returns the systemCredentials of access and secret.
+func systemKeys(access, secret string) systemCredentials {
+	return func() (string, string) { return access, secret }
+}
+
+// systemAccess and systemSecret return the system user's keys, "" before
+// setup recorded them.
+func (r *rgwRealmAccess) systemAccess() string {
+	if r.system == nil {
+		return ""
+	}
+	access, _ := r.system()
+	return access
+}
+
+func (r *rgwRealmAccess) systemSecret() string {
+	if r.system == nil {
+		return ""
+	}
+	_, secret := r.system()
+	return secret
 }
 
 // rgwZoneTopology is the realm topology beyond the original pair: the added
@@ -425,13 +454,13 @@ func (f *Fixture) bootstrapSourceZone(ctx context.Context, image string, setup p
 	}
 	defer source.releaseUnused(ctx)
 	f.realm.sourceURL, f.realm.destinationURL = source.endpoint, "http://"+destinationAlias+":7480"
-	f.realm.systemAccess, f.realm.systemSecret = strings.ReplaceAll(uuid.NewString(), "-", ""), uuid.NewString()+uuid.NewString()
+	f.realm.system = systemKeys(strings.ReplaceAll(uuid.NewString(), "-", ""), uuid.NewString()+uuid.NewString())
 	if err := f.realm.runZoneCommands(ctx, f.realm.sourceClient, f.realm.config.SourceZone, [][]string{
 		{"realm", "create", "--default"},
 		rgwEndpointArgs([]string{"zonegroup", "create", "--master", "--default"}, f.realm.sourceURL),
 		rgwEndpointArgs([]string{"zone", "create", "--master", "--default"}, f.realm.sourceURL),
-		{"user", "create", "--uid", "tc-sync-" + setup.config.suffix, "--display-name", "Testcontainers multisite sync", "--system", "--access-key", f.realm.systemAccess, "--secret-key", f.realm.systemSecret},
-		{"zone", "modify", "--access-key", f.realm.systemAccess, "--secret", f.realm.systemSecret},
+		{"user", "create", "--uid", "tc-sync-" + setup.config.suffix, "--display-name", "Testcontainers multisite sync", "--system", "--access-key", f.realm.systemAccess(), "--secret-key", f.realm.systemSecret()},
+		{"zone", "modify", "--access-key", f.realm.systemAccess(), "--secret", f.realm.systemSecret()},
 		{"period", "update", "--commit"},
 	}); err != nil {
 		return err
@@ -599,10 +628,10 @@ type zoneJoin struct {
 
 func (r *rgwRealmAccess) joinZone(ctx context.Context, join zoneJoin) error {
 	commands := [][]string{
-		{"realm", "pull", "--url", join.masterURL, "--access-key", r.systemAccess, "--secret", r.systemSecret},
+		{"realm", "pull", "--url", join.masterURL, "--access-key", r.systemAccess(), "--secret", r.systemSecret()},
 		{"realm", "default"},
 	}
-	create := []string{"zone", "create", "--access-key", r.systemAccess, "--secret", r.systemSecret}
+	create := []string{"zone", "create", "--access-key", r.systemAccess(), "--secret", r.systemSecret()}
 	if join.newGroup != "" {
 		commands = append(commands, rgwEndpointArgs([]string{"zonegroup", "create", "--api-name", join.newGroup}, join.endpoint))
 		create = append(create, "--master")
@@ -830,10 +859,10 @@ func (f *Fixture) pullPeriod(ctx context.Context, target func() (client testcont
 	if err != nil {
 		return err
 	}
-	if f.realm.systemAccess == "" || f.realm.systemSecret == "" || url == "" {
+	if f.realm.systemAccess() == "" || f.realm.systemSecret() == "" || url == "" {
 		return fmt.Errorf("RGW multisite system credentials are unavailable")
 	}
-	_, err = f.realm.admin(ctx, client, zone, "realm", "pull", "--url", url, "--access-key", f.realm.systemAccess, "--secret", f.realm.systemSecret)
+	_, err = f.realm.admin(ctx, client, zone, "realm", "pull", "--url", url, "--access-key", f.realm.systemAccess(), "--secret", f.realm.systemSecret())
 	return err
 }
 

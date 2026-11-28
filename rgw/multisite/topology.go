@@ -438,7 +438,7 @@ func (f *Fixture) admitZoneAddition(ctx context.Context, image string, config Zo
 	if _, knownGroup := f.topology.groupIDs[config.Zonegroup]; knownGroup == createGroup {
 		return zoneAddition{}, servicehook.Invalid(errors.New("AddZone requires an owned zonegroup; AddZonegroup requires a fresh group name"))
 	}
-	if f.closed || f.Source == nil || f.Destination == nil || f.RealmID == "" || f.realm.systemAccess == "" || f.realm.systemSecret == "" {
+	if f.closed || f.Source == nil || f.Destination == nil || f.RealmID == "" || f.realm.systemAccess() == "" || f.realm.systemSecret() == "" {
 		return zoneAddition{}, servicehook.Invalid(errors.New("RGW multisite must be initialized and running"))
 	}
 	if err := multicluster.RequireRoleImage(image, multicluster.RoleRGW, config.Cluster); err != nil {
@@ -816,7 +816,7 @@ func (f *Fixture) zonePeriodsLag(ctx context.Context, master *rgwZoneState, stat
 		// realm pull advances the active pointer and reflects zonegroups.
 		if state.ID != master.ID {
 			if _, err := f.realm.admin(ctx, state.client, state.Name, "realm", "pull", "--url", master.PeerEndpoint,
-				"--access-key", f.realm.systemAccess, "--secret", f.realm.systemSecret); err != nil {
+				"--access-key", f.realm.systemAccess(), "--secret", f.realm.systemSecret()); err != nil {
 				return fmt.Errorf("pull active RGW topology into %s: %w", state.Name, err)
 			}
 		}

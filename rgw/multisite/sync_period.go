@@ -160,7 +160,7 @@ func (f *Fixture) importSyncPeriod(ctx context.Context, master *rgwZoneState, st
 		}
 		if zone.ID != master.ID {
 			if _, err := f.syncPolicyWrite(ctx, zone, zone.Zonegroup, "realm", "pull", "--url", master.PeerEndpoint,
-				"--access-key", f.realm.systemAccess, "--secret", f.realm.systemSecret); err != nil {
+				"--access-key", f.realm.systemAccess(), "--secret", f.realm.systemSecret()); err != nil {
 				return err
 			}
 			data, err = f.syncPolicyAdmin(ctx, zone, zone.Zonegroup, "period", "get")
