@@ -159,15 +159,14 @@ func fatalSignalReport(lines []string) string {
 
 // crash is the fatalSignalReport text of r.
 func (r signalReport) crash() string {
-	report := r
-	text := "radosgw-admin reported fatal signal " + report.signal
-	if report.thread != "" {
-		text += " in thread " + report.thread
+	text := "radosgw-admin reported fatal signal " + r.signal
+	if r.thread != "" {
+		text += " in thread " + r.thread
 	}
-	if len(report.frames) == 0 {
+	if len(r.frames) == 0 {
 		return text + ", without a backtrace"
 	}
-	return text + ", backtrace " + report.backtrace()
+	return text + ", backtrace " + r.backtrace()
 }
 
 // stopReport says where a command that the supervisor stopped with
@@ -183,23 +182,22 @@ func stopReport(stderr []byte) string {
 	return report.stop(ok, lines)
 }
 
-// stop is the stopReport text of r, the report in lines with maxStopFrames
-// frames, which found says lines hold.
+// stop is the stopReport text of r, the report in lines read with
+// maxStopFrames frames; found says whether lines hold one.
 func (r signalReport) stop(found bool, lines []string) string {
-	report, ok := r, found
 	switch {
-	case !ok:
+	case !found:
 		return ""
-	case report.signal != "Aborted":
+	case r.signal != "Aborted":
 		return fatalSignalReport(lines)
-	case len(report.frames) == 0:
+	case len(r.frames) == 0:
 		return ""
 	}
 	thread := "a thread"
-	if report.thread != "" {
-		thread = "thread " + report.thread
+	if r.thread != "" {
+		thread = "thread " + r.thread
 	}
-	return "when it was stopped, " + thread + " was in " + report.backtrace()
+	return "when it was stopped, " + thread + " was in " + r.backtrace()
 }
 
 // signalReport is the first fatal signal report of a command's output: the

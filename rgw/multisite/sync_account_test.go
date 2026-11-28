@@ -1,9 +1,8 @@
 package multisite
 
 import (
-	"testing"
-
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
+	"testing"
 )
 
 func TestRGWSyncAccountRootRequiresCapturedAccountBucketsWithoutTranslation(t *testing.T) {
