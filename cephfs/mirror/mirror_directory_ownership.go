@@ -81,6 +81,19 @@ func (o *cephFSDirectoryOwnership) forget(directory string) {
 	delete(o.rebalanceRelease, directory)
 }
 
+// settleAbsent settles the pending release of directory once the path is
+// confirmed absent from the native policy. An explicit removal is complete,
+// so the path is forgotten and forgotten is true; a temporary rebalance
+// removal only drops its record, and the path stays owned.
+func (o *cephFSDirectoryOwnership) settleAbsent(directory string) (forgotten bool) {
+	if o.pendingRelease[directory] {
+		o.forget(directory)
+		return true
+	}
+	delete(o.rebalanceRelease, directory)
+	return false
+}
+
 // rebalancePaths lists owned paths that the caller still wants registered.
 func (o *cephFSDirectoryOwnership) rebalancePaths() []string {
 	directories := make([]string, 0, len(o.owned))
@@ -110,7 +123,13 @@ func (mirror *Container) registerDirectory(directory string, publish bool) {
 // forgetDirectory drops the ownership of directory and its listing.
 // Container.mu is held.
 func (mirror *Container) forgetDirectory(directory string) {
+	mirror.unlistDirectory(directory)
+	mirror.directories.forget(directory)
+}
+
+// unlistDirectory drops directory from RegisteredDirectories and
+// Directories. Container.mu is held.
+func (mirror *Container) unlistDirectory(directory string) {
 	mirror.registered = slices.DeleteFunc(mirror.registered, func(item string) bool { return item == directory })
 	mirror.Directories = slices.Clone(mirror.registered)
-	mirror.directories.forget(directory)
 }

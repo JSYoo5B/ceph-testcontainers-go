@@ -931,10 +931,8 @@ func (mirror *Container) AddDirectory(ctx context.Context, directory string) err
 		if err := mirror.confirmDirectoryAbsent(ctx, directory); err != nil {
 			return err
 		}
-		if mirror.directories.pendingRelease[directory] {
-			mirror.forgetDirectory(directory)
-		} else {
-			delete(mirror.directories.rebalanceRelease, directory)
+		if mirror.directories.settleAbsent(directory) {
+			mirror.unlistDirectory(directory)
 		}
 	}
 	// Even an uncertain native re-add invalidates the old cycle receipt; it
