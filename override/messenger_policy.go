@@ -41,8 +41,9 @@ func notAppliedMessengerPolicy(cause error) (*MessengerPolicyHandle, error) {
 // to new connections without a restart, and established connections keep
 // their mode. A handle returned with an error holds the overrides that were
 // made and must be restored. A policy that selects no valid mode, and any
-// policy with ceph.MessengerV2Secure, is refused with ceph.ErrInvalidRequest
-// before any change.
+// policy on a cluster bootstrapped with ceph.MessengerV2Secure, whose local
+// configuration fixes every connection mode, is refused with
+// ceph.ErrInvalidRequest before any change.
 //
 // The handle is non-nil for every outcome. A refusal returns a not-applied
 // handle whose Restore is a no-op. A nil cluster is refused with

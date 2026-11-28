@@ -157,7 +157,7 @@ func (notFoundError) NotFound()     {}
 func TestRunVolumeRemovesOnlyItsOwnVolume(t *testing.T) {
 	docker := &runVolumeClient{volumes: map[string]volume.Volume{}}
 	v := newRunVolume()
-	v.newClient = func(context.Context) (osdMemoryVolumeClient, error) { return docker, nil }
+	v.newClient = func(context.Context) (dockerVolumeClient, error) { return docker, nil }
 	if err := v.create(t.Context()); err != nil {
 		t.Fatal(err)
 	}

@@ -2,7 +2,6 @@ package ceph
 
 import (
 	"context"
-	"fmt"
 	"maps"
 	"slices"
 	"strings"
@@ -102,6 +101,7 @@ func (w *HealthWatch) Stop() error {
 // WatchResumed. These end the watch instead: ctx ending, Stop, a terminated
 // cluster, a native FSID of another cluster, and a full buffer
 // (ErrWatchOverflow).
+// The stop cause of a foreign FSID matches ErrInvalidRequest.
 //
 // The watch only reads: it never mutes, clears or repairs a check. HEALTH_OK
 // can include muted checks, and a sticky mute stays after its check clears;
@@ -130,23 +130,15 @@ type healthRead func(context.Context) (HealthSnapshot, error)
 
 func startHealthWatch(ctx context.Context, settings watch.Settings, read healthRead) (*HealthWatch, error) {
 	const operation = "watch health"
-	var fsid string
 	stream, err := watch.Start(ctx, watch.Spec[HealthSnapshot, HealthWatchEvent]{
 		Name:     operation,
 		Settings: settings,
 		Read: func(ctx context.Context) (HealthSnapshot, error) {
+			// The read pins the original bootstrap FSID and marks a foreign
+			// one, so the watch need not compare FSIDs again.
 			snapshot, err := read(ctx)
-			if cause := observationEndCause(err); cause != nil {
-				return HealthSnapshot{}, watch.Fatal(fmt.Errorf("%s: %w", operation, cause))
-			}
 			if err != nil {
-				return HealthSnapshot{}, err
-			}
-			switch {
-			case fsid == "":
-				fsid = snapshot.FSID
-			case snapshot.FSID != fsid:
-				return HealthSnapshot{}, watch.Fatal(fmt.Errorf("%s: %w", operation, invalid(errForeignFSID)))
+				return HealthSnapshot{}, watchEnd(operation, err)
 			}
 			slices.SortFunc(snapshot.Mutes, func(a, b HealthMute) int { return strings.Compare(a.Code, b.Code) })
 			return snapshot, nil

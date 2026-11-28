@@ -27,7 +27,7 @@ func TestDefaultCRUSHRuleConfigPreservesSectionsAndReplacesAliases(t *testing.T)
 
 func TestCustomDefaultRootConfiguresNumericRuleAndCopiesClientConfig(t *testing.T) {
 	ctr := &defaultRootFixtureContainer{poolFixtureContainer: poolFixtureContainer{Output: map[string]string{
-		"osd crush rule dump tc-default-placement --format json": `{"rule_id":4,"rule_name":"tc-default-placement"}`,
+		"osd crush rule dump --format json": `[{"rule_id":0,"rule_name":"replicated_rule"},{"rule_id":4,"rule_name":"tc-default-placement"}]`,
 	}}}
 	cluster := &Container{Container: ctr, bootstrap: bootstrapRecord{config: []byte("[global]\nfsid = fixture\n[osd]\n")}, settings: options{defaultCRUSHRoot: "storage", hostNetwork: true, publicAddress: "127.0.0.1"}}
 	if err := cluster.configureDefaultCRUSHRoot(t.Context()); err != nil {

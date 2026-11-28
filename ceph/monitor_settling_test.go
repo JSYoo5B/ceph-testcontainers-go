@@ -44,7 +44,7 @@ func (f *settlingFake) command(_ context.Context, argv ...string) ([]byte, error
 		for _, name := range []string{"a", "b"} {
 			mons = append(mons, fmt.Sprintf(`{"name":%q,"public_addrs":{"addrvec":[{"type":"v2","addr":"%s:3300","nonce":0}]}}`, name, settlingFakeIPs[name]))
 		}
-		return fmt.Appendf(nil, `{"election_epoch":%d,"quorum_names":["a","b"],"quorum_leader_name":"a","monmap":{"epoch":3,"mons":[%s]}}`, election, strings.Join(mons, ",")), nil
+		return fmt.Appendf(nil, `{"election_epoch":%d,"quorum_names":["a","b"],"quorum_leader_name":"a","monmap":{"fsid":"9b2d8f1e-0c5a-4f3e-8a6b-1d2c3e4f5a6b","epoch":3,"mons":[%s]}}`, election, strings.Join(mons, ",")), nil
 	case strings.Contains(line, " sessions "):
 		return []byte(`[]`), nil
 	case strings.Contains(line, "auth rm"):
@@ -144,5 +144,36 @@ func TestMonitorSettlingRequiresCompleteSessionEvidence(t *testing.T) {
 				t.Fatalf("valid empty observation did not recover: %v", err)
 			}
 		})
+	}
+}
+
+func TestMonitorSettlingRefusesAMalformedQuorumReport(t *testing.T) {
+	member := func(name, ip string) string {
+		return fmt.Sprintf(`{"name":%q,"public_addrs":{"addrvec":[{"type":"v2","addr":"%s:3300","nonce":0}]}}`, name, ip)
+	}
+	report := func(quorum, mons string) []byte {
+		return []byte(`{"election_epoch":4,"quorum_names":` + quorum + `,"quorum_leader_name":"a","monmap":{"fsid":"9b2d8f1e-0c5a-4f3e-8a6b-1d2c3e4f5a6b","epoch":3,"mons":[` + mons + `]}}`)
+	}
+	for name, data := range map[string][]byte{
+		"duplicate member":     report(`["a","b"]`, member("a", "10.0.0.1")+","+member("a", "10.0.0.2")+","+member("b", "10.0.0.3")),
+		"unnamed member":       report(`["a"]`, member("a", "10.0.0.1")+","+member("", "10.0.0.2")),
+		"quorum outside map":   report(`["a","c"]`, member("a", "10.0.0.1")+","+member("b", "10.0.0.2")),
+		"duplicate quorum":     report(`["a","a"]`, member("a", "10.0.0.1")+","+member("b", "10.0.0.2")),
+		"missing nonce":        report(`["a"]`, `{"name":"a","public_addrs":{"addrvec":[{"type":"v2","addr":"10.0.0.1:3300"}]}}`),
+		"missing quorum names": []byte(`{"election_epoch":4,"quorum_leader_name":"a","monmap":{"fsid":"f","epoch":3,"mons":[` + member("a", "10.0.0.1") + `]}}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := monitorSettling{command: func(context.Context, ...string) ([]byte, error) { return data, nil }}
+			if view, err := m.view(t.Context()); err == nil {
+				t.Fatalf("the settling barrier accepted the report: %+v", view)
+			}
+		})
+	}
+	good := monitorSettling{command: func(context.Context, ...string) ([]byte, error) {
+		return report(`["a","b"]`, member("a", "10.0.0.1")+","+member("b", "10.0.0.2")), nil
+	}}
+	view, err := good.view(t.Context())
+	if err != nil || view.election != 4 || view.epoch != 3 || len(view.mons) != 2 || view.mons[1].name != "b" || len(view.mons[1].logged) != 1 || view.mons[1].logged[0] != "v2:10.0.0.2:3300/0" {
+		t.Fatalf("view = %+v, %v", view, err)
 	}
 }

@@ -126,10 +126,10 @@ func TestUserUsageReportsOwnerAndScopeWhenCountersMatch(t *testing.T) {
 
 func TestUserUsageSummaryBoundsMismatches(t *testing.T) {
 	e := UserUsageEvaluation{Expectation: UserUsage{UserID: "u", Scope: UsageScopeUser, OwnerID: "u"}}
-	for range evaluationShown + 2 {
+	for range 8 + 2 {
 		e.Mismatches = append(e.Mismatches, UserUsageMismatch{Reason: UserUsageMismatchObjects, Want: "0", Observed: "1"})
 	}
-	if s := e.String(); strings.Count(s, "objects:") != evaluationShown || !strings.HasSuffix(s, "; 2 more") {
+	if s := e.String(); strings.Count(s, "objects:") != 8 || !strings.HasSuffix(s, "; 2 more") {
 		t.Fatalf("summary: %q", s)
 	}
 }

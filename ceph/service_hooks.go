@@ -20,7 +20,7 @@ import (
 type serviceHooks struct{}
 
 func init() {
-	hookreg.Value = serviceHooks{}
+	hookreg.Service = serviceHooks{}
 	clusterutil.Quiet = quiet
 }
 

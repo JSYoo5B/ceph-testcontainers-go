@@ -9,8 +9,10 @@
 // provider, so the registration completes before any reader can run.
 package hookreg
 
-// Value is set once, during the initialization of package ceph.
-var Value any
+// Service is set once, during the initialization of package ceph, to the
+// service hooks that internal/servicehook types for the rbd, cephfs and rgw
+// packages.
+var Service any
 
 // Fault is set once, during the initialization of package ceph, to the
 // fault registry hooks that internal/faulthook types.

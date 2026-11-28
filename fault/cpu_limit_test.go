@@ -291,10 +291,6 @@ func TestCPULimitRefusesUnprovableTargets(t *testing.T) {
 	if lease, err := limitWith(t.Context(), c, newFakeCPUDocker(cpuSettings{}), 25e7); !errors.Is(err, terminated) || lease != nil {
 		t.Fatalf("terminated cluster accepted a CPU limit: %v", err)
 	}
-	var missing *CPULimitLease
-	if err := missing.Restore(t.Context()); err == nil {
-		t.Fatal("nil CPU limit restored")
-	}
 }
 
 func TestCPULimitChangedBeforeDispatchSendsNothing(t *testing.T) {

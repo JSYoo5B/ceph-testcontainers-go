@@ -133,3 +133,27 @@ discussed.
     `subvolume.CreateSubvolume`). A query whose name would collide with its
     returned type keeps the noun of the native observation, and the type takes
     another noun (`subvolume.Info` returns `*subvolume.Metadata`).
+
+## Expectation mismatches
+
+The `expect` packages (`ceph/expect`, `rbd/expect`, `cephfs/expect`,
+`rgw/expect`) do not share one mismatch shape yet. A new expectation follows
+this one:
+
+- The mismatch type carries a `Reason`, a field that names the target (an ID,
+  a code, a daemon) and `Want, Observed string`, the texts that differ. It
+  does not carry typed copies of the compared values.
+- Reason values are lower case words joined by hyphens (`active-gid`,
+  `member-count`), never spaces.
+- The requirement type does not take the name of the observed type it is
+  compared with: an expectation of one `ceph.HealthCheck` is not called
+  `HealthCheck`.
+- The evaluation's `String` writes its mismatch list with
+  `internal/expectfmt`, so every evaluation bounds and joins the list the
+  same way.
+
+Existing types that differ (`ManagerMismatch`, `MonitorMismatch` and
+`OSDMismatch` with typed fields, the spaced reasons of `HealthMismatch` and
+`PGMismatch`, `expect.HealthCheck`) keep their shape: a new shape would need
+parallel types and a new element type for `Mismatches`, which a deprecation
+cannot carry. Do not copy them.

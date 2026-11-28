@@ -5,9 +5,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/google/uuid"
-
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/expectfmt"
 )
 
 // Monitors states the monmap membership and quorum a test expects in one
@@ -108,9 +107,6 @@ type MonitorEvaluation struct {
 	Matched     bool
 }
 
-// monitorEvaluationShown bounds the mismatches that String lists.
-const monitorEvaluationShown = 8
-
 // String summarizes the expectation, the observed membership and at most
 // eight mismatches.
 func (e MonitorEvaluation) String() string {
@@ -136,20 +132,7 @@ func (e MonitorEvaluation) String() string {
 		members[i] = mon.Name
 	}
 	fmt.Fprintf(&b, " in monmap [%s] quorum [%s]: ", strings.Join(members, " "), strings.Join(e.Observed.QuorumNames, " "))
-	if e.Matched {
-		b.WriteString("match")
-		return b.String()
-	}
-	for i, m := range e.Mismatches {
-		if i == monitorEvaluationShown {
-			fmt.Fprintf(&b, "; %d more", len(e.Mismatches)-i)
-			break
-		}
-		if i > 0 {
-			b.WriteString("; ")
-		}
-		b.WriteString(m.String())
-	}
+	expectfmt.WriteMismatches(&b, e.Matched, e.Mismatches)
 	return b.String()
 }
 
@@ -176,12 +159,16 @@ func (e Monitors) Evaluate(observed ceph.QuorumStatus) (MonitorEvaluation, error
 	if err != nil {
 		return MonitorEvaluation{}, err
 	}
+	otherCluster, err := fsidDiffers(e.FSID, observed.MonMap.FSID)
+	if err != nil {
+		return MonitorEvaluation{}, fmt.Errorf("malformed quorum observation: %w", err)
+	}
 	result := MonitorEvaluation{
 		Expectation: Monitors{FSID: e.FSID, Members: slices.Clone(e.Members), MemberCount: e.MemberCount,
 			Quorum: slices.Clone(e.Quorum), QuorumSize: e.QuorumSize},
 		Observed: cloneQuorumStatus(observed),
 	}
-	if e.FSID != "" && uuid.MustParse(e.FSID) != uuid.MustParse(observed.MonMap.FSID) {
+	if otherCluster {
 		result.Mismatches = append(result.Mismatches, MonitorMismatch{Reason: MonitorMismatchFSID, FSID: e.FSID, ObservedFSID: observed.MonMap.FSID})
 	}
 	if e.MemberCount > 0 && len(monmap) != e.MemberCount {
@@ -228,7 +215,7 @@ func (e Monitors) validate() error {
 		return fmt.Errorf("%w: MON expectation states no condition", ceph.ErrInvalidRequest)
 	}
 	if e.FSID != "" {
-		if parsed, err := uuid.Parse(e.FSID); err != nil || parsed == uuid.Nil {
+		if _, ok := nativeUUID(e.FSID); !ok {
 			return fmt.Errorf("%w: MON expectation pins an invalid FSID %q", ceph.ErrInvalidRequest, e.FSID)
 		}
 	}
@@ -280,7 +267,7 @@ func uniqueNames(daemon, what string, names []string) error {
 // monitorObservation checks the observation and returns its monmap and
 // quorum names as sets.
 func monitorObservation(observed ceph.QuorumStatus) (monmap, quorum map[string]bool, err error) {
-	if parsed, err := uuid.Parse(observed.MonMap.FSID); err != nil || parsed == uuid.Nil {
+	if _, ok := nativeUUID(observed.MonMap.FSID); !ok {
 		return nil, nil, fmt.Errorf("malformed quorum observation: no valid FSID %q", observed.MonMap.FSID)
 	}
 	if len(observed.MonMap.Mons) == 0 {

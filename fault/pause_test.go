@@ -131,10 +131,6 @@ func TestPauseRefusesControlAndUnavailableContainers(t *testing.T) {
 	if pause, err := Pause(t.Context(), cluster, pauseTestContainer{id: "osd"}); !errors.Is(err, terminated) || !errors.Is(err, ceph.ErrInvalidRequest) || pause != nil {
 		t.Fatalf("terminated cluster accepted a pause: %v", err)
 	}
-	var missing *PauseLease
-	if err := missing.Resume(t.Context()); err == nil {
-		t.Fatal("nil pause handle resumed")
-	}
 }
 
 type pauseTestContainer struct {

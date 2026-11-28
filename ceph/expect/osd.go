@@ -2,10 +2,12 @@ package expect
 
 import (
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/expectfmt"
 
 	"github.com/google/uuid"
 )
@@ -88,9 +90,6 @@ type OSDEvaluation struct {
 	Matched     bool
 }
 
-// osdEvaluationShown bounds the mismatches that String lists.
-const osdEvaluationShown = 8
-
 // String summarizes the expectation and at most eight mismatches.
 func (e OSDEvaluation) String() string {
 	ids := make([]string, len(e.Expectation.Select))
@@ -103,78 +102,41 @@ func (e OSDEvaluation) String() string {
 		b.WriteString(" exact")
 	}
 	fmt.Fprintf(&b, " in %d observed: ", len(e.Observed))
-	if e.Matched {
-		b.WriteString("match")
-		return b.String()
-	}
-	for i, m := range e.Mismatches {
-		if i == osdEvaluationShown {
-			fmt.Fprintf(&b, "; %d more", len(e.Mismatches)-i)
-			break
-		}
-		if i > 0 {
-			b.WriteString("; ")
-		}
-		b.WriteString(m.String())
-	}
+	expectfmt.WriteMismatches(&b, e.Matched, e.Mismatches)
 	return b.String()
 }
 
 // Evaluate checks one successful ceph.Observer.OSDStates observation against the
 // expectation. It reads only its arguments: no query, wait or retry, so a
 // test composes it with its own polling or assertion helpers. A mismatch is
-// a result; an error means no verdict. An empty or duplicate selection or an
-// unparsable selected UUID is ceph.ErrInvalidRequest, and an observation with a
-// negative or repeated ID or an unparsable UUID is a malformed observation,
-// never a mismatch. The result shares no slice with its arguments.
+// a result; an error means no verdict. An empty selection, a negative or
+// repeated selected ID and an invalid selected UUID are ceph.ErrInvalidRequest,
+// and an observation with a negative or repeated ID or an invalid UUID is a
+// malformed observation, never a mismatch. The nil UUID is invalid in both.
+// The result shares no slice with its arguments.
 //
 //purpose:observation
 func (e OSDs) Evaluate(observed []ceph.OSDState) (OSDEvaluation, error) {
-	if len(e.Select) == 0 {
-		return OSDEvaluation{}, fmt.Errorf("%w: OSD expectation selects no OSD", ceph.ErrInvalidRequest)
+	selected, err := e.validate()
+	if err != nil {
+		return OSDEvaluation{}, err
 	}
-	selected := make(map[int]uuid.UUID, len(e.Select))
-	for _, s := range e.Select {
-		if s.ID < 0 {
-			return OSDEvaluation{}, fmt.Errorf("%w: OSD expectation selects negative osd.%d", ceph.ErrInvalidRequest, s.ID)
-		}
-		if _, dup := selected[s.ID]; dup {
-			return OSDEvaluation{}, fmt.Errorf("%w: OSD expectation selects osd.%d twice", ceph.ErrInvalidRequest, s.ID)
-		}
-		var pinned uuid.UUID
-		if s.UUID != "" {
-			parsed, err := uuid.Parse(s.UUID)
-			if err != nil || parsed == uuid.Nil {
-				return OSDEvaluation{}, fmt.Errorf("%w: OSD expectation pins an invalid UUID for osd.%d", ceph.ErrInvalidRequest, s.ID)
-			}
-			pinned = parsed
-		}
-		selected[s.ID] = pinned
-	}
-	byID := make(map[int]ceph.OSDState, len(observed))
-	for _, s := range observed {
-		if s.ID < 0 {
-			return OSDEvaluation{}, fmt.Errorf("malformed OSD observation: negative osd.%d", s.ID)
-		}
-		if _, dup := byID[s.ID]; dup {
-			return OSDEvaluation{}, fmt.Errorf("malformed OSD observation: osd.%d reported twice", s.ID)
-		}
-		if parsed, err := uuid.Parse(s.UUID); err != nil || parsed == uuid.Nil {
-			return OSDEvaluation{}, fmt.Errorf("malformed OSD observation: osd.%d has no valid UUID", s.ID)
-		}
-		byID[s.ID] = s
+	byID, err := osdObservation(observed)
+	if err != nil {
+		return OSDEvaluation{}, err
 	}
 	result := OSDEvaluation{
 		Expectation: OSDs{Select: slices.Clone(e.Select), Up: e.Up, In: e.In, Exact: e.Exact},
 		Observed:    slices.Clone(observed),
 	}
 	for _, s := range e.Select {
-		state, present := byID[s.ID]
+		observedOSD, present := byID[s.ID]
+		state := observedOSD.state
 		switch {
 		case !present:
 			result.Mismatches = append(result.Mismatches, OSDMismatch{Reason: OSDMismatchAbsent, ID: s.ID, UUID: s.UUID})
 			continue
-		case selected[s.ID] != uuid.Nil && uuid.MustParse(state.UUID) != selected[s.ID]:
+		case selected[s.ID] != uuid.Nil && observedOSD.uuid != selected[s.ID]:
 			result.Mismatches = append(result.Mismatches, OSDMismatch{Reason: OSDMismatchReplaced, ID: s.ID, UUID: s.UUID, Observed: state})
 			continue
 		}
@@ -195,4 +157,57 @@ func (e OSDs) Evaluate(observed []ceph.OSDState) (OSDEvaluation, error) {
 	slices.SortStableFunc(result.Mismatches, func(a, b OSDMismatch) int { return a.ID - b.ID })
 	result.Matched = len(result.Mismatches) == 0
 	return result, nil
+}
+
+// validate refuses a selection that names no OSD, a negative or repeated ID or
+// an invalid UUID, and returns the pinned UUID of each selected ID (uuid.Nil
+// when the entry selects by ID alone).
+func (e OSDs) validate() (map[int]uuid.UUID, error) {
+	if len(e.Select) == 0 {
+		return nil, fmt.Errorf("%w: OSD expectation selects no OSD", ceph.ErrInvalidRequest)
+	}
+	selected := make(map[int]uuid.UUID, len(e.Select))
+	for _, s := range e.Select {
+		if s.ID < 0 {
+			return nil, fmt.Errorf("%w: OSD expectation selects negative osd.%d", ceph.ErrInvalidRequest, s.ID)
+		}
+		if _, dup := selected[s.ID]; dup {
+			return nil, fmt.Errorf("%w: OSD expectation selects osd.%d twice", ceph.ErrInvalidRequest, s.ID)
+		}
+		var pinned uuid.UUID
+		if s.UUID != "" {
+			parsed, ok := nativeUUID(s.UUID)
+			if !ok {
+				return nil, fmt.Errorf("%w: OSD expectation pins an invalid UUID for osd.%d", ceph.ErrInvalidRequest, s.ID)
+			}
+			pinned = parsed
+		}
+		selected[s.ID] = pinned
+	}
+	return selected, nil
+}
+
+// observedOSD is one observed OSD with its parsed native UUID.
+type observedOSD struct {
+	state ceph.OSDState
+	uuid  uuid.UUID
+}
+
+// osdObservation checks the observation and returns its OSDs by ID.
+func osdObservation(observed []ceph.OSDState) (map[int]observedOSD, error) {
+	byID := make(map[int]observedOSD, len(observed))
+	for _, s := range observed {
+		if s.ID < 0 {
+			return nil, fmt.Errorf("malformed OSD observation: negative osd.%d", s.ID)
+		}
+		if _, dup := byID[s.ID]; dup {
+			return nil, fmt.Errorf("malformed OSD observation: osd.%d reported twice", s.ID)
+		}
+		parsed, ok := nativeUUID(s.UUID)
+		if !ok {
+			return nil, fmt.Errorf("malformed OSD observation: osd.%d has no valid UUID", s.ID)
+		}
+		byID[s.ID] = observedOSD{state: s, uuid: parsed}
+	}
+	return byID, nil
 }

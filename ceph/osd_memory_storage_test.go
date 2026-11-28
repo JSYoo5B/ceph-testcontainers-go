@@ -8,6 +8,7 @@ import (
 	"io"
 	"maps"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/containerd/errdefs"
@@ -77,8 +78,10 @@ type osdMemoryContainerFake struct {
 	running                         bool
 	startedAt                       string
 	states, terminations            int
-	directories                     map[string]bool
-	commands                        [][]string
+	// directories and links are the paths that exist as a directory and
+	// as a symlink (test -L), which may dangle.
+	directories, links map[string]bool
+	commands           [][]string
 }
 
 func (c *osdMemoryContainerFake) State(context.Context) (*container.State, error) {
@@ -109,6 +112,10 @@ func (c *osdMemoryContainerFake) Exec(_ context.Context, args []string, _ ...tce
 		if c.directories[args[3]] {
 			code = 1
 		}
+	case len(args) == 4 && slices.Equal(args[:3], []string{"test", "!", "-L"}):
+		if c.links[args[3]] {
+			code = 1
+		}
 	case len(args) == 4 && slices.Equal(args[:3], []string{"rm", "-rf", "--"}):
 		delete(c.directories, args[3])
 	default:
@@ -126,9 +133,9 @@ func newOSDMemoryUnitFixture() (*osdMemoryStorage, *osdMemoryDockerFake, *osdMem
 		Labels:  map[string]string{osdMemoryOwnerLabel: "original-owner"},
 		Options: map[string]string{"type": "tmpfs", "device": "tmpfs", "o": "size=1073741824,mode=0700"},
 	}}
-	keeper := &osdMemoryContainerFake{running: true, startedAt: "original-start", directories: map[string]bool{}}
+	keeper := &osdMemoryContainerFake{running: true, startedAt: "original-start", directories: map[string]bool{}, links: map[string]bool{}}
 	storage := &osdMemoryStorage{name: docker.stored.Name, owner: "original-owner", size: 1 << 30, keeper: keeper, keeperStarted: "original-start", ready: true,
-		newClient: func(context.Context) (osdMemoryVolumeClient, error) { return docker, nil },
+		newClient: func(context.Context) (dockerVolumeClient, error) { return docker, nil },
 	}
 	return storage, docker, keeper
 }
@@ -272,7 +279,20 @@ func TestOSDMemoryDiscardAllowsOnlyThePurgedNumericDirectory(t *testing.T) {
 	if err := s.requireFreshOSD(t.Context(), 4); err != nil {
 		t.Fatal("purged ID could not be reused with a fresh store", err)
 	}
-	if !slices.Equal(keeper.commands[0], []string{"test", "!", "-e", path}) || !slices.Equal(keeper.commands[2], []string{"rm", "-rf", "--", path}) {
+	if !slices.Equal(keeper.commands[0], []string{"test", "!", "-e", path}) || !slices.Equal(keeper.commands[2], []string{"rm", "-rf", "--", path}) || !slices.Equal(keeper.commands[len(keeper.commands)-1], []string{"test", "!", "-L", path}) {
 		t.Fatal("owned-directory operation expanded beyond its module-derived path", keeper.commands)
+	}
+}
+
+func TestOSDMemoryRefusesADanglingStoreLink(t *testing.T) {
+	s, _, keeper := newOSDMemoryUnitFixture()
+	path := osdMemoryKeeperPath + "/ceph-4"
+	keeper.links[path] = true
+	if err := s.requireFreshOSD(t.Context(), 4); err == nil || !strings.Contains(err.Error(), "not fresh") {
+		t.Fatalf("a dangling ceph-4 link was admitted as a fresh store: %v", err)
+	}
+	delete(keeper.links, path)
+	if err := s.requireFreshOSD(t.Context(), 4); err != nil {
+		t.Fatal(err)
 	}
 }

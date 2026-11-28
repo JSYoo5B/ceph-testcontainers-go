@@ -39,7 +39,7 @@ type osdStorageState struct {
 	runner func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error)
 	// volumeDocker and volumeRunner replace owned-volume allocation in tests.
 	//testdouble:nil-default-hook
-	volumeDocker func(context.Context) (osdMemoryVolumeClient, error)
+	volumeDocker func(context.Context) (dockerVolumeClient, error)
 	//testdouble:nil-default-hook
 	volumeRunner func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error)
 }

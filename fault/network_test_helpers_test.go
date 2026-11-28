@@ -25,7 +25,7 @@ func newDelayTestCluster(backend netemBackend, osd testcontainers.Container, hos
 	return &delayTestCluster{Container: c, backend: backend}
 }
 func (c *delayTestCluster) ApplyNetworkProfile(ctx context.Context, target testcontainers.Container, delay NetworkProfile) (*NetworkProfileLease, error) {
-	return temporaryNetworkDelay(ctx, c.Container, target, delay, c.backend)
+	return temporaryNetworkProfile(ctx, c.Container, target, delay, c.backend)
 }
 func (c *delayTestCluster) faultsOf(kind faulthook.Kind) (result map[string]any) {
 	faulthook.WithTopologyNoContext(c.Container, func() { result = testhelper.TestFaults(c.Container, kind) })

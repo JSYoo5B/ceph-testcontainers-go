@@ -11,7 +11,6 @@ import (
 
 	"github.com/testcontainers/testcontainers-go"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 )
 
@@ -36,7 +35,10 @@ type debugLevelGeneration struct {
 	owned bool
 	// identity is the container ID and start time, followed for an MDS or
 	// MGR by its process incarnation; see debugTarget.
-	identity        string
+	identity string
+	// gid is the native GID of a running MDS or MGR, the one its identity
+	// names; it is 0 for an OSD and for a daemon that cannot answer.
+	gid             uint64
 	running, paused bool
 }
 
@@ -141,7 +143,7 @@ func parseDebugDaemon(daemon string) (kind, name string, err error) {
 			return kind, id, nil
 		}
 	case "mds":
-		if naming.DaemonName.MatchString(name) && len(name) <= 64 {
+		if validateDaemonName("mds", name) == nil {
 			return kind, name, nil
 		}
 	}
@@ -236,49 +238,50 @@ func (t *debugTarget) generationLocked(ctx context.Context) (debugLevelGeneratio
 	if t.kind == "osd" || gen.identity == "" || !gen.running || gen.paused {
 		return gen, nil
 	}
-	incarnation, err := t.incarnationLocked(ctx)
+	incarnation, gid, err := t.incarnationLocked(ctx)
 	if err != nil {
 		return debugLevelGeneration{}, err
 	}
 	gen.identity += incarnation
+	gen.gid = gid
 	return gen, nil
 }
 
 // incarnationLocked reads the process part of an MDS's or MGR's identity,
-// "/gid=<GID>" and, for a MGR, "/asok=<inode>@<change time>". The caller
-// holds c.mu.
-func (t *debugTarget) incarnationLocked(ctx context.Context) (string, error) {
+// "/gid=<GID>" and, for a MGR, "/asok=<inode>@<change time>", and the GID
+// itself. The caller holds c.mu.
+func (t *debugTarget) incarnationLocked(ctx context.Context) (string, uint64, error) {
 	c := t.c
 	if t.kind == "mds" {
 		out, err := c.adminSocketCommand(ctx, t.mds, t.daemon, "status")
 		if err != nil {
-			return "", err
+			return "", 0, err
 		}
 		var status struct {
 			ID *uint64 `json:"id"`
 		}
 		if err := json.Unmarshal(out, &status); err != nil || status.ID == nil || *status.ID == 0 {
-			return "", fmt.Errorf("%s reports no native GID in its status", t.daemon)
+			return "", 0, fmt.Errorf("%s reports no native GID in its status", t.daemon)
 		}
-		return "/gid=" + strconv.FormatUint(*status.ID, 10), nil
+		return "/gid=" + strconv.FormatUint(*status.ID, 10), *status.ID, nil
 	}
 	control, err := t.execTarget(ctx)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	socket, err := command(ctx, control, "stat", "-c", "%i@%z", adminSocketDir+"/ceph-"+t.daemon+".asok")
 	if err != nil {
-		return "", fmt.Errorf("stat the admin socket of %s: %w", t.daemon, err)
+		return "", 0, fmt.Errorf("stat the admin socket of %s: %w", t.daemon, err)
 	}
 	dump, err := c.conn().ceph(ctx, "mgr", "dump", "--format", "json")
 	if err != nil {
-		return "", fmt.Errorf("read the MgrMap: %w", err)
+		return "", 0, fmt.Errorf("read the MgrMap: %w", err)
 	}
 	gid, err := managerGID(dump, t.name)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
-	return "/gid=" + strconv.FormatUint(gid, 10) + "/asok=" + strings.ReplaceAll(strings.TrimSpace(string(socket)), " ", "_"), nil
+	return "/gid=" + strconv.FormatUint(gid, 10) + "/asok=" + strings.ReplaceAll(strings.TrimSpace(string(socket)), " ", "_"), gid, nil
 }
 
 // managerGID finds the GID of the active or standby MGR name in a MgrMap.
@@ -383,9 +386,9 @@ func (t *debugTarget) set(ctx context.Context, identity, name, value string) (fu
 
 // Generation reports the target's current incarnation as plain values, for
 // the override package.
-func (t *debugTarget) Generation(ctx context.Context) (owned bool, identity string, running, paused bool, err error) {
+func (t *debugTarget) Generation(ctx context.Context) (owned bool, identity string, gid uint64, running, paused bool, err error) {
 	gen, err := t.generation(ctx)
-	return gen.owned, gen.identity, gen.running, gen.paused, err
+	return gen.owned, gen.identity, gen.gid, gen.running, gen.paused, err
 }
 
 // Get reads the daemon's effective level of option name.

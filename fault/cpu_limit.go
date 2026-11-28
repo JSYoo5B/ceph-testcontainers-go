@@ -150,6 +150,9 @@ func cpuEnvironment(format string, args ...any) error {
 }
 
 func applyCPULimitInCluster(ctx context.Context, c *ceph.Container, ctr testcontainers.Container, limit CPULimit, engine cpuLimitEngine) (lease *CPULimitLease, err error) {
+	if err := requireCluster(c, "a CPU limit"); err != nil {
+		return nil, err
+	}
 	if limit.NanoCPUs <= 0 {
 		return nil, nshelper.InvalidRequest("a CPU limit needs a positive NanoCPUs")
 	}
@@ -297,12 +300,13 @@ func (lease *CPULimitLease) isComplete(ctx context.Context) (bool, error) {
 // a paused container, one that was restarted under the limit, and settings
 // that were changed outside the lease, which it does not overwrite. An
 // earlier Restore whose update reached the engine but not the kernel is
-// retried, not taken for an outside change.
+// retried, not taken for an outside change. A nil lease has nothing to
+// restore.
 //
 //purpose:condition,lifetime
 func (lease *CPULimitLease) Restore(ctx context.Context) error {
 	if lease == nil {
-		return errors.New("CPU limit is unavailable")
+		return nil
 	}
 	if err := lockMutex(ctx, &lease.mu); err != nil {
 		return err
@@ -366,12 +370,13 @@ func (lease *CPULimitLease) Restore(ctx context.Context) error {
 // Status reads the kernel's cpu.max and cpu.stat of the target's cgroup, for
 // a test that needs to tell a throttled collaborator from a slow one. It
 // refuses a container that is not the running, unpaused generation that
-// ApplyCPULimit limited, also after Restore.
+// ApplyCPULimit limited, also after Restore. A nil lease is refused with an
+// error matching ceph.ErrInvalidRequest.
 //
 //purpose:observation
 func (lease *CPULimitLease) Status(ctx context.Context) (CPULimitStatus, error) {
 	if lease == nil {
-		return CPULimitStatus{}, errors.New("CPU limit is unavailable")
+		return CPULimitStatus{}, unavailable("CPU limit")
 	}
 	if err := lockMutex(ctx, &lease.mu); err != nil {
 		return CPULimitStatus{}, err

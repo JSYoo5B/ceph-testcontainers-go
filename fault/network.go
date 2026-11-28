@@ -63,6 +63,9 @@ type NetworkInterruption struct {
 //
 //purpose:condition
 func InterruptNetwork(ctx context.Context, c *ceph.Container, ctr testcontainers.Container, plane ceph.NetworkPlane) (link *NetworkInterruption, err error) {
+	if err := requireCluster(c, "network interruption"); err != nil {
+		return nil, err
+	}
 	err = faulthook.WithTopology(ctx, c, func() error {
 		facts, factsErr := ceph.FactsOf(c)
 		if factsErr != nil {
@@ -159,9 +162,13 @@ func (link *NetworkInterruption) isComplete(ctx context.Context) (bool, error) {
 // address is refused rather than overwritten, and the handle stays
 // retryable. Docker publishes the container's ports again on reattachment, so
 // a port mapped to a random host port can move: resolve it again afterwards.
+// A nil interruption has nothing to restore.
 //
 //purpose:condition,lifetime
 func (link *NetworkInterruption) Restore(ctx context.Context) error {
+	if link == nil {
+		return nil
+	}
 	if err := lockMutex(ctx, &link.mu); err != nil {
 		return err
 	}

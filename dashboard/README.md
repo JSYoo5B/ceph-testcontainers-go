@@ -149,7 +149,9 @@ username, password := d.Credentials()
   `RGW_API_ACCESS_KEY` and `RGW_API_SECRET_KEY` manager options, so every
   manager uses it after a failover. `GatewayLink.Remove` puts the prior values
   back only while the options still hold the link's key, and refuses an
-  outside edit. The options are plain text in `ceph config dump`; the key is
+  outside edit. For the certificate, the key and these options alike, a
+  stored value that differs only in surrounding whitespace is not an outside
+  edit. The options are plain text in `ceph config dump`; the key is
   masked in diagnostics reports. It never uses the SUT's credentials or
   `ceph dashboard set-rgw-credentials`, which creates a system user. Pages
   that change RGW state are refused by RGW with this identity.

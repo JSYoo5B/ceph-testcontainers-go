@@ -1,7 +1,7 @@
 {
   "schema": "ceph-api-naming-review/v2",
   "package": "fault",
-  "declarations_sha256": "746af45d32fa43db34672bf725b2341e9df4b6c7ed0249853b2a31d7955ce98f",
+  "declarations_sha256": "21c7763e32f50c6bd52140f41d1ad737ec660ed945ded664faa0605bbbf6e134",
   "members_sha256": "30792fa27bf8466b054511a9ebfccbf14d6491abf06c0b992d52533ca02efa72",
   "declarations": 63,
   "members": 87,

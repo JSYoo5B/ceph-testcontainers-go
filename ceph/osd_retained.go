@@ -173,7 +173,7 @@ func (om osdMap) fsid(ctx context.Context) (string, error) {
 // instanceFaultNames are the fault kinds keyed by a container ID, alone or
 // after its network name, by the name a detach refusal gives them.
 var instanceFaultNames = map[faultKind]string{
-	faultNetworkDelay: "network delay", faultNetworkInterruption: "network interruption", faultContainerPause: "container pause",
+	faultNetworkProfile: "network profile", faultNetworkInterruption: "network interruption", faultContainerPause: "container pause",
 	faultCPULimit: "CPU limit",
 }
 

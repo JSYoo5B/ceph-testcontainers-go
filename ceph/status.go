@@ -44,16 +44,6 @@ func (c *Container) waitForClean(ctx context.Context) error {
 		if err != nil {
 			return false, err
 		}
-		if !s.MgrMap.Available || s.OSDMap.NumOSDs != expected || s.OSDMap.NumUpOSDs != expected || s.OSDMap.NumInOSDs != expected || s.PGMap.NumPGs == 0 {
-			return false, nil
-		}
-		clean := 0
-		for _, state := range s.PGMap.PGsByState {
-			if state.StateName != "active+clean" {
-				return false, nil
-			}
-			clean += state.Count
-		}
-		return clean == s.PGMap.NumPGs, nil
+		return s.OSDMap.NumOSDs == expected && s.OSDMap.NumUpOSDs == expected && s.OSDMap.NumInOSDs == expected && pgsAreClean(s), nil
 	})
 }

@@ -134,8 +134,7 @@ func setMGRModuleLocked(ctx context.Context, c *ceph.Container, name string, ena
 	if err != nil {
 		return mgrModuleNotApplied(name, err)
 	}
-	timeout := overridehook.StartupTimeout(c)
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := operationDeadline(ctx, c)
 	defer cancel()
 	refuse := func(cause error) (*MGRModuleHandle, error) {
 		_, _ = overridehook.Settle(c, token, nil)
@@ -188,10 +187,7 @@ func setMGRModuleLocked(ctx context.Context, c *ceph.Container, name string, ena
 	// write that completed as the caller's context ended has no read of its
 	// respawn yet. Keep the lease and reconcile with a fresh bounded read,
 	// retaining the error.
-	readTimeout := 5 * time.Second
-	if timeout > 0 && timeout < readTimeout {
-		readTimeout = timeout
-	}
+	readTimeout := min(5*time.Second, overridehook.StartupTimeout(c))
 	readCtx, readCancel := context.WithTimeout(context.WithoutCancel(ctx), readTimeout)
 	defer readCancel()
 	if err := change.state.command.Wait(readCtx); err != nil {
@@ -249,7 +245,7 @@ func (h *MGRModuleHandle) restoreLocked(ctx context.Context, c *ceph.Container) 
 	if !overridehook.Tracks(c, h.state.token) {
 		return errors.New("MGR module override is not tracked by this cluster")
 	}
-	ctx, cancel := context.WithTimeout(ctx, overridehook.StartupTimeout(c))
+	ctx, cancel := operationDeadline(ctx, c)
 	defer cancel()
 	if err := h.state.command.Wait(ctx); err != nil {
 		return err

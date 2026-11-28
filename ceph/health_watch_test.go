@@ -44,6 +44,10 @@ func (s *healthWatchSource) read(ctx context.Context) (HealthSnapshot, error) {
 	if fail != nil {
 		return HealthSnapshot{}, fail
 	}
+	// As Container.healthDetails, a read of another cluster is marked.
+	if foreignFSID(snapshot.FSID, healthDetailsFixtureFSID) {
+		return HealthSnapshot{}, endObservation(errors.New("native health FSID differs from the original cluster"), invalid(errForeignFSID))
+	}
 	return snapshot, nil
 }
 

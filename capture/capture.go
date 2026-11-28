@@ -379,10 +379,21 @@ var pollInterval = 100 * time.Millisecond
 //
 //purpose:evidence
 func Start(ctx context.Context, target testcontainers.Container, req Request) (*Session, error) {
-	return start(ctx, dockerBackend{}, target, req)
+	return start(ctx, &dockerBackend{}, target, req)
 }
 
+// start starts a session on b. A session that started keeps b open until
+// Stop; after an error b is closed, and a session returned with the error
+// opens it again when Stop retries a removal.
 func start(ctx context.Context, b backend, target testcontainers.Container, req Request) (*Session, error) {
+	s, err := startSession(ctx, b, target, req)
+	if err != nil {
+		err = errors.Join(err, b.close())
+	}
+	return s, err
+}
+
+func startSession(ctx context.Context, b backend, target testcontainers.Container, req Request) (*Session, error) {
 	if err := req.validate(); err != nil {
 		return nil, err
 	}
@@ -642,7 +653,7 @@ func (s *Session) removeHelper(ctx context.Context) error {
 // Docker and stream errors retain their causes; a failed retrieval alone does
 // not imply ErrFailed. A capture that ended at MaxPackets is not an error; its
 // End says so. After a removal error Stop can be called again; it returns the
-// same report.
+// same report. Stop closes the session's Docker client before it returns.
 //
 //purpose:evidence,lifetime
 func (s *Session) Stop(ctx context.Context) (Report, error) {
@@ -654,7 +665,7 @@ func (s *Session) Stop(ctx context.Context) (Report, error) {
 		s.finished = true
 		s.err = s.finish(finishCtx)
 	}
-	return s.report, errors.Join(s.err, s.removeProbe(finishCtx), s.removeHelper(finishCtx))
+	return s.report, errors.Join(s.err, s.removeProbe(finishCtx), s.removeHelper(finishCtx), s.backend.close())
 }
 
 func (s *Session) stopGrace() time.Duration {

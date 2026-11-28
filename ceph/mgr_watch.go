@@ -113,6 +113,7 @@ func (w *ManagerWatch) Stop() error {
 // successful read is WatchResumed. A gap is not a map without managers. These
 // end the watch instead: ctx ending, Stop, a terminated cluster, another
 // cluster's FSID, and a full buffer (ErrWatchOverflow).
+// The stop cause of a foreign FSID matches ErrInvalidRequest.
 //
 // The watch is read-only: it never fails over a manager, enables a module or
 // connects to a service. Available is the MGRMap's report, not proof that a
@@ -153,33 +154,14 @@ type managerMapReport struct {
 type managerMapRead func(context.Context) (managerMapReport, error)
 
 func startManagerWatch(ctx context.Context, settings watch.Settings, original originalFSIDRead, read managerMapRead) (*ManagerWatch, error) {
-	var fsid string
+	const operation = "watch managers"
 	stream, err := watch.Start(ctx, watch.Spec[managerSample, ManagerWatchEvent]{
-		Name:     "watch managers",
+		Name:     operation,
 		Settings: settings,
-		Read: func(ctx context.Context) (managerSample, error) {
-			pinned := fsid
-			if pinned == "" {
-				var err error
-				if pinned, err = original(ctx); err != nil {
-					return managerSample{}, err
-				}
-			}
+		Read: pinnedClusterRead(operation, "native", original, func(ctx context.Context) (managerSample, []string, error) {
 			report, err := read(ctx)
-			if err != nil {
-				if errors.Is(err, errClusterTerminated) {
-					return managerSample{}, watch.Fatal(err)
-				}
-				return managerSample{}, err
-			}
-			for _, native := range []string{report.before, report.after} {
-				if err := checkWatchFSID("watch managers", "native", native, pinned); err != nil {
-					return managerSample{}, err
-				}
-			}
-			fsid = pinned
-			return report.sample, nil
-		},
+			return report.sample, []string{report.before, report.after}, err
+		}),
 		Equal: func(a, b managerSample) bool {
 			return a.status.Available == b.status.Available && a.status.ActiveName == b.status.ActiveName &&
 				a.status.ActiveGID == b.status.ActiveGID && slices.Equal(a.status.Standbys, b.status.Standbys) &&
@@ -203,17 +185,9 @@ func startManagerWatch(ctx context.Context, settings watch.Settings, original or
 
 // managerMapReport reads the MGRMap for one watch read. It takes no topology
 // lock, as Observer.ManagerStatus, selects the control container under ctx and
-// runs every command of the read there. A cluster whose Terminate has started
-// is errClusterTerminated, also when it made a command fail.
+// runs every command of the read there; see watchQuery.
 func (c *Container) managerMapReport(ctx context.Context) (managerMapReport, error) {
-	if c.native.calls.isClosed() {
-		return managerMapReport{}, errClusterTerminated
-	}
-	report, err := c.queryManagerMapReport(ctx)
-	if err != nil && c.native.calls.isClosed() {
-		return managerMapReport{}, errClusterTerminated
-	}
-	return report, err
+	return watchQuery(c, ctx, c.queryManagerMapReport)
 }
 
 func (c *Container) queryManagerMapReport(ctx context.Context) (managerMapReport, error) {
