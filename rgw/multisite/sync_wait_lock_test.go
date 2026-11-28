@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 )
 
 func assertRGWReadinessReleasesTopology(t *testing.T, f *Fixture, observed <-chan struct{}, wait func(context.Context) error) {
@@ -24,7 +24,7 @@ func assertRGWReadinessReleasesTopology(t *testing.T, f *Fixture, observed <-cha
 	}
 	lockCtx, stop := context.WithTimeout(t.Context(), 500*time.Millisecond)
 	defer stop()
-	if err := multicluster.LockObservation(lockCtx, &f.topologyMu); err != nil {
+	if err := clusterutil.LockMutex(lockCtx, &f.topologyMu); err != nil {
 		cancel()
 		waitErr := <-done
 		t.Fatalf("readiness wait retained topology lock between samples: %v (wait: %v)", err, waitErr)

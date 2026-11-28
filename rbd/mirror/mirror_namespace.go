@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/strictjson"
@@ -56,7 +57,7 @@ func (m *Container) PolicyStatus(ctx context.Context) (Policies, error) {
 	if m == nil {
 		return status, servicehook.Invalid(errors.New("RBD mirror fixture is unavailable"))
 	}
-	if err := multicluster.LockObservation(ctx, &m.mu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &m.mu); err != nil {
 		return Policies{}, err
 	}
 	defer m.mu.Unlock()

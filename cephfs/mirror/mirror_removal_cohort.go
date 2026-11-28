@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/moby/moby/api/types/container"
 )
 
@@ -44,7 +44,7 @@ func (c *cephFSRemovalCohort) capture(ctx context.Context) error {
 		if daemon == nil {
 			return cephFSObserveGuard("original CephFS peer cohort contains an unavailable daemon")
 		}
-		if err := multicluster.LockObservation(ctx, &daemon.mu); err != nil {
+		if err := clusterutil.LockMutex(ctx, &daemon.mu); err != nil {
 			return err
 		}
 		w, err := c.captureDaemon(ctx, daemon, watchers)
@@ -240,7 +240,7 @@ func (c *cephFSRemovalCohort) observe(ctx context.Context, check cephFSWitnessCh
 	var errs []error
 	for i := range c.witnesses {
 		w := &c.witnesses[i]
-		if err := multicluster.LockObservation(ctx, &w.daemon.mu); err != nil {
+		if err := clusterutil.LockMutex(ctx, &w.daemon.mu); err != nil {
 			all = false
 			errs = append(errs, err)
 			break
@@ -300,7 +300,7 @@ func (c *cephFSRemovalCohort) validateProcesses(ctx context.Context) error {
 		if w.daemon == nil {
 			return cephFSObserveGuard("original daemon identity is unavailable")
 		}
-		if err := multicluster.LockObservation(ctx, &w.daemon.mu); err != nil {
+		if err := clusterutil.LockMutex(ctx, &w.daemon.mu); err != nil {
 			return err
 		}
 		sameOwner := w.originalProcess != nil && w.originalProcess.originalHandle == w.daemon.Container && w.daemon.originalProcess == w.originalProcess && w.daemon.DaemonName == w.name

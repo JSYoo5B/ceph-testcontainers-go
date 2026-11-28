@@ -15,7 +15,6 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -107,7 +106,7 @@ func jeProbeRole(t *testing.T, role, env string) (receipt harness.JeRoleReceipt,
 		receipt.ImageID = inspect.Image
 	}
 
-	report, err := supervised.RunShell(ctx, ctr, "journal tool probe", 120, "sh", "-c", jeProbeScript)
+	report, err := harness.RunShell(ctx, ctr, "journal tool probe", 120, "sh", "-c", jeProbeScript)
 	if err != nil {
 		receipt.Reason = fmt.Sprintf("run probe: %v", err)
 		return receipt, errors.New(receipt.Reason)

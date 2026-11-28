@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/rbdobservation"
 	"github.com/testcontainers/testcontainers-go"
@@ -92,7 +93,7 @@ func (v *Namespace) imageStatus(ctx context.Context, imageName string, previous 
 		cancel()
 	}()
 	m := v.owner
-	if err := multicluster.LockObservation(ctx, &m.mu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &m.mu); err != nil {
 		return result, previous, scopedRBDImageError(ctx, err)
 	}
 	defer func() {
@@ -131,24 +132,10 @@ func scopedRBDImageError(ctx context.Context, err error) error {
 }
 
 func scopedRBDImagePermanent(err error) bool {
-	if rbdReceiverPermanent(err) {
-		return true
-	}
-	if classified, ok := err.(*rbdImageObservationError); ok && classified.permanent {
-		return true
-	}
-	if joined, ok := err.(interface{ Unwrap() []error }); ok {
-		for _, child := range joined.Unwrap() {
-			if scopedRBDImagePermanent(child) {
-				return true
-			}
-		}
-		return false
-	}
-	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
-		return scopedRBDImagePermanent(wrapped.Unwrap())
-	}
-	return false
+	return rbdReceiverPermanent(err) || multicluster.AnyNode(err, func(node error) bool {
+		classified, ok := node.(*rbdImageObservationError)
+		return ok && classified.permanent
+	})
 }
 
 func readRBDMirrorImageInfoForScope(ctx context.Context, client testcontainers.Container, spec, name string, mode Mode, scoped bool) (rbdObservedInfo, error) {

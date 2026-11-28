@@ -13,7 +13,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -526,7 +526,7 @@ func TestCephFSPeerRemovalProductionContextLocksAndWaitRelease(t *testing.T) {
 		}
 		done <- err
 	}()
-	if err := multicluster.LockObservation(ctx, &m.mu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &m.mu); err != nil {
 		t.Fatal(err)
 	}
 	drainPeerRemovalDaemons(a, b)

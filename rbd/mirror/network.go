@@ -7,6 +7,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
@@ -28,7 +29,7 @@ func (d *Daemon) InterruptPeerLink(ctx context.Context) (*fault.NetworkInterrupt
 		return nil, servicehook.Invalid(errors.New("RBD mirror daemon is not owned by a fixture"))
 	}
 	m := d.owner
-	if err := multicluster.LockObservation(ctx, &m.mu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &m.mu); err != nil {
 		return nil, err
 	}
 	defer m.mu.Unlock()

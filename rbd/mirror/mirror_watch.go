@@ -7,10 +7,9 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/rbdobservation"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/watch"
 )
 
 // rbdGateBound bounds the native reads that one status observation or one
@@ -25,26 +24,6 @@ func rbdGateContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(ctx, rbdGateBound)
 }
 
-// rbdWatchSettings validates cfg for one Watch of this package with the
-// target's default interval.
-func rbdWatchSettings(operation string, cfg ceph.WatchConfig, defaultInterval time.Duration) (watch.Settings, error) {
-	s, err := watch.Validate(cfg.Interval, cfg.QueryTimeout, cfg.Buffer, defaultInterval)
-	if err != nil {
-		return watch.Settings{}, servicehook.Invalid(fmt.Errorf("%s: %v", operation, err))
-	}
-	return s, nil
-}
-
-// rbdWatchMeta is the target-independent part of an event in public form.
-func rbdWatchMeta(m watch.Meta) (uint64, ceph.WatchEventKind, time.Time, time.Time) {
-	return m.Sequence, ceph.WatchEventKind(m.Kind), m.Started, m.Finished
-}
-
-// rbdWatchNotStarted is the Stop error of a watch that no Watch call started.
-func rbdWatchNotStarted(operation string) error {
-	return servicehook.Invalid(fmt.Errorf("%s: the watch is not started by its Watch call", operation))
-}
-
 // errRBDWatchTerminated marks the read of a watch whose mirror or cluster is
 // terminated; the watch ends with it.
 var errRBDWatchTerminated = errors.New("terminated")
@@ -57,7 +36,7 @@ var errRBDWatchTerminated = errors.New("terminated")
 // outlasts is a query error.
 func (m *Container) checkWatchOpen(ctx context.Context, operation string) error {
 	observation := rbdobservation.Begin(ctx, "watch-open")
-	if err := multicluster.LockObservation(ctx, &m.mu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &m.mu); err != nil {
 		observation.Finish(ctx, err)
 		return rbdReceiverQuery(ctx, "admit "+operation, err)
 	}

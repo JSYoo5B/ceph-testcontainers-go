@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/watch"
 )
 
@@ -77,7 +78,7 @@ func (w *ImageWatch) Events() <-chan ImageWatchEvent {
 //purpose:observation,lifetime
 func (w *ImageWatch) Stop() error {
 	if w == nil || !w.stream.Started() {
-		return rbdWatchNotStarted(imageWatchOperation)
+		return servicehook.WatchNotStarted(imageWatchOperation)
 	}
 	return w.stream.Stop()
 }
@@ -126,7 +127,7 @@ func (m *Container) WatchImage(ctx context.Context, cfg ceph.WatchConfig, imageN
 	if m == nil {
 		return nil, rbdImageGuardError("RBD mirror fixture is unavailable")
 	}
-	settings, err := rbdWatchSettings(imageWatchOperation, cfg, imageWatchDefaultInterval)
+	settings, err := servicehook.WatchSettings(imageWatchOperation, cfg, imageWatchDefaultInterval)
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +153,7 @@ func (v *Namespace) WatchImage(ctx context.Context, cfg ceph.WatchConfig, imageN
 	if v == nil || v.owner == nil || v.scope.binding == nil {
 		return nil, rbdImageGuardError("RBD namespace binding is unavailable")
 	}
-	settings, err := rbdWatchSettings(imageWatchOperation, cfg, imageWatchDefaultInterval)
+	settings, err := servicehook.WatchSettings(imageWatchOperation, cfg, imageWatchDefaultInterval)
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +195,7 @@ func startImageWatch(ctx context.Context, settings watch.Settings, open func(con
 		},
 		Event: func(m watch.Meta, s ImageStatus, err error) ImageWatchEvent {
 			e := ImageWatchEvent{Status: s, Err: err}
-			e.Sequence, e.Kind, e.Started, e.Finished = rbdWatchMeta(m)
+			e.Sequence, e.Kind, e.Started, e.Finished = servicehook.WatchMeta(m)
 			return e
 		},
 	})

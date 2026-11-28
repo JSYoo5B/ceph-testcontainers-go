@@ -83,7 +83,7 @@ func (w *DirectoryWatch) Events() <-chan DirectoryWatchEvent {
 //purpose:observation,lifetime
 func (w *DirectoryWatch) Stop() error {
 	if w == nil || !w.stream.Started() {
-		return servicehook.Invalid(fmt.Errorf("%s: the watch is not started by its Watch call", directoryWatchOperation))
+		return servicehook.WatchNotStarted(directoryWatchOperation)
 	}
 	return w.stream.Stop()
 }
@@ -139,9 +139,9 @@ func (mirror *Container) WatchDirectory(ctx context.Context, cfg ceph.WatchConfi
 	if err != nil {
 		return nil, servicehook.Invalid(fmt.Errorf("%s: %v", directoryWatchOperation, err))
 	}
-	settings, err := watch.Validate(cfg.Interval, cfg.QueryTimeout, cfg.Buffer, directoryWatchDefaultInterval)
+	settings, err := servicehook.WatchSettings(directoryWatchOperation, cfg, directoryWatchDefaultInterval)
 	if err != nil {
-		return nil, servicehook.Invalid(fmt.Errorf("%s: %v", directoryWatchOperation, err))
+		return nil, err
 	}
 	return startDirectoryWatch(ctx, settings, normalized, mirror.directoryWatchRead(normalized))
 }
@@ -244,8 +244,7 @@ func startDirectoryWatch(ctx context.Context, settings watch.Settings, directory
 		Equal: directoryStatusEqual,
 		Event: func(m watch.Meta, s DirectoryStatus, err error) DirectoryWatchEvent {
 			e := DirectoryWatchEvent{Status: cloneDirectoryStatus(s), Err: err}
-			e.Sequence, e.Started, e.Finished = m.Sequence, m.Started, m.Finished
-			e.Kind = ceph.WatchEventKind(m.Kind)
+			e.Sequence, e.Kind, e.Started, e.Finished = servicehook.WatchMeta(m)
 			return e
 		},
 	})

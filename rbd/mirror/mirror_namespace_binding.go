@@ -3,10 +3,11 @@ package mirror
 import (
 	"context"
 	"encoding/json"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
-	"github.com/JSYoo5B/ceph-testcontainers-go/rbd/internal/resourcename"
 	"slices"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rbd/internal/resourcename"
 
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -79,7 +80,7 @@ func (m *Container) BindNamespace(ctx context.Context, sourceNamespace, destinat
 			return nil, rbdReceiverGuard("RBD namespace binding names are invalid")
 		}
 	}
-	if err := multicluster.LockObservation(ctx, &m.mu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &m.mu); err != nil {
 		return nil, rbdReceiverQuery(ctx, "admit RBD namespace binding", err)
 	}
 	defer m.mu.Unlock()

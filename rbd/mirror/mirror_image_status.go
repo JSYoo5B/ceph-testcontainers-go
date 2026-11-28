@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/rbdobservation"
 	"github.com/testcontainers/testcontainers-go"
@@ -68,7 +69,7 @@ func (m *Container) ImageStatus(ctx context.Context, imageName string) (ImageSta
 		cancel()
 	}()
 	// Hold the mutation lock for one bounded observation, never across a poll.
-	if observationErr = multicluster.LockObservation(ctx, &m.mu); observationErr != nil {
+	if observationErr = clusterutil.LockMutex(ctx, &m.mu); observationErr != nil {
 		return result, observationErr
 	}
 	defer func() {

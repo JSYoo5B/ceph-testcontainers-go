@@ -81,7 +81,7 @@ func (w *ReceiverWatch) Events() <-chan ReceiverWatchEvent {
 //purpose:observation,lifetime
 func (w *ReceiverWatch) Stop() error {
 	if w == nil || !w.stream.Started() {
-		return rbdWatchNotStarted(receiverWatchOperation)
+		return servicehook.WatchNotStarted(receiverWatchOperation)
 	}
 	return w.stream.Stop()
 }
@@ -126,7 +126,7 @@ func (m *Container) WatchReceivers(ctx context.Context, cfg ceph.WatchConfig, ex
 	if m == nil {
 		return nil, rbdReceiverGuard("RBD receiver fixture is unavailable")
 	}
-	settings, err := rbdWatchSettings(receiverWatchOperation, cfg, receiverWatchDefaultInterval)
+	settings, err := servicehook.WatchSettings(receiverWatchOperation, cfg, receiverWatchDefaultInterval)
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +148,7 @@ func (v *Namespace) WatchReceivers(ctx context.Context, cfg ceph.WatchConfig, ex
 	if v == nil || v.owner == nil || v.scope.binding == nil {
 		return nil, rbdReceiverGuard("RBD namespace binding is unavailable")
 	}
-	settings, err := rbdWatchSettings(receiverWatchOperation, cfg, receiverWatchDefaultInterval)
+	settings, err := servicehook.WatchSettings(receiverWatchOperation, cfg, receiverWatchDefaultInterval)
 	if err != nil {
 		return nil, err
 	}
@@ -196,7 +196,7 @@ func startReceiverWatch(ctx context.Context, settings watch.Settings, open func(
 		Equal: func(a, b ReceiverStatus) bool { return reflect.DeepEqual(a, b) },
 		Event: func(m watch.Meta, s ReceiverStatus, err error) ReceiverWatchEvent {
 			e := ReceiverWatchEvent{Status: cloneReceiverStatus(s), Err: err}
-			e.Sequence, e.Kind, e.Started, e.Finished = rbdWatchMeta(m)
+			e.Sequence, e.Kind, e.Started, e.Finished = servicehook.WatchMeta(m)
 			return e
 		},
 	})

@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/moby/moby/api/pkg/stdcopy"
@@ -409,7 +409,7 @@ func TestCephFSObserverDraftWaitCheckpointIdentityAndContext(t *testing.T) {
 	finished := make(chan error, 1)
 	go func() { _, err := mirror.WaitDirectoryReady(polling, "/owned"); finished <- err }()
 	<-started
-	if err := multicluster.LockObservation(polling, &mirror.mu); err != nil {
+	if err := clusterutil.LockMutex(polling, &mirror.mu); err != nil {
 		t.Fatal("wait held lock across poll sleep")
 	}
 	mirror.mu.Unlock()

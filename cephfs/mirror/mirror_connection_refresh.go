@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -55,7 +56,7 @@ func (mirror *Container) refreshMonitorConfig(ctx context.Context, refresh func(
 			errs = append(errs, cephFSObserveGuard("owned CephFS mirror daemon is unavailable"))
 			continue
 		}
-		if err := multicluster.LockObservation(ctx, &daemon.mu); err != nil {
+		if err := clusterutil.LockMutex(ctx, &daemon.mu); err != nil {
 			errs = append(errs, err)
 			break
 		}

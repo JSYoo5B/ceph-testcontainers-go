@@ -3,17 +3,7 @@ package multicluster
 import (
 	"context"
 	"errors"
-	"sync"
-
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 )
-
-// LockObservation acquires mutex unless ctx ends first. Observation waits
-// include time queued behind a topology mutation or another observer. No
-// goroutine remains waiting after cancellation.
-func LockObservation(ctx context.Context, mutex *sync.Mutex) error {
-	return clusterutil.LockMutex(ctx, mutex)
-}
 
 // RetainWaitQueryCause handles a caller-context-only failure, which has no new independent native query cause.
 // Retain an earlier exposed cause without changing inner-attempt timeouts,
@@ -26,24 +16,7 @@ func RetainWaitQueryCause(ctx context.Context, previous, current error) error {
 }
 
 func waitContextOnlyError(err error) bool {
-	if err == nil {
-		return false
-	}
-	if joined, ok := err.(interface{ Unwrap() []error }); ok {
-		found := false
-		for _, child := range joined.Unwrap() {
-			if child == nil {
-				continue
-			}
-			found = true
-			if !waitContextOnlyError(child) {
-				return false
-			}
-		}
-		return found
-	}
-	if wrapped, ok := err.(interface{ Unwrap() error }); ok && wrapped.Unwrap() != nil {
-		return waitContextOnlyError(wrapped.Unwrap())
-	}
-	return err == context.Canceled || err == context.DeadlineExceeded
+	return EveryBranch(err, func(leaf error) bool {
+		return leaf == context.Canceled || leaf == context.DeadlineExceeded
+	})
 }

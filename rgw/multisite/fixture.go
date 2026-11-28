@@ -13,6 +13,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/mutation"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/rgwhook"
@@ -845,7 +846,7 @@ func (f *Fixture) PullPeriod(ctx context.Context, zone, fromZone string) error {
 // operations that change the period, and refuses a terminated fixture before
 // it resolves the zones.
 func (f *Fixture) pullPeriod(ctx context.Context, target func() (client testcontainers.Container, zone, url string, err error)) error {
-	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &f.topologyMu); err != nil {
 		return err
 	}
 	defer f.topologyMu.Unlock()
@@ -871,7 +872,7 @@ func (f *Fixture) pullPeriod(ctx context.Context, target func() (client testcont
 //
 //purpose:lifetime
 func (f *Fixture) Terminate(ctx context.Context, opts ...testcontainers.TerminateOption) error {
-	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &f.topologyMu); err != nil {
 		return err
 	}
 	defer f.topologyMu.Unlock()

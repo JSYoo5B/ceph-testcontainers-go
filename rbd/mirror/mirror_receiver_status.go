@@ -8,7 +8,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/rbdobservation"
 	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
@@ -216,7 +216,7 @@ func (m *Container) receiverStatusForScope(ctx context.Context, scope *rbdReceiv
 		observation.Finish(ctx, observationErr)
 		cancel()
 	}()
-	if err := multicluster.LockObservation(ctx, &m.mu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &m.mu); err != nil {
 		return result, previous, rbdReceiverQuery(ctx, "admit RBD receiver observation", err)
 	}
 	defer func() {
@@ -295,7 +295,7 @@ type rbdReceiverNativeObservation struct {
 func (m *Container) readRBDReceiver(ctx context.Context, scope *rbdReceiverScope, member rbdReceiverMemberWitness, read rbdNativeRead) (rbdReceiverNativeObservation, error) {
 	var result rbdReceiverNativeObservation
 	result.report.ContainerID, result.report.ClientName = member.cid, member.client
-	if err := multicluster.LockObservation(ctx, &member.daemon.mu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &member.daemon.mu); err != nil {
 		return result, read.query(ctx, "admit RBD receiving process observation", err)
 	}
 	defer member.daemon.mu.Unlock()

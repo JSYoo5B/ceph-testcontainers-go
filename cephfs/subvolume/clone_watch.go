@@ -2,7 +2,6 @@ package subvolume
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"maps"
 	"time"
@@ -12,6 +11,9 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/watch"
 )
+
+// cloneWatchOperation names a clone watch in its refusals.
+const cloneWatchOperation = "watch clone"
 
 // cloneWatchDefaultInterval is the default WatchConfig.Interval of
 // Clone.Watch: each read runs four native commands (five once Clone.Wait has
@@ -79,7 +81,7 @@ func (w *CloneWatch) Events() <-chan CloneWatchEvent {
 //purpose:observation,lifetime
 func (w *CloneWatch) Stop() error {
 	if w == nil || !w.stream.Started() {
-		return servicehook.Invalid(errors.New("watch clone: the watch is not started by Clone.Watch"))
+		return servicehook.WatchNotStarted(cloneWatchOperation)
 	}
 	return w.stream.Stop()
 }
@@ -132,9 +134,9 @@ func (clone *Clone) Watch(ctx context.Context, cfg ceph.WatchConfig) (*CloneWatc
 	if err != nil {
 		return nil, err
 	}
-	settings, err := watch.Validate(cfg.Interval, cfg.QueryTimeout, cfg.Buffer, cloneWatchDefaultInterval)
+	settings, err := servicehook.WatchSettings(cloneWatchOperation, cfg, cloneWatchDefaultInterval)
 	if err != nil {
-		return nil, servicehook.Invalid(fmt.Errorf("watch clone: %v", err))
+		return nil, err
 	}
 	if err := validateCloneHandle(fs, clone); err != nil {
 		return nil, err
@@ -164,7 +166,8 @@ func startCloneWatch(ctx context.Context, settings watch.Settings, name string, 
 			return s.State == "complete" || s.State == "failed" || s.State == "canceled"
 		},
 		Event: func(m watch.Meta, s *CloneStatus, err error) CloneWatchEvent {
-			e := CloneWatchEvent{Sequence: m.Sequence, Kind: ceph.WatchEventKind(m.Kind), Started: m.Started, Finished: m.Finished, Err: err}
+			e := CloneWatchEvent{Err: err}
+			e.Sequence, e.Kind, e.Started, e.Finished = servicehook.WatchMeta(m)
 			if err == nil {
 				e.Status = copyCloneStatus(s)
 			}

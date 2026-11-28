@@ -16,6 +16,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"github.com/testcontainers/testcontainers-go"
@@ -137,10 +138,10 @@ func cephFSMutationKind(args []string) string {
 		switch {
 		case args[0] == "python3" && args[2] == supervised.Script && len(args) > 6:
 			return cephFSMutationKind(args[6:])
-		case args[0] == "sh" && args[2] == supervised.ShellScript && len(args) > 7:
+		case args[0] == "sh" && args[2] == harness.ShellScript && len(args) > 7:
 			return cephFSMutationKind(args[7:])
 		case args[0] == "python3" && args[2] == supervised.CancelScript,
-			args[0] == "sh" && args[2] == supervised.ShellCancelScript:
+			args[0] == "sh" && args[2] == harness.ShellCancelScript:
 			return ""
 		}
 	}

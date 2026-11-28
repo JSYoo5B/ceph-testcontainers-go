@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -14,7 +15,7 @@ import (
 // caller keeps the mutex and flag in its own daemon type, so its other
 // observers continue to read the same state under the same lock.
 func TerminateOnce(ctx context.Context, mu *sync.Mutex, done *bool, ctr testcontainers.Container, opts ...testcontainers.TerminateOption) error {
-	if err := LockObservation(ctx, mu); err != nil {
+	if err := clusterutil.LockMutex(ctx, mu); err != nil {
 		return err
 	}
 	defer mu.Unlock()
@@ -36,7 +37,7 @@ func TerminateOnce(ctx context.Context, mu *sync.Mutex, done *bool, ctr testcont
 // bounded by ctx. The caller keeps the mutex, flag and fields in its own
 // fixture type, so its other observers read the same state under the same lock.
 func TerminateFixture(ctx context.Context, mu *sync.Mutex, closed *bool, owned *Resources, forget func(), opts ...testcontainers.TerminateOption) error {
-	if err := LockObservation(ctx, mu); err != nil {
+	if err := clusterutil.LockMutex(ctx, mu); err != nil {
 		return err
 	}
 	defer mu.Unlock()

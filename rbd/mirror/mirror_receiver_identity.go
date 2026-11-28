@@ -11,6 +11,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -295,24 +296,10 @@ func rbdReceiverInstance(value string) bool {
 }
 
 func rbdReceiverPermanent(err error) bool {
-	if err == nil {
-		return false
-	}
-	if observation, ok := err.(*rbdReceiverObservationError); ok && observation.permanent {
-		return true
-	}
-	if joined, ok := err.(interface{ Unwrap() []error }); ok {
-		for _, child := range joined.Unwrap() {
-			if rbdReceiverPermanent(child) {
-				return true
-			}
-		}
-		return false
-	}
-	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
-		return rbdReceiverPermanent(wrapped.Unwrap())
-	}
-	return false
+	return multicluster.AnyNode(err, func(node error) bool {
+		observation, ok := node.(*rbdReceiverObservationError)
+		return ok && observation.permanent
+	})
 }
 
 func rbdReceiverContainerID(value string) bool {

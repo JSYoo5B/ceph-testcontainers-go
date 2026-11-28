@@ -134,7 +134,7 @@ func (w *SessionWatch) Events() <-chan SessionWatchEvent {
 //purpose:observation,lifetime
 func (w *SessionWatch) Stop() error {
 	if w == nil || !w.stream.Started() {
-		return servicehook.Invalid(errors.New(watchOperation + ": the watch is not started by Watch"))
+		return servicehook.WatchNotStarted(watchOperation)
 	}
 	return w.stream.Stop()
 }
@@ -189,9 +189,9 @@ func Watch(ctx context.Context, fs *cephfs.Filesystem, cfg ceph.WatchConfig, cli
 	if fs == nil {
 		return nil, servicehook.Invalid(errors.New(watchOperation + ": the filesystem is nil"))
 	}
-	settings, err := watch.Validate(cfg.Interval, cfg.QueryTimeout, cfg.Buffer, watchDefaultInterval)
+	settings, err := servicehook.WatchSettings(watchOperation, cfg, watchDefaultInterval)
 	if err != nil {
-		return nil, servicehook.Invalid(fmt.Errorf(watchOperation+": %v", err))
+		return nil, err
 	}
 	if slices.Contains(clients, 0) {
 		return nil, servicehook.Invalid(errors.New(watchOperation + ": client ID 0 selects no session"))
@@ -410,8 +410,8 @@ func startWatch(ctx context.Context, settings watch.Settings, name string, read 
 		Read:     read,
 		Equal:    equalSamples,
 		Event: func(m watch.Meta, s sample, err error) SessionWatchEvent {
-			e := SessionWatchEvent{Sequence: m.Sequence, Kind: ceph.WatchEventKind(m.Kind), Started: m.Started, Finished: m.Finished,
-				Before: slices.Clone(s.before), After: slices.Clone(s.after), Err: err}
+			e := SessionWatchEvent{Before: slices.Clone(s.before), After: slices.Clone(s.after), Err: err}
+			e.Sequence, e.Kind, e.Started, e.Finished = servicehook.WatchMeta(m)
 			if err == nil {
 				e.MaxMDS = s.maxMDS
 				e.Sessions, e.Added, e.Removed = append([]Session{}, s.sessions...), slices.Clone(s.added), slices.Clone(s.removed)

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
@@ -624,7 +625,7 @@ func (mirror *Container) lock(ctx context.Context) error {
 	if mirror == nil {
 		return cephFSRefusal("CephFS mirror fixture is unavailable")
 	}
-	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &mirror.mu); err != nil {
 		return err
 	}
 	if mirror.closed {

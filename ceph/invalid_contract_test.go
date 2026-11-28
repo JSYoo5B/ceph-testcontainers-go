@@ -76,12 +76,15 @@ import (
 // running, and an inactive user or account, an unowned root account, an
 // account-owned user quota, an unconfirmed placement and a placement user
 // default's class and empty tag list are classified where they are refused.
+// Of the watch refusals counted above, the refused configuration and Stop of
+// an unstarted watch are classified once in servicehook.WatchSettings and
+// WatchNotStarted, so the service packages no longer call Invalid for them.
 var invalidCallSites = map[string]int{
-	"rbd": 30, "cephfs": 32, "rgw": 49,
-	"cephfs/subvolume": 34, "cephfs/quiesce": 8, "cephfs/internal/fsbase": 9,
-	"cephfs/session": 11, "cephfs/snapschedule": 16,
+	"rbd": 30, "cephfs": 31, "rgw": 49,
+	"cephfs/subvolume": 32, "cephfs/quiesce": 6, "cephfs/internal/fsbase": 9,
+	"cephfs/session": 9, "cephfs/snapschedule": 14,
 	"rgw/account": 10, "rgw/placement": 23, "rgw/notification": 5, "rgw/internal/gwbase": 21,
-	"rbd/mirror": 33, "cephfs/mirror": 17,
+	"rbd/mirror": 31, "cephfs/mirror": 15,
 }
 
 // countInvalidCalls counts, in the non-test files of dir, the calls of a bare
