@@ -106,22 +106,19 @@ func checkReplacementMDSMembership(s seen, entry filesystemEntry, want Replaceme
 // replacementMDSScope checks that the owned filesystem keeps the policy and
 // pools it was created with and returns the removal scope it implies.
 func replacementMDSScope(id int64, m *mapFields, want ReplacementExpectation) (*Scope, error) {
-	if id != want.Native.ID || m.Metadata == nil || *m.Metadata != want.Native.MetadataPool || m.Data == nil || !slices.Equal(*m.Data, want.Pools.DataPools) || m.Max == nil || *m.Max != 1 || m.Wanted == nil || *m.Wanted != 0 || m.Flags == nil || m.Flags.Joinable == nil || !*m.Flags.Joinable || m.Flags.Replay == nil || *m.Flags.Replay || m.Flags.Refuse == nil || !*m.Flags.Refuse || m.In == nil || !slices.Equal(*m.In, []int{0}) || m.Failed == nil || m.Damaged == nil || m.Stopped == nil || len(*m.Damaged)+len(*m.Stopped) != 0 {
+	if !checkPolicy(id, m, want.Native, want.Pools.DataPools, 1, 0, false) || m.In == nil || !slices.Equal(*m.In, []int{0}) || m.Failed == nil || m.Damaged == nil || m.Stopped == nil || len(*m.Damaged)+len(*m.Stopped) != 0 {
 		return nil, errors.New("original MDS replacement filesystem policy changed")
 	}
 	scope := &Scope{Active: 1, Standby: 0, Joinable: true, Protected: true, DataPools: slices.Clone(want.Pools.DataPools)}
-	seenPools := map[int64]bool{}
-	for _, id := range want.Pools.DataPools {
-		if id < 0 || seenPools[id] {
-			return nil, errors.New("MDS replacement data attachments are invalid or duplicated")
-		}
-		seenPools[id] = true
-		name, ok := want.Pools.Names[id]
-		if !ok {
-			return nil, errors.New("MDS replacement attached pool is unavailable")
-		}
-		scope.PoolNames = append(scope.PoolNames, name)
+	names, f := scopePoolNames(want.Pools.DataPools, want.Pools.Names)
+	switch f {
+	case poolNone:
+	case poolInvalid:
+		return nil, errors.New("MDS replacement data attachments are invalid or duplicated")
+	default:
+		return nil, errors.New("MDS replacement attached pool is unavailable")
 	}
+	scope.PoolNames = names
 	return scope, nil
 }
 
@@ -171,7 +168,7 @@ func checkReplacementMDSStandbys(s seen, standbys []Row, want ReplacementExpecta
 				return false, errors.New("reserved MDS replacement name is already registered")
 			}
 			reserved = true
-		} else if *row.Join == -1 || *row.Join == want.Native.ID || !s.fsIDs[*row.Join] {
+		} else if foreignStandbyCanJoin(s, row, want.Native.ID) {
 			return false, errors.New("foreign standby can replace the failed original MDS rank")
 		}
 	}
