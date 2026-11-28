@@ -66,12 +66,19 @@ import (
 // input and outside-edit refusals there. cephfs classifies the unavailable
 // MDS handle and the owner and identity refusals of the status read that
 // MDSStatus, its watch and the read-only fault share, and a subvolume pin
-// handle classifies its unavailable restore.
+// handle classifies its unavailable restore. The RGW typed operations admit
+// through gwbase.Admit and AdmitCreation, which classify a gateway without a
+// cluster, and ValidateAdmin classifies a replaced container handle; users
+// and accounts share gwbase.CheckQuotaLimits for their quota limits, the
+// generation-checked gateway restart classifies a gateway that is not
+// running, and an inactive user or account, an unowned root account, an
+// account-owned user quota, an unconfirmed placement and a placement user
+// default's class and empty tag list are classified where they are refused.
 var invalidCallSites = map[string]int{
-	"rbd": 30, "cephfs": 32, "rgw": 52,
+	"rbd": 30, "cephfs": 32, "rgw": 49,
 	"cephfs/subvolume": 34, "cephfs/quiesce": 8, "cephfs/internal/fsbase": 9,
 	"cephfs/session": 11, "cephfs/snapschedule": 16,
-	"rgw/account": 11, "rgw/placement": 22, "rgw/notification": 6, "rgw/internal/gwbase": 15,
+	"rgw/account": 10, "rgw/placement": 23, "rgw/notification": 5, "rgw/internal/gwbase": 21,
 	"rbd/mirror": 34, "cephfs/mirror": 24,
 }
 
