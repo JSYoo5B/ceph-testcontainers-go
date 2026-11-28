@@ -177,19 +177,30 @@ func (serviceHooks) ResolvePool(c *Container, config PoolConfig) PoolConfig {
 // RunNativeCommand's: when ctx ends first, the command is stopped before
 // RunOwnedRoleCommand returns, and a stop that cannot be confirmed returns a
 // NativeCommandUnstoppedError, whose Stop and Terminate retry it. Terminate
-// cancels a running call. label names the command in errors.
+// cancels a running call. label names the command in errors. A nil c runs a
+// command in a container that no cluster owns: nothing tracks it, so only the
+// error's Stop retries an unconfirmed stop.
 func (serviceHooks) RunOwnedRoleCommand(ctx context.Context, c *Container, target testcontainers.Container, label string, limit, stdoutLimit int, argv ...string) (supervised.Report, error) {
-	runCtx, cancel := context.WithCancelCause(ctx)
-	defer cancel(nil)
+	// Only the owner's Terminate cancels a call, so an untracked call runs
+	// under ctx itself.
+	runCtx, cancel := ctx, context.CancelCauseFunc(func(error) {})
+	if c != nil {
+		runCtx, cancel = context.WithCancelCause(ctx)
+		defer cancel(nil)
+	}
 	inv := &nativeInvocation{owner: c, target: target, label: label, cancel: cancel, stopCommand: supervised.Cancel, done: make(chan struct{})}
 	// An owned role command has no target instance, which no fence can name, so the
 	// fence check of admit never refuses it.
-	if c.native.calls.admit(inv, nil) == nativeRefusedClosed {
+	if c != nil && c.native.calls.admit(inv, nil) == nativeRefusedClosed {
 		return supervised.Report{}, fmt.Errorf("%s: %w", label, errClusterTerminated)
 	}
 	report, err := supervised.RunRoleCommand(runCtx, target, label, limit, stdoutLimit, argv...)
 	unstopped, _ := supervised.Unconfirmed(err)
-	c.native.calls.finish(inv, unstopped, unstopped != "")
+	if c != nil {
+		c.native.calls.finish(inv, unstopped, unstopped != "")
+	} else {
+		inv.marker = unstopped
+	}
 	close(inv.done)
 	if err != nil && ctx.Err() == nil && errors.Is(context.Cause(runCtx), errNativeTerminated) {
 		err = fmt.Errorf("%s: %w: %w", label, errNativeTerminated, err)
