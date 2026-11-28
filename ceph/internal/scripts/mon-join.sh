@@ -117,4 +117,25 @@ if [ ! -d "/var/lib/ceph/mon/ceph-$id/store.db" ]; then
     monmaptool --addv "$id" "$addrs" /tc/monmap
     ceph-mon --mkfs -i "$id" --monmap /tc/monmap --keyring /etc/ceph/mon.keyring
 fi
-exec ceph-mon -f -i "$id"
+# BEGIN mon-clock (identical in mon.sh and mon-join.sh)
+# exec_daemon replaces this shell with the long-running daemon "$@". A MON
+# that the cluster armed for clock offsets (ClockConfig) has the clock helper's
+# interposer and its owned timestamp file in /tc/clock, both copied in before
+# the container started. Only the daemon is preloaded with them: the steps
+# above and every command executed in the container later inherit the
+# container environment, which carries none of these variables.
+exec_daemon() {
+    if [ -e /tc/clock/libfaketime.so.1 ] || [ -e /tc/clock/offset ]; then
+        if [ ! -f /tc/clock/libfaketime.so.1 ] || [ ! -f /tc/clock/offset ]; then
+            echo "tc-ceph: clock: the interposer or its owned timestamp file is missing" >&2
+            exit 2
+        fi
+        # FAKETIME, even empty, would disable the timestamp file.
+        unset FAKETIME
+        export LD_PRELOAD=/tc/clock/libfaketime.so.1 FAKETIME_TIMESTAMP_FILE=/tc/clock/offset
+        export FAKETIME_CACHE_DURATION=1 FAKETIME_DONT_FAKE_MONOTONIC=1
+    fi
+    exec "$@"
+}
+# END mon-clock
+exec_daemon ceph-mon -f -i "$id"

@@ -87,6 +87,11 @@ func (c *Container) replaceMonitor(ctx context.Context, handle *MonitorContainer
 	if daemon.imageSet {
 		image = daemon.image
 	}
+	if daemon.clock {
+		if err := c.armClock(name); err != nil {
+			return nil, err
+		}
+	}
 	gens := c.monitorGenerations(name, func(ports []int) []testcontainers.ContainerCustomizer { return c.monitorJoinOptions(join, ports) }, monitorSocketReady(name))
 	gens.beforeCreate = func(ctx context.Context) error { return c.clearAdminSocket(ctx, "mon."+name) }
 	if !retryBeforeCreate {

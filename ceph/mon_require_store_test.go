@@ -86,7 +86,7 @@ func newRequireStoreFixture(t *testing.T, name string, mutate func(string) strin
 		}
 		source = mutated
 	}
-	for _, path := range []string{"/etc/ceph", "/var/lib/ceph", "/var/run/ceph", "/tmp/monmap", "/tc/monmap", userConfigPath} {
+	for _, path := range []string{"/etc/ceph", "/var/lib/ceph", "/var/run/ceph", "/tmp/monmap", "/tc/monmap", "/tc/clock", userConfigPath} {
 		source = strings.ReplaceAll(source, path, root+path)
 	}
 	if err := os.WriteFile(f.script, []byte(source), 0o600); err != nil {
@@ -472,9 +472,9 @@ func requireStoreCall(name string) string {
 }
 
 func requireStoreMutations(name string) []requireStoreMutation {
-	mkfs, dataPath := "exec ceph-mon -f -i a", "/var/lib/ceph/mon/ceph-a"
+	mkfs, dataPath := "exec_daemon ceph-mon -f -i a", "/var/lib/ceph/mon/ceph-a"
 	if name == "mon-join" {
-		mkfs, dataPath = "exec ceph-mon -f -i \"$id\"", "\"/var/lib/ceph/mon/ceph-$id\""
+		mkfs, dataPath = "exec_daemon ceph-mon -f -i \"$id\"", "\"/var/lib/ceph/mon/ceph-$id\""
 	}
 	return []requireStoreMutation{
 		{"mode ignored", scenarioRequireMissingStoreRefusedBeforeWrite, replaceOnce(requireStoreCall(name), ":\n")},
@@ -539,7 +539,7 @@ func TestMonRequireStoreNegativeControls(t *testing.T) {
 
 // monSharedBlocks are the marked blocks that mon.sh and mon-join.sh both
 // carry, because each script runs alone in its container.
-var monSharedBlocks = []string{"mon-store-mode", "mon-address"}
+var monSharedBlocks = []string{"mon-store-mode", "mon-address", "mon-clock"}
 
 // monSharedBlock returns the text of the marked block in script, or ok false
 // when it is missing or repeated.
@@ -585,6 +585,7 @@ func TestMonSharedBlockDriftControl(t *testing.T) {
 	for marker, edit := range map[string][2]string{
 		"mon-store-mode": {"exit 3", "exit 4"},
 		"mon-address":    {"${mon_v1}", "${mon_v2}"},
+		"mon-clock":      {"FAKETIME_CACHE_DURATION=1", "FAKETIME_CACHE_DURATION=2"},
 	} {
 		b := strings.Replace(a, edit[0], edit[1], 1)
 		before, _ := monSharedBlock(a, marker)

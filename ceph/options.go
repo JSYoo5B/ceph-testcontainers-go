@@ -60,6 +60,8 @@ type options struct {
 	clusterSet clusterField
 	// zones is the ZoneConfig group; see zoneSettings.
 	zones zoneSettings
+	// clock is the ClockConfig group; see clockSettings.
+	clock clockSettings
 	// managerPorts are the TCP ports every bridge-mode MGR container
 	// publishes (WithManagerPorts); nil publishes none.
 	managerPorts []int

@@ -159,6 +159,11 @@ func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonO
 	if name == "a" {
 		return nil, errors.New("primary monitor name a cannot be reused")
 	}
+	if daemon.clock {
+		if err := c.armClock(name); err != nil {
+			return nil, err
+		}
+	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
 	key, monmap, err := c.monitorJoinMaterial(ctx, name)
@@ -272,6 +277,7 @@ func (c *Container) monitorJoinOptions(join monitorJoin, ports []int) []testcont
 		opts = append(opts, keepMonitorAddress(c.staticFacts().NetworkName))
 	}
 	opts = append(opts, c.runDir.mounts()...)
+	opts = append(opts, c.clockFiles(join.name)...)
 	return append(opts, c.quorumMember("mon."+join.name), c.startup.ownedLabel())
 }
 
@@ -285,7 +291,11 @@ func (c *Container) removeMonitor(ctx context.Context, handle *MonitorContainer)
 	if c.closed {
 		return errClusterTerminated
 	}
-	return c.monitorTopology().retireMonitor(ctx, handle)
+	if err := c.monitorTopology().retireMonitor(ctx, handle); err != nil {
+		return err
+	}
+	c.disarmClock(handle.DaemonName)
+	return nil
 }
 
 // retireMonitor kills the MON of handle while a majority quorum survives
@@ -829,6 +839,9 @@ func (c *Container) AddManager(ctx context.Context, name string, opts ...DaemonO
 	}
 	daemon, err := resolveDaemonOptions(opts)
 	if err != nil {
+		return nil, err
+	}
+	if err := clockOnlyForMonitors(daemon, "AddManager"); err != nil {
 		return nil, err
 	}
 	if err := c.lockTopology(ctx); err != nil {
