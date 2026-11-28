@@ -145,9 +145,9 @@ func TestDiagnosticsTypedNilHandlesRemainInspectable(t *testing.T) {
 	inventory := evidence.Inventory{Members: []evidence.Member{{Role: "mon", Name: "joining"}, {Role: "rgw", Name: "rgw:partial"}}}
 	config := diagnosticsUnitConfig(t)
 	config.AdditionalContainers = []Target{{Role: "mirror", Name: "failed-mirror", Container: missing}}
-	snapshot := snapshotOf(inventory, config)
+	snapshot, _ := evidence.SnapshotOf(inventory, nil, config.AdditionalContainers, config.RedactValues, config.MaxContainers)
 	foundExtra, foundOwned := false, false
-	for _, target := range snapshot.containers {
+	for _, target := range snapshot.Containers {
 		if target.Container != nil {
 			t.Fatalf("snapshot retained a typed-nil handle: %+v", target)
 		}
@@ -155,7 +155,7 @@ func TestDiagnosticsTypedNilHandlesRemainInspectable(t *testing.T) {
 		foundOwned = foundOwned || target.Role == "rgw" && target.Name == "rgw:partial"
 	}
 	if !foundExtra || !foundOwned {
-		t.Fatalf("missing owned or caller-owned creation attempts were discarded: %+v", snapshot.containers)
+		t.Fatalf("missing owned or caller-owned creation attempts were discarded: %+v", snapshot.Containers)
 	}
 	var queries atomic.Int32
 	docker := diagnosticsTestDocker{inspect: func(context.Context, string, dockerclient.ContainerInspectOptions) (dockerclient.ContainerInspectResult, error) {
@@ -406,7 +406,7 @@ func TestCollectDiagnosticsPreservesPartialFailures(t *testing.T) {
 	docker := diagnosticsTestDocker{logs: func(context.Context, string, dockerclient.ContainerLogsOptions) (dockerclient.ContainerLogsResult, error) {
 		return io.NopCloser(&diagnosticsPartialReader{}), nil
 	}}
-	snapshot := diagnosticsSnapshot{containers: []Target{{Role: "mon", Name: "a", Container: control}, {Role: "osd", Name: "missing"}}, networks: []evidence.Network{{ID: "public", Name: "public"}}, control: control, omitted: 1}
+	snapshot := evidence.Snapshot[Target]{Containers: []Target{{Role: "mon", Name: "a", Container: control}, {Role: "osd", Name: "missing"}}, Networks: []evidence.Network{{ID: "public", Name: "public"}}, Control: control, Omitted: 1}
 	report, err := collectDiagnostics(t.Context(), config, snapshot, docker, diagnosticsUnitReport())
 	if err == nil || report.Complete || report.FinishedAt.IsZero() {
 		t.Fatalf("partial failure presented as complete: %+v, %v", report, err)
@@ -447,10 +447,10 @@ func TestCollectDiagnosticsReportOrderIsThePlan(t *testing.T) {
 	docker := diagnosticsTestDocker{logs: func(context.Context, string, dockerclient.ContainerLogsOptions) (dockerclient.ContainerLogsResult, error) {
 		return io.NopCloser(strings.NewReader("")), nil
 	}}
-	snapshot := diagnosticsSnapshot{
-		containers: []Target{{Role: "mon", Name: "a", Container: control}, {Role: "osd", Name: "missing"}},
-		networks:   []evidence.Network{{ID: "public", Name: "public"}, {ID: "public", Name: "public"}, {ID: "cluster", Name: "cluster"}},
-		control:    control, omitted: 2,
+	snapshot := evidence.Snapshot[Target]{
+		Containers: []Target{{Role: "mon", Name: "a", Container: control}, {Role: "osd", Name: "missing"}},
+		Networks:   []evidence.Network{{ID: "public", Name: "public"}, {ID: "public", Name: "public"}, {ID: "cluster", Name: "cluster"}},
+		Control:    control, Omitted: 2,
 	}
 	report, _ := collectDiagnostics(t.Context(), config, snapshot, docker, diagnosticsUnitReport())
 	want := []string{"container-inspect/a", "container-logs/a", "container-inspect/missing", "container-logs/missing", "network-inspect/public", "network-inspect/cluster"}
@@ -479,7 +479,7 @@ func TestCollectDiagnosticsCanceledBeforeQueries(t *testing.T) {
 		queries.Add(1)
 		return 0, nil, nil
 	}}
-	report, err := collectDiagnostics(ctx, diagnosticsUnitConfig(t), diagnosticsSnapshot{containers: []Target{{Container: control}}, control: control}, docker, diagnosticsUnitReport())
+	report, err := collectDiagnostics(ctx, diagnosticsUnitConfig(t), evidence.Snapshot[Target]{Containers: []Target{{Container: control}}, Control: control}, docker, diagnosticsUnitReport())
 	if !errors.Is(err, context.Canceled) || report.Complete || queries.Load() != 0 {
 		t.Fatalf("canceled collection queried Docker or claimed completion: queries=%d, complete=%v, err=%v", queries.Load(), report.Complete, err)
 	}
@@ -505,7 +505,7 @@ func TestCollectDiagnosticsRedactsAllArtifactSurfaces(t *testing.T) {
 			return dockerclient.NetworkInspectResult{}, errors.New("network " + secret)
 		},
 	}
-	snapshot := diagnosticsSnapshot{containers: []Target{{Role: secret, Name: secret, Container: control}, {Role: "client", Name: "logs-node", Container: &diagnosticsTestContainer{id: "logs-node"}}}, networks: []evidence.Network{{ID: "public", Name: secret}}, control: control, secrets: []string{secret}}
+	snapshot := evidence.Snapshot[Target]{Containers: []Target{{Role: secret, Name: secret, Container: control}, {Role: "client", Name: "logs-node", Container: &diagnosticsTestContainer{id: "logs-node"}}}, Networks: []evidence.Network{{ID: "public", Name: secret}}, Control: control, Secrets: []string{secret}}
 	report, err := collectDiagnostics(t.Context(), config, snapshot, docker, diagnosticsUnitReport())
 	data, marshalErr := json.Marshal(report)
 	if err == nil || marshalErr != nil || !strings.Contains(string(data), "REDACTED") {
@@ -535,7 +535,7 @@ func TestCollectDiagnosticsTruncationAndUTF8Budget(t *testing.T) {
 			docker := diagnosticsTestDocker{logs: func(context.Context, string, dockerclient.ContainerLogsOptions) (dockerclient.ContainerLogsResult, error) {
 				return io.NopCloser(strings.NewReader(raw)), nil
 			}}
-			report, err := collectDiagnostics(t.Context(), config, diagnosticsSnapshot{containers: []Target{{Container: control}}, control: control}, docker, diagnosticsUnitReport())
+			report, err := collectDiagnostics(t.Context(), config, evidence.Snapshot[Target]{Containers: []Target{{Container: control}}, Control: control}, docker, diagnosticsUnitReport())
 			if err != nil || report.Complete {
 				t.Fatalf("truncation should retain partial report without an error: complete=%v, err=%v", report.Complete, err)
 			}
@@ -555,7 +555,7 @@ func TestCollectDiagnosticsHostNetworkNeedsNoNetworkInspect(t *testing.T) {
 		t.Error("shared host network was inspected")
 		return dockerclient.NetworkInspectResult{}, nil
 	}}
-	report, err := collectDiagnostics(t.Context(), config, diagnosticsSnapshot{hostNetwork: true, publicAddress: "127.0.0.1", networks: []evidence.Network{{ID: "host", Name: "host"}}, control: control}, docker, diagnosticsUnitReport())
+	report, err := collectDiagnostics(t.Context(), config, evidence.Snapshot[Target]{HostNetwork: true, PublicAddress: "127.0.0.1", Networks: []evidence.Network{{ID: "host", Name: "host"}}, Control: control}, docker, diagnosticsUnitReport())
 	if err != nil || !report.Complete {
 		t.Fatalf("host network summary unavailable: %+v, %v", report, err)
 	}
@@ -589,7 +589,7 @@ func TestCollectDiagnosticsProbeDeadlineRetainsStoppedState(t *testing.T) {
 			return dockerclient.NetworkInspectResult{Network: dockernetwork.Inspect{Network: dockernetwork.Network{ID: "owned-network", Driver: "bridge"}}}, nil
 		},
 	}
-	report, err := collectDiagnostics(t.Context(), config, diagnosticsSnapshot{containers: []Target{{Name: "stopped", Role: "osd", Container: control}}, networks: []evidence.Network{{ID: "owned-network", Name: "public"}}, control: control}, docker, diagnosticsUnitReport())
+	report, err := collectDiagnostics(t.Context(), config, evidence.Snapshot[Target]{Containers: []Target{{Name: "stopped", Role: "osd", Container: control}}, Networks: []evidence.Network{{ID: "owned-network", Name: "public"}}, Control: control}, docker, diagnosticsUnitReport())
 	if err == nil || report.Complete {
 		t.Fatalf("timed-out log stream claimed success: %+v, %v", report, err)
 	}
@@ -636,7 +636,7 @@ func TestCollectDiagnosticsMasksKnownSecretCrossingLogTailBoundary(t *testing.T)
 			docker := diagnosticsTestDocker{logs: func(context.Context, string, dockerclient.ContainerLogsOptions) (dockerclient.ContainerLogsResult, error) {
 				return io.NopCloser(strings.NewReader(tc.log)), nil
 			}}
-			report, err := collectDiagnostics(t.Context(), config, diagnosticsSnapshot{containers: []Target{{Container: control}}, control: control, secrets: []string{secret}}, docker, diagnosticsUnitReport())
+			report, err := collectDiagnostics(t.Context(), config, evidence.Snapshot[Target]{Containers: []Target{{Container: control}}, Control: control, Secrets: []string{secret}}, docker, diagnosticsUnitReport())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -678,7 +678,7 @@ func TestDiagnosticLogArtifactWithIncompleteFrame(t *testing.T) {
 					return io.NopCloser(bytes.NewReader(frame[:8+len(tc.payload)])), nil
 				},
 			}
-			run := diagnosticCollection{config: config, snapshot: diagnosticsSnapshot{secrets: tc.secrets}, redact: evidence.Redactor(tc.secrets)}
+			run := diagnosticCollection{config: config, snapshot: evidence.Snapshot[Target]{Secrets: tc.secrets}, redact: evidence.Redactor(tc.secrets)}
 			a := Artifact{Kind: "container-logs"}
 			run.collectOne(t.Context(), diagnosticTask{collect: func(ctx context.Context) (string, bool, error) {
 				return diagnosticLogs(ctx, docker, "owned", config)
@@ -702,7 +702,7 @@ func TestDiagnosticLogTailKeepsNewestBytesAfterRedaction(t *testing.T) {
 			config := diagnosticsUnitConfig(t)
 			config.MaxOutputBytes = tc.limit
 			secrets := []string{"rgw-secret-ending-in-e", "key"}
-			run := diagnosticCollection{config: config, snapshot: diagnosticsSnapshot{secrets: secrets}, redact: evidence.Redactor(secrets)}
+			run := diagnosticCollection{config: config, snapshot: evidence.Snapshot[Target]{Secrets: secrets}, redact: evidence.Redactor(secrets)}
 			a := Artifact{Kind: "container-logs"}
 			run.collectOne(t.Context(), diagnosticTask{collect: func(context.Context) (string, bool, error) { return tc.data, true, nil }}, &a)
 			if a.Data != tc.want || !a.Truncated || !utf8.ValidString(a.Data) {
@@ -723,7 +723,7 @@ func TestDiagnosticTTYLogDeadlineMasksPartialPayload(t *testing.T) {
 	config := diagnosticsUnitConfig(t)
 	config.OperationTimeout = 25 * time.Millisecond
 	secrets := []string{"a-known-opaque-value"}
-	run := diagnosticCollection{config: config, snapshot: diagnosticsSnapshot{secrets: secrets}, redact: evidence.Redactor(secrets)}
+	run := diagnosticCollection{config: config, snapshot: evidence.Snapshot[Target]{Secrets: secrets}, redact: evidence.Redactor(secrets)}
 	a := Artifact{Kind: "container-logs"}
 	run.collectOne(t.Context(), diagnosticTask{collect: func(ctx context.Context) (string, bool, error) {
 		return diagnosticLogs(ctx, docker, "owned", config)
@@ -744,7 +744,7 @@ func TestDiagnosticBoundaryPreservesStructuredRedaction(t *testing.T) {
 			cfg := diagnosticsUnitConfig(t)
 			cfg.MaxOutputBytes = len(tc.text)
 			secrets := []string{tc.known}
-			run := diagnosticCollection{config: cfg, snapshot: diagnosticsSnapshot{secrets: secrets}, redact: evidence.Redactor(secrets)}
+			run := diagnosticCollection{config: cfg, snapshot: evidence.Snapshot[Target]{Secrets: secrets}, redact: evidence.Redactor(secrets)}
 			a := Artifact{Kind: "container-logs"}
 			run.collectOne(t.Context(), diagnosticTask{collect: func(context.Context) (string, bool, error) { return tc.text, true, nil }}, &a)
 			if strings.Contains(a.Data, sensitive) || !strings.Contains(a.Data, "[REDACTED") || !strings.HasSuffix(a.Data, " end") {
@@ -796,7 +796,7 @@ func TestDiagnosticLogArtifactsMaskPartialPrivateKeys(t *testing.T) {
 					return io.NopCloser(bytes.NewReader(frame)), nil
 				},
 			}
-			run := diagnosticCollection{config: cfg, snapshot: diagnosticsSnapshot{secrets: tc.literals}, redact: evidence.Redactor(tc.literals)}
+			run := diagnosticCollection{config: cfg, snapshot: evidence.Snapshot[Target]{Secrets: tc.literals}, redact: evidence.Redactor(tc.literals)}
 			a := Artifact{Kind: "container-logs"}
 			run.collectOne(t.Context(), diagnosticTask{collect: func(ctx context.Context) (string, bool, error) { return diagnosticLogs(ctx, docker, "owned", cfg) }}, &a)
 			if a.Data != tc.want || (a.Error != "") != tc.interrupted || a.Truncated != (len(tc.stream) > tc.byteLimit || tc.interrupted) {
@@ -847,7 +847,7 @@ func TestDiagnosticsPreservesUnconfirmedSettlementAfterRedaction(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				run := diagnosticCollection{config: config, snapshot: diagnosticsSnapshot{secrets: []string{secret}}, redact: evidence.Redactor([]string{secret})}
+				run := diagnosticCollection{config: config, snapshot: evidence.Snapshot[Target]{Secrets: []string{secret}}, redact: evidence.Redactor([]string{secret})}
 				artifact := Artifact{Kind: "ceph", Name: "status"}
 				task := diagnosticTask{collect: func(queryCtx context.Context) (string, bool, error) {
 					return diagnosticCephCommand(queryCtx, control, []string{"status"}, config.MaxOutputBytes)

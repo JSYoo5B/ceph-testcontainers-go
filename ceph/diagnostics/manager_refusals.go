@@ -88,8 +88,8 @@ func CollectManagerRefusals(ctx context.Context, cluster *ceph.Container, manage
 	return readManagerRefusals(ctx, docker, snapshot, member, config)
 }
 
-func readManagerRefusals(ctx context.Context, docker diagnosticsDocker, snapshot diagnosticsSnapshot, manager evidence.Member, config LogConfig) (*ManagerRefusals, error) {
-	redact := logRedactor(snapshot.secrets)
+func readManagerRefusals(ctx context.Context, docker diagnosticsDocker, snapshot evidence.Snapshot[Target], manager evidence.Member, config LogConfig) (*ManagerRefusals, error) {
+	redact := logRedactor(snapshot.Secrets)
 	process, err := readProcessLog(ctx, docker, manager, config, redact, isMonClientRefusal)
 	if err != nil {
 		return nil, err
@@ -102,7 +102,7 @@ func readManagerRefusals(ctx context.Context, docker diagnosticsDocker, snapshot
 		}
 	}
 	entity := "mgr." + manager.Name
-	for _, member := range snapshot.containers {
+	for _, member := range snapshot.Containers {
 		if member.Role != "mon" || member.Container == nil {
 			continue
 		}

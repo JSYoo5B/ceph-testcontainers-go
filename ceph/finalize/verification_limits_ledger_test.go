@@ -300,7 +300,7 @@ func limScenarios() map[string]limScenario {
 			g.crash("osd1", limCrashID(2), "unexpected")
 			fx.docker.containers["osd1"].messages = map[string]string{limCrashID(2): strings.Repeat("z", 70<<10)}
 		}},
-		"container limit": {name: "container limit", setup: func(fx *verifyFixture) { fx.snapshot.omitted = 2 },
+		"container limit": {name: "container limit", setup: func(fx *verifyFixture) { fx.snapshot.Omitted = 2 },
 			emit: func(_ *verifyFixture, g *limEmitter) {
 				g.log("mon", "log-1", "permitted", "")
 			}},

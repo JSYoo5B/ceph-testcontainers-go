@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/internal/evidence"
 )
 
 const (
@@ -18,8 +19,8 @@ const (
 
 // refusalSnapshot is a cluster with the MGR m (mgr.a) and the MONs n (mon.b)
 // and o (mon.a).
-func refusalSnapshot() diagnosticsSnapshot {
-	return diagnosticsSnapshot{containers: []Target{
+func refusalSnapshot() evidence.Snapshot[Target] {
+	return evidence.Snapshot[Target]{Containers: []Target{
 		{Role: "mgr", Name: "a", Container: &diagnosticsTestContainer{id: "m"}},
 		{Role: "mon", Name: "b", Container: &diagnosticsTestContainer{id: "n"}},
 		{Role: "mon", Name: "a", Container: &diagnosticsTestContainer{id: "o"}},

@@ -205,7 +205,7 @@ func (d *fakeVerifyDocker) CopyFromContainer(ctx context.Context, id string, opt
 // container and the toolkit client, where osd.0 already holds one crash.
 type verifyFixture struct {
 	docker   *fakeVerifyDocker
-	snapshot clusterSnapshot
+	snapshot evidence.Snapshot[diagnostics.Target]
 	config   VerificationConfig
 }
 
@@ -224,13 +224,13 @@ func newVerifyFixture() *verifyFixture {
 			{verifyStart.Add(time.Minute), daemonLogLine("cluster", "INF", "osd.0 boot")},
 		}
 	}
-	snapshot := clusterSnapshot{
-		containers: []diagnostics.Target{
+	snapshot := evidence.Snapshot[diagnostics.Target]{
+		Containers: []diagnostics.Target{
 			crashContainer("client", "toolkit", "toolkit"), crashContainer("control", "cli", "cli"),
 			crashContainer("mon", "a", "mon"), crashContainer("osd", "0", "osd0"), crashContainer("osd", "1", "osd1"),
 		},
-		controlPlane: crashTarget{id: "cli"},
-		secrets:      []string{"AQBverifysecret=="},
+		ControlPlane: crashTarget{id: "cli"},
+		Secrets:      []string{"AQBverifysecret=="},
 	}
 	return &verifyFixture{docker: docker, snapshot: snapshot}
 }
@@ -266,9 +266,9 @@ func (fx *verifyFixture) wire(v *Verification) {
 	v.cluster, v.images = "cluster-id", ceph.ImageSet{Essential: "example.invalid/ceph:test"}
 	// The secrets start with the configured values, as takeClusterSnapshot
 	// makes them.
-	v.snapshot = func(context.Context) (clusterSnapshot, error) {
+	v.snapshot = func(context.Context) (evidence.Snapshot[diagnostics.Target], error) {
 		snapshot := fx.snapshot
-		snapshot.secrets = append(slices.Clone(v.config.RedactValues), snapshot.secrets...)
+		snapshot.Secrets = append(slices.Clone(v.config.RedactValues), snapshot.Secrets...)
 		return snapshot, nil
 	}
 	v.docker = func(context.Context) (verificationDocker, func(), error) { return fx.docker, func() {}, nil }
@@ -647,9 +647,9 @@ func TestVerificationGapsAreIncomplete(t *testing.T) {
 		}, crash: "osd.1: crash 2026-10-23T01:03:00Z_partial has no done marker"},
 		{name: "container added after the activation", mutate: func(fx *verifyFixture) {
 			fx.docker.containers["osd2"] = &fakeVerifyContainer{startedAt: verifyStart.Format(time.RFC3339Nano)}
-			fx.snapshot.containers = append(fx.snapshot.containers, crashContainer("osd", "2", "osd2"))
+			fx.snapshot.Containers = append(fx.snapshot.Containers, crashContainer("osd", "2", "osd2"))
 		}, logs: "osd.2: added after the activation", crash: "osd.2: added after the activation"},
-		{name: "containers over the limit", mutate: func(fx *verifyFixture) { fx.snapshot.omitted = 3 },
+		{name: "containers over the limit", mutate: func(fx *verifyFixture) { fx.snapshot.Omitted = 3 },
 			logs: "3 containers exceed the container limit", crash: "3 containers exceed the container limit"},
 	}
 	for _, tc := range cases {

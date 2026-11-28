@@ -128,7 +128,7 @@ func CollectProcessLog(ctx context.Context, cluster *ceph.Container, daemon test
 		return nil, fmt.Errorf("process log Docker client: %w", err)
 	}
 	defer func() { _ = docker.Close() }()
-	return readProcessLog(ctx, docker, member, config, logRedactor(snapshot.secrets), nil)
+	return readProcessLog(ctx, docker, member, config, logRedactor(snapshot.Secrets), nil)
 }
 
 // defaultLogBytes and maxLogBytes bound LogConfig.MaxBytes.
@@ -162,15 +162,15 @@ var logDaemonRoles = []string{"mon", "mgr", "osd", "mds", "rgw"}
 // logSnapshot takes the inventory of cluster and finds daemon in it, a
 // daemon container of the given role ("" for any). A container the cluster
 // does not track, or one without a daemon, is an invalid request.
-func logSnapshot(ctx context.Context, cluster *ceph.Container, daemon testcontainers.Container, role string, config LogConfig) (diagnosticsSnapshot, evidence.Member, error) {
+func logSnapshot(ctx context.Context, cluster *ceph.Container, daemon testcontainers.Container, role string, config LogConfig) (evidence.Snapshot[Target], evidence.Member, error) {
 	if evidence.IsNil(daemon) {
-		return diagnosticsSnapshot{}, evidence.Member{}, invalid(errors.New("the daemon container is nil"))
+		return evidence.Snapshot[Target]{}, evidence.Member{}, invalid(errors.New("the daemon container is nil"))
 	}
-	snapshot, err := takeSnapshot(ctx, cluster, Config{RedactValues: config.RedactValues, MaxContainers: 128})
+	snapshot, err := takeSnapshot(ctx, cluster, nil, config.RedactValues, evidence.MaxContainers)
 	if err != nil {
 		return snapshot, evidence.Member{}, err
 	}
-	member, err := findLogMember(snapshot.containers, daemon.GetContainerID(), role)
+	member, err := findLogMember(snapshot.Containers, daemon.GetContainerID(), role)
 	return snapshot, member, err
 }
 

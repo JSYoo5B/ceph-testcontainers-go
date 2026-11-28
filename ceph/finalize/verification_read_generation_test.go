@@ -76,7 +76,7 @@ func TestVerificationGenerationReadBoundaries(t *testing.T) {
 	for _, boundary := range []string{"unchanged", "before-evaluation", "baseline-crash", "before-log", "during-log", "after-log-before-confirmation"} {
 		t.Run(boundary, func(t *testing.T) {
 			fx := newVerifyFixture()
-			fx.snapshot.containers = []diagnostics.Target{crashContainer("osd", "0", "osd0")}
+			fx.snapshot.Containers = []diagnostics.Target{crashContainer("osd", "0", "osd0")}
 			fx.config = VerificationConfig{ArchiveLogs: true, Logs: []LogExpectation{{Name: "warning", Event: LogClusterWarning, Pattern: "boundary-positive", Required: true}}, Crashes: []CrashExpectation{{Name: "crash", Process: "ceph-osd", Required: true}}}
 			v, err := newVerification(fx.config)
 			if err != nil {
@@ -136,7 +136,7 @@ func TestVerificationGenerationReadBoundaries(t *testing.T) {
 // inspection therefore cannot detect the difference from activation for us.
 func TestVerificationStableNewGenerationBeforeCrashCollection(t *testing.T) {
 	fx := newVerifyFixture()
-	fx.snapshot.containers = []diagnostics.Target{crashContainer("osd", "0", "osd0")}
+	fx.snapshot.Containers = []diagnostics.Target{crashContainer("osd", "0", "osd0")}
 	fx.config.Crashes = []CrashExpectation{{Name: "crash", Process: "ceph-osd", Required: true}}
 	v := fx.activate(t)
 	o := &verificationObservation{current: &fx.snapshot}
@@ -202,7 +202,7 @@ func TestVerificationCanceledAtFinalInspection(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fx := newVerifyFixture()
-			fx.snapshot.containers = []diagnostics.Target{crashContainer("osd", "0", "osd0")}
+			fx.snapshot.Containers = []diagnostics.Target{crashContainer("osd", "0", "osd0")}
 			fx.config.ArchiveLogs = true
 			v := fx.activate(t)
 			if report := fx.evaluate(t, v); report.Outcome != VerificationClean {
@@ -242,7 +242,7 @@ func TestVerificationCanceledAtFinalInspection(t *testing.T) {
 
 func TestVerificationArchiveAllowsEmptyRead(t *testing.T) {
 	fx := newVerifyFixture()
-	fx.snapshot.containers = []diagnostics.Target{crashContainer("osd", "0", "osd0")}
+	fx.snapshot.Containers = []diagnostics.Target{crashContainer("osd", "0", "osd0")}
 	fx.config.ArchiveLogs = true
 	fx.docker.containers["osd0"].lines = nil
 	report := fx.evaluate(t, fx.activate(t))

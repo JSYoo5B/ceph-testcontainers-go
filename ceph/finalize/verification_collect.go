@@ -16,28 +16,13 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-// clusterSnapshot is what a verification takes from the evidence inventory of
-// its cluster: the selected containers, the separate control container and
-// the secrets to redact, which start with the configured values.
-type clusterSnapshot struct {
-	containers   []diagnostics.Target
-	controlPlane testcontainers.Container
-	secrets      []string
-	omitted      int
-}
-
-// takeClusterSnapshot takes the inventory of cluster and selects the
-// cluster's containers and config.AdditionalContainers, at most 128.
-func takeClusterSnapshot(ctx context.Context, cluster *ceph.Container, config VerificationConfig) (clusterSnapshot, error) {
-	snapshot := clusterSnapshot{secrets: slices.Clone(config.RedactValues)}
+// takeClusterSnapshot takes the inventory of cluster and the snapshot of a
+// verification: the cluster's containers and config.AdditionalContainers,
+// at most evidence.MaxContainers, and the secrets to redact, which start
+// with the configured values.
+func takeClusterSnapshot(ctx context.Context, cluster *ceph.Container, config VerificationConfig) (evidence.Snapshot[diagnostics.Target], error) {
 	inv, err := evidencehook.Inventory(ctx, cluster)
-	snapshot.secrets = append(snapshot.secrets, inv.Secrets...)
-	if err != nil {
-		return snapshot, err
-	}
-	snapshot.controlPlane = inv.ControlPlane
-	snapshot.containers, snapshot.omitted = evidence.SelectAs(inv, config.AdditionalContainers, 128)
-	return snapshot, nil
+	return evidence.SnapshotOf(inv, err, config.AdditionalContainers, config.RedactValues, evidence.MaxContainers)
 }
 
 // verificationDocker is the part of the Docker client that verification
@@ -70,15 +55,15 @@ func verificationSourceName(role, name string) string {
 // verificationTargets selects the daemon containers of a snapshot: every
 // container but the separate control container and the toolkit client,
 // unless the caller added them.
-func verificationTargets(snapshot clusterSnapshot, additional []diagnostics.Target) []verificationTarget {
+func verificationTargets(snapshot evidence.Snapshot[diagnostics.Target], additional []diagnostics.Target) []verificationTarget {
 	requested := func(target diagnostics.Target) bool {
 		return slices.ContainsFunc(additional, func(extra diagnostics.Target) bool {
 			return evidence.SameContainer(evidence.Handle(extra.Container), target.Container)
 		})
 	}
 	var targets []verificationTarget
-	for _, target := range snapshot.containers {
-		cluster := evidence.SameContainer(target.Container, snapshot.controlPlane) || (target.Role == "client" && target.Name == "toolkit")
+	for _, target := range snapshot.Containers {
+		cluster := evidence.SameContainer(target.Container, snapshot.ControlPlane) || (target.Role == "client" && target.Name == "toolkit")
 		if cluster && !requested(target) {
 			continue
 		}
@@ -120,16 +105,16 @@ func inspectGeneration(ctx context.Context, docker verificationDocker, id string
 // recordVerificationBaseline inspects the selected containers, reads their
 // crash directories and then reads the engine's clock, so that a crash
 // between the two counts as new.
-func recordVerificationBaseline(ctx context.Context, config VerificationConfig, snapshot clusterSnapshot, docker verificationDocker) (*verificationBaseline, error) {
-	b := &verificationBaseline{secrets: slices.Clone(snapshot.secrets)}
+func recordVerificationBaseline(ctx context.Context, config VerificationConfig, snapshot evidence.Snapshot[diagnostics.Target], docker verificationDocker) (*verificationBaseline, error) {
+	b := &verificationBaseline{secrets: slices.Clone(snapshot.Secrets)}
 	redact := evidence.Redactor(b.secrets)
 	both := func(source, reason string) {
 		reason = verificationReason(reason, redact)
 		b.logGaps = append(b.logGaps, VerificationGap{Source: source, Reason: "at activation: " + reason})
 		b.crashGaps = append(b.crashGaps, VerificationGap{Source: source, Reason: "at activation: " + reason})
 	}
-	if snapshot.omitted > 0 {
-		both("", fmt.Sprintf("%d containers exceed the container limit", snapshot.omitted))
+	if snapshot.Omitted > 0 {
+		both("", fmt.Sprintf("%d containers exceed the container limit", snapshot.Omitted))
 	}
 	b.targets = verificationTargets(snapshot, config.AdditionalContainers)
 	for i := range b.targets {
@@ -267,8 +252,8 @@ func (w verificationWindow) checkCoverage() {
 	if w.o.current == nil {
 		return
 	}
-	if w.o.current.omitted > 0 {
-		w.o.gap("", fmt.Sprintf("%d containers exceed the container limit", w.o.current.omitted))
+	if w.o.current.Omitted > 0 {
+		w.o.gap("", fmt.Sprintf("%d containers exceed the container limit", w.o.current.Omitted))
 	}
 	for _, target := range verificationTargets(*w.o.current, w.config.AdditionalContainers) {
 		if !slices.ContainsFunc(w.baseline.targets, func(known verificationTarget) bool {

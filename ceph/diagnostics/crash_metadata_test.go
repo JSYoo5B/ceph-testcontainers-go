@@ -138,8 +138,8 @@ type crashTarget struct {
 
 func (c crashTarget) GetContainerID() string { return c.id }
 
-func crashSnapshot(targets ...Target) diagnosticsSnapshot {
-	return diagnosticsSnapshot{containers: targets, secrets: []string{"AQBadminsecretkey=="}}
+func crashSnapshot(targets ...Target) evidence.Snapshot[Target] {
+	return evidence.Snapshot[Target]{Containers: targets, Secrets: []string{"AQBadminsecretkey=="}}
 }
 
 func crashContainer(role, name, id string) Target {
@@ -160,7 +160,7 @@ const crashMeta = `{
   "unknown_field": "value"
 }`
 
-func collectCrashes(t *testing.T, ctx context.Context, config CrashMetadataConfig, docker *fakeCrashDocker, snapshot diagnosticsSnapshot) (*CrashMetadataReport, error) {
+func collectCrashes(t *testing.T, ctx context.Context, config CrashMetadataConfig, docker *fakeCrashDocker, snapshot evidence.Snapshot[Target]) (*CrashMetadataReport, error) {
 	t.Helper()
 	config, err := normalizeCrashMetadataConfig(config)
 	if err != nil {
@@ -171,15 +171,15 @@ func collectCrashes(t *testing.T, ctx context.Context, config CrashMetadataConfi
 
 // collectRawCrashes is collectCrashes with the collector's own records, which
 // keep the unredacted crash identity.
-func collectRawCrashes(t *testing.T, ctx context.Context, config CrashMetadataConfig, docker *fakeCrashDocker, snapshot diagnosticsSnapshot) (*evidence.CrashReport, error) {
+func collectRawCrashes(t *testing.T, ctx context.Context, config CrashMetadataConfig, docker *fakeCrashDocker, snapshot evidence.Snapshot[Target]) (*evidence.CrashReport, error) {
 	t.Helper()
 	config, err := normalizeCrashMetadataConfig(config)
 	if err != nil {
 		t.Fatal(err)
 	}
 	report := &evidence.CrashReport{SchemaVersion: 1, Containers: []evidence.CrashContainer{}}
-	return evidence.CollectCrashes(ctx, evidence.MemberConfig(evidence.CrashConfig[Target](config)), evidence.Members(snapshot.containers),
-		snapshot.controlPlane, snapshot.omitted, snapshot.secrets, docker, report)
+	return evidence.CollectCrashes(ctx, evidence.MemberConfig(evidence.CrashConfig[Target](config)), evidence.Members(snapshot.Containers),
+		snapshot.ControlPlane, snapshot.Omitted, snapshot.Secrets, docker, report)
 }
 
 // Only regular meta files of crash report directories are read; their known
@@ -297,7 +297,7 @@ func TestCrashMetadataTellsOutcomesApart(t *testing.T) {
 		crashContainer("osd", "7", "too-many"), crashContainer("osd", "8", "rejected"),
 		Target{Role: "osd", Name: "9"}, crashContainer("control", "cli", "control"),
 	)
-	snapshot.controlPlane = crashTarget{id: "control"}
+	snapshot.ControlPlane = crashTarget{id: "control"}
 	config := CrashMetadataConfig{MaxArchiveBytes: int64(len(two) - 1024), MaxEntries: 4}
 	report, err := collectCrashes(t, t.Context(), config, docker, snapshot)
 	want := map[string]CrashOutcome{
@@ -441,7 +441,7 @@ func TestCrashMetadataRejectsDamagedArchives(t *testing.T) {
 		crashContainer("osd", "broken", "broken"), crashContainer("osd", "pax", "pax"), crashContainer("osd", "gnu", "gnu"), crashContainer("osd", "link", "link-root"), crashContainer("osd", "vanishing", "vanishing"),
 		crashContainer("client", "app-hunter2", "secret"))
 	// CollectCrashMetadata adds RedactValues to the snapshot's secrets.
-	snapshot.secrets = append(snapshot.secrets, "hunter2")
+	snapshot.Secrets = append(snapshot.Secrets, "hunter2")
 	report, err := collectCrashes(t, t.Context(), CrashMetadataConfig{}, docker, snapshot)
 	got := map[string]CrashMetadataContainer{}
 	for _, result := range report.Containers {
@@ -491,7 +491,7 @@ func TestCrashMetadataSelectsTargetsByIdentity(t *testing.T) {
 				t.Fatal(err)
 			}
 			inventory := evidence.Inventory{Members: []evidence.Member{{Role: "control", Name: "cli", Container: control}}, ControlPlane: control}
-			snapshot := snapshotOf(inventory, Config{MaxContainers: 128, AdditionalContainers: config.AdditionalContainers})
+			snapshot, _ := evidence.SnapshotOf(inventory, nil, config.AdditionalContainers, nil, evidence.MaxContainers)
 			report, err := collectCrashMetadata(t.Context(), config, snapshot, docker, &CrashMetadataReport{SchemaVersion: 1, Containers: []CrashMetadataContainer{}})
 			if err != nil || !report.Complete || len(report.Containers) != len(tc.read) {
 				t.Fatalf("report %+v, %v", report, err)

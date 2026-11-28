@@ -405,7 +405,7 @@ type Verification struct {
 
 	// The cluster's operations, replaced in tests.
 	//testdouble:wired-operation
-	snapshot func(context.Context) (clusterSnapshot, error)
+	snapshot func(context.Context) (evidence.Snapshot[diagnostics.Target], error)
 	//testdouble:wired-operation
 	docker func(context.Context) (verificationDocker, func(), error)
 	//testdouble:wired-operation
@@ -664,7 +664,7 @@ func startVerification(ctx context.Context, cluster *ceph.Container, config Veri
 	}
 	facts, _ := ceph.FactsOf(cluster)
 	v.cluster, v.images = evidencehook.Owner(cluster), facts.Images
-	v.snapshot = func(ctx context.Context) (clusterSnapshot, error) {
+	v.snapshot = func(ctx context.Context) (evidence.Snapshot[diagnostics.Target], error) {
 		return takeClusterSnapshot(ctx, cluster, v.config)
 	}
 	v.docker = dialVerificationDocker
@@ -737,7 +737,7 @@ func (v *Verification) Evaluate(ctx context.Context) (*VerificationReport, error
 		return nil, invalid(errors.New("verification was not activated"))
 	}
 	snapshot, snapshotErr := v.snapshot(ctx)
-	for _, values := range [][]string{baseline.secrets, snapshot.secrets} {
+	for _, values := range [][]string{baseline.secrets, snapshot.Secrets} {
 		for _, secret := range values {
 			if secret != "" && !slices.Contains(v.knownSecrets, secret) {
 				v.knownSecrets = append(v.knownSecrets, secret)
@@ -798,7 +798,7 @@ func (g *verificationGeneration) same(other *verificationGeneration) bool {
 type verificationObservation struct {
 	secrets  []string
 	end      time.Time
-	current  *clusterSnapshot
+	current  *evidence.Snapshot[diagnostics.Target]
 	sources  []VerificationSource
 	logs     []verificationEvent
 	crashes  []verificationEvent

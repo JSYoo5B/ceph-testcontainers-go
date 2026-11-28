@@ -40,11 +40,11 @@ func NormalizeDiagnosticsConfig[T Described](config DiagnosticsConfig[T]) (Diagn
 		config.Concurrency = 4
 	}
 	if config.MaxContainers == 0 {
-		config.MaxContainers = 128
+		config.MaxContainers = MaxContainers
 	}
 	if config.Timeout < 0 || config.Timeout > 5*time.Minute || config.OperationTimeout < 0 || config.OperationTimeout > time.Minute ||
 		config.MaxOutputBytes < 1 || config.MaxOutputBytes > 1<<20 || config.LogTail < 1 || config.LogTail > 10000 ||
-		config.Concurrency < 1 || config.Concurrency > 8 || config.MaxContainers < 1 || config.MaxContainers > 128 {
+		config.Concurrency < 1 || config.Concurrency > 8 || config.MaxContainers < 1 || config.MaxContainers > MaxContainers {
 		return config, errors.New("invalid diagnostics limits")
 	}
 	if err := CheckCollectionInputs(config.AdditionalContainers, config.RedactValues); err != nil {
