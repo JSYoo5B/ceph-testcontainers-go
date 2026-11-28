@@ -268,7 +268,7 @@ func TestNetworkRateRestoreKeepsForeignState(t *testing.T) {
 				t.Fatal(err)
 			}
 			link := netem.eth0("osd-0")
-			foreign := fakeExtraQdisc{kind: "tbf", handle: "9999:", parent: lease.handle + "1"}
+			foreign := fakeExtraQdisc{kind: "tbf", handle: "9999:", parent: lease.shape.Handle + "1"}
 			netem.mu.Lock()
 			link.extra = append(link.extra, foreign)
 			netem.mu.Unlock()
@@ -332,7 +332,7 @@ func TestNetworkRateUncertainApply(t *testing.T) {
 		t.Fatalf("Restore ran %v before the earlier tc was confirmed stopped: %v", netem.commands[commands:], err)
 	}
 	// The late command lands; once confirmed, Restore removes it.
-	netem.setRoot("osd-0", &fakeQdisc{kind: "netem", handle: lease.handle, rate: uint64(testRate.Rate) / 8, limit: DefaultNetworkQueueLimit})
+	netem.setRoot("osd-0", &fakeQdisc{kind: "netem", handle: lease.shape.Handle, rate: uint64(testRate.Rate) / 8, limit: DefaultNetworkQueueLimit})
 	netem.cancelErr = nil
 	if err := lease.Restore(t.Context()); err != nil {
 		t.Fatal(err)

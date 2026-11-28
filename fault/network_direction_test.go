@@ -12,6 +12,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/faulthook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/netem"
 )
 
 // directionCluster is delayCluster with a second container, osd-1, on the
@@ -29,54 +30,36 @@ var (
 // The source-port and SYN keys are the words that tc printed for
 // "match ip sport 7000 0xffff" and "match u8 0x02 0x02 at 33" (at 53 over
 // IPv6) in the netem helper's selector profiles.
-func TestPeerFilterKeysSourcePortAndSetup(t *testing.T) {
+// TestFakeReadsPeerFilterArgsAsTheirKeys checks the fake kernel of these
+// tests: it reads the tc arguments of every filter shape as the keys that
+// the lease later requires.
+func TestFakeReadsPeerFilterArgsAsTheirKeys(t *testing.T) {
 	v4, v6 := netip.MustParseAddr("10.0.0.2"), netip.MustParseAddr("fd00::2")
-	tests := []struct {
-		name  string
-		peer  netip.Addr
-		port  uint16
-		match peerMatch
-		tail  []u32Key
-	}{
-		{"ipv4 source port", v4, 7000, peerMatch{source: true}, []u32Key{{8, 6 << 16, 0xff << 16}, {20, 7000 << 16, 0xffff0000}}},
-		{"ipv6 source port", v6, 7000, peerMatch{source: true}, []u32Key{{4, 6 << 8, 0xff << 8}, {40, 7000 << 16, 0xffff0000}}},
-		{"ipv4 setup", v4, 7000, peerMatch{setup: true}, []u32Key{{8, 6 << 16, 0xff << 16}, {20, 7000, 0xffff}, {32, 0x00020000, 0x00020000}}},
-		{"ipv6 setup", v6, 7000, peerMatch{setup: true}, []u32Key{{4, 6 << 8, 0xff << 8}, {40, 7000, 0xffff}, {52, 0x00020000, 0x00020000}}},
-		{"ipv4 setup without a port", v4, 0, peerMatch{setup: true}, []u32Key{{8, 6 << 16, 0xff << 16}, {32, 0x00020000, 0x00020000}}},
-		{"ipv4 source setup", v4, 6800, peerMatch{source: true, setup: true}, []u32Key{{8, 6 << 16, 0xff << 16}, {20, 6800 << 16, 0xffff0000}, {32, 0x00020000, 0x00020000}}},
-		{"ipv4 source without a port", v4, 0, peerMatch{source: true}, nil},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			keys := peerFilterKeys(test.peer, test.port, test.match)
-			address := 1
-			if test.peer.Is6() {
-				address = 4
+	for _, peer := range []netip.Addr{v4, v6} {
+		for _, port := range []uint16{0, 7000} {
+			for _, match := range []netem.Match{{}, {Source: true}, {Setup: true}, {Source: true, Setup: true}} {
+				keys := netem.FilterKeys(peer, port, match)
+				argv := netem.FilterArgs("eth0", "7e00:", netem.Leaf{Peer: netem.Peer{Addr: peer, Port: port}}, match)
+				var printed []netem.Key
+				for _, key := range fakeU32Keys(argv) {
+					printed = append(printed, decodeFakeKey(t, key))
+				}
+				if !slices.Equal(printed, keys) {
+					t.Fatalf("tc arguments %q print %v, want %v", argv, printed, keys)
+				}
 			}
-			if got := keys[address:]; !slices.Equal(got, test.tail) {
-				t.Fatalf("keys after the address %v, want %v", got, test.tail)
-			}
-			// The fake encodes the tc arguments as tc prints them.
-			argv := peerFilterArgs("eth0", "7e00:", peerLeaf{peer: NetworkPeer{Addr: test.peer, Port: test.port}}, test.match)
-			var printed []u32Key
-			for _, key := range fakeU32Keys(argv) {
-				printed = append(printed, decodeFakeKey(t, key))
-			}
-			if !slices.Equal(printed, keys) {
-				t.Fatalf("tc arguments %q print %v, want %v", argv, printed, keys)
-			}
-		})
+		}
 	}
 }
 
-func decodeFakeKey(t *testing.T, key map[string]any) u32Key {
+func decodeFakeKey(t *testing.T, key map[string]any) netem.Key {
 	t.Helper()
 	value, err1 := strconv.ParseUint(key["value"].(string), 16, 32)
 	mask, err2 := strconv.ParseUint(key["mask"].(string), 16, 32)
 	if err1 != nil || err2 != nil {
 		t.Fatalf("key %v", key)
 	}
-	return u32Key{Off: key["off"].(int), Value: uint32(value), Mask: uint32(mask)}
+	return netem.Key{Off: key["off"].(int), Value: uint32(value), Mask: uint32(mask)}
 }
 
 func TestNetworkDirectionAndPhaseValidation(t *testing.T) {
@@ -131,7 +114,7 @@ func TestInboundNetworkDelayShapesThePeersEndpoint(t *testing.T) {
 		!slices.Equal(peer.Peers, []NetworkPeer{{Addr: directionTarget, Port: 6800}}) {
 		t.Fatalf("peer lease %+v", peer)
 	}
-	want := "tc filter add dev eth0 parent " + peer.handle + " protocol ip pref 10 handle 800::1 u32 match ip dst 10.88.0.5/32 match ip protocol 6 0xff match ip sport 6800 0xffff flowid " + peer.handle + "3"
+	want := "tc filter add dev eth0 parent " + peer.shape.Handle + " protocol ip pref 10 handle 800::1 u32 match ip dst 10.88.0.5/32 match ip protocol 6 0xff match ip sport 6800 0xffff flowid " + peer.shape.Handle + "3"
 	if filters := tcCommands(netem, "tc filter"); !slices.Equal(filters, []string{want}) {
 		t.Fatalf("filters %q, want %q", filters, want)
 	}

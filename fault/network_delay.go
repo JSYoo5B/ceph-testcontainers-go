@@ -2,7 +2,6 @@ package fault
 
 import (
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/faulthook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/netem"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/nshelper"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/containerd/errdefs"
@@ -63,17 +63,7 @@ const MaxNetworkQueueLimit = 100000
 
 // String formats the rate in bit/s with the largest decimal prefix that
 // divides it.
-func (r NetworkRate) String() string {
-	for _, unit := range []struct {
-		size   NetworkRate
-		suffix string
-	}{{GigabitPerSecond, "Gbit/s"}, {MegabitPerSecond, "Mbit/s"}, {KilobitPerSecond, "Kbit/s"}} {
-		if r >= unit.size && r%unit.size == 0 {
-			return strconv.FormatUint(uint64(r/unit.size), 10) + unit.suffix
-		}
-	}
-	return strconv.FormatUint(uint64(r), 10) + "bit/s"
-}
+func (r NetworkRate) String() string { return netem.FormatRate(uint64(r)) }
 
 // NetworkPacketFault is one of netem's packet faults, for NetworkProfile's
 // Reorder, Duplicate and Corrupt: the percentage of the selected packets
@@ -98,19 +88,7 @@ func (f NetworkPacketFault) IsZero() bool {
 
 // String formats the fault as tc's arguments do: the percentage, and the
 // correlation when it is not zero.
-func (f NetworkPacketFault) String() string {
-	text := strconv.FormatFloat(f.Percent, 'f', -1, 64) + "%"
-	if f.Correlation != 0 {
-		text += " " + strconv.FormatFloat(f.Correlation, 'f', -1, 64) + "%"
-	}
-	return text
-}
-
-// matches reports whether the kernel's fault is the requested one: the
-// kernel keeps each percentage as a 32-bit probability.
-func (f NetworkPacketFault) matches(kernel NetworkPacketFault) bool {
-	return math.Abs(f.Percent-kernel.Percent) <= 1e-4 && math.Abs(f.Correlation-kernel.Correlation) <= 1e-4
-}
+func (f NetworkPacketFault) String() string { return netem.Fault(f).String() }
 
 // validate checks a fault's percentages; name is its NetworkProfile field.
 func (f NetworkPacketFault) validate(name string) error {
@@ -134,17 +112,17 @@ var (
 	// tc without netem, or, for a Rate, a tc that cannot parse netem's rate,
 	// or for a Reorder, Duplicate or Corrupt, a tc that cannot parse that
 	// fault with a correlation. It belongs to ceph.ErrImageCapability.
-	ErrNetemImageUnsupported error = nshelper.Category("the netem helper image does not meet the netem contract", ceph.ErrImageCapability)
+	ErrNetemImageUnsupported = netem.ErrImageUnsupported
 	// ErrNetemPermissionDenied reports an engine that did not give the helper
 	// NET_ADMIN, or refused a qdisc change for lack of it. It belongs to
 	// ceph.ErrEnvironmentUnavailable.
-	ErrNetemPermissionDenied error = nshelper.Category("the netem helper has no NET_ADMIN", ceph.ErrEnvironmentUnavailable)
+	ErrNetemPermissionDenied = netem.ErrPermissionDenied
 	// ErrNetemKernelUnsupported reports a kernel without the netem qdisc,
 	// for a delay with peers without the prio qdisc or the u32 classifier, or
 	// for a Rate a netem qdisc that does not keep the rate, or for a Reorder,
 	// Duplicate or Corrupt one that does not keep that fault, its correlation
 	// or, for a Reorder, a gap of 1. It belongs to ceph.ErrEnvironmentUnavailable.
-	ErrNetemKernelUnsupported error = nshelper.Category("the engine's kernel lacks a qdisc or classifier that the delay needs", ceph.ErrEnvironmentUnavailable)
+	ErrNetemKernelUnsupported = netem.ErrKernelUnsupported
 )
 
 // NetworkProfile configures netem shaping for ApplyNetworkProfile or ApplyLinkProfile.
@@ -241,29 +219,6 @@ type NetworkProfile struct {
 	// netem decides per queued packet, for every fault: a percentage of
 	// packets is not a percentage of TCP segments.
 	Corrupt NetworkPacketFault
-}
-
-// namedFault is one of a delay's packet faults with its netem keyword.
-type namedFault struct {
-	name  string
-	fault NetworkPacketFault
-}
-
-// packetFaults are the delay's packet faults, set or not, in tc's order.
-func (d NetworkProfile) packetFaults() []namedFault {
-	return []namedFault{{"reorder", d.Reorder}, {"duplicate", d.Duplicate}, {"corrupt", d.Corrupt}}
-}
-
-// requestedFaults are the netem keywords of the delay's packet faults that
-// are set, in tc's order.
-func (d NetworkProfile) requestedFaults() []string {
-	var names []string
-	for _, fault := range d.packetFaults() {
-		if !fault.fault.IsZero() {
-			names = append(names, fault.name)
-		}
-	}
-	return names
 }
 
 // NetworkDirection is the side of a profile's selected paths that it shapes.
@@ -395,9 +350,8 @@ type NetworkProfileStatus struct {
 	// of each u32 filter under "matches".
 	Filters json.RawMessage
 
-	// mismatch says why the lease's own root does not hold exactly the
-	// requested hierarchy, with nothing foreign under it.
-	mismatch error
+	// state is the judgement of internal/netem that the fields report.
+	state netem.State
 }
 
 // NetworkProfileLease owns one netem profile on a container's network endpoint,
@@ -455,18 +409,17 @@ type NetworkProfileLease struct {
 	mu                                           sync.Mutex
 	id, network, sandbox, namespace, helperImage string
 	interfaceIndex                               int
-	peerPolicy                                   []NetworkPeer
-	match                                        peerMatch
 	inboundLeases                                []*NetworkProfileLease
 	// shapes reports that the lease owns a profile on its own endpoint;
 	// an Inbound lease only holds its peers' leases.
 	shapes  bool
 	backend netemBackend
 	helper  testcontainers.Container
-	// handle is the root qdisc that the lease owns: the netem qdisc, or with
-	// peers the prio qdisc whose third band leads to the netem child.
-	handle   string
-	child    string
+	// shape is the hierarchy that the lease owns: its root qdisc, the netem
+	// qdisc or with peers the prio qdisc whose third band leads to the netem
+	// child, and the peer filters. params is the netem qdisc it installs.
+	shape    netem.Shape
+	params   netem.Params
 	pending  string
 	complete bool
 	release  func()
@@ -492,244 +445,6 @@ type netemBackend interface {
 	removeHelper(ctx context.Context, helper testcontainers.Container) error
 	run(ctx context.Context, helper testcontainers.Container, label string, argv ...string) (supervised.Report, error)
 	cancel(ctx context.Context, helper testcontainers.Container, label, marker string) error
-}
-
-// netemScript reports, as one JSON object, what a helper sees. "preflight"
-// checks the contract and netem on the loopback of the helper's own
-// namespace, with "rate" also netem's rate, with "reorder", "duplicate" or
-// "corrupt" those packet faults with a correlation, and with "peers" the prio qdisc
-// and u32 classifier, its filter also with a TCP source port key with
-// "sport", and with a destination port and a SYN key with "setup"; "inspect ADDRESS MAC" finds the interface with that address and
-// MAC in the namespace the helper joined, and "index N" the interface with
-// that index; both read its qdiscs and egress filters. tc prints each u32
-// key as another "match" member of one object, so the script collects them
-// into a "matches" list before they reach a JSON decoder that would keep only
-// the last.
-const netemScript = `import json,os,shutil,subprocess,sys
-def pairs(items):
- d={}
- for k,v in items:
-  if k=="match": d.setdefault("matches",[]).append(v)
-  else: d[k]=v
- return d
-def run(*argv):
- p=subprocess.run(argv,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
- return p.returncode,p.stdout.decode(errors="replace"),p.stderr.decode(errors="replace").strip()[-400:]
-def net_admin():
- with open("/proc/self/status") as f:
-  for line in f:
-   if line.startswith("CapEff:"): return bool(int(line.split()[1],16)>>12&1)
- return False
-out={"namespace":os.readlink("/proc/self/ns/net"),"net_admin":net_admin()}
-if sys.argv[1]=="preflight":
- out["missing"]=[n for n in ("sh","sleep","tc","ip") if shutil.which(n) is None]
- if not out["missing"]:
-  broken=[]
-  for tool in ("tc","ip"):
-   code,o,e=run(tool,"-V")
-   out[tool]=(o+e).strip()[:200]
-   if code or "iproute2" not in o+e: broken.append(tool+" -V")
-  for argv in (("tc","-j","-s","qdisc","show","dev","lo"),("ip","-j","address","show")):
-   code,o,e=run(*argv)
-   try: json.loads(o)
-   except ValueError: broken.append(" ".join(argv))
-  out["broken"]=broken
-  if not broken:
-   out["add"]=run("tc","qdisc","add","dev","lo","root","handle","c7e1:","netem","delay","1ms")[0::2]
-   if out["add"][0]==0:
-    out["shown"]=run("tc","-j","qdisc","show","dev","lo")[1]
-    out["delete"]=run("tc","qdisc","del","dev","lo","root","handle","c7e1:")[0::2]
-    if "rate" in sys.argv[2:] and out["delete"][0]==0:
-     out["rate"]=run("tc","qdisc","add","dev","lo","root","handle","c7e3:","netem","rate","1000000bit","limit","100")[0::2]
-     if out["rate"][0]==0:
-      out["rate_shown"]=run("tc","-j","qdisc","show","dev","lo")[1]
-      out["rate_delete"]=run("tc","qdisc","del","dev","lo","root","handle","c7e3:")[0::2]
-    faults=[f for f in ("reorder","duplicate","corrupt") if f in sys.argv[2:]]
-    if faults and out["delete"][0]==0:
-     argv=["tc","qdisc","add","dev","lo","root","handle","c7e4:","netem"]
-     if "reorder" in faults or "duplicate" in faults: argv+=["delay","1ms" if "reorder" in faults else "0us","0us","0%"]
-     for f,p,c in (("reorder","25%","50%"),("duplicate","3%","10%"),("corrupt","2%","5%")):
-      if f in faults: argv+=[f,p,c]
-     out["faults"]=run(*argv)[0::2]
-     if out["faults"][0]==0:
-      out["faults_shown"]=run("tc","-j","qdisc","show","dev","lo")[1]
-      out["faults_delete"]=run("tc","qdisc","del","dev","lo","root","handle","c7e4:")[0::2]
-    if "peers" in sys.argv[2:] and out["delete"][0]==0:
-     out["prio"]=run("tc","qdisc","add","dev","lo","root","handle","c7e2:","prio","bands","3","priomap",*["0"]*16)[0::2]
-     if out["prio"][0]==0:
-      keys=["match","ip","dst","127.0.0.2/32"]
-      if "sport" in sys.argv[2:] or "setup" in sys.argv[2:]: keys+=["match","ip","protocol","6","0xff","match","ip","sport" if "sport" in sys.argv[2:] else "dport","7000","0xffff"]
-      if "setup" in sys.argv[2:]: keys+=["match","u8","0x02","0x02","at","33"]
-      out["u32"]=run("tc","filter","add","dev","lo","parent","c7e2:","protocol","ip","pref","10","handle","800::1","u32",*keys,"flowid","c7e2:3")[0::2]
-      if out["u32"][0]==0:
-       o=run("tc","-j","filter","show","dev","lo")[1]
-       try: out["u32_shown"]=json.dumps(json.loads(o,object_pairs_hook=pairs))
-       except ValueError: out["u32_shown"]=o
-      out["prio_delete"]=run("tc","qdisc","del","dev","lo","root","handle","c7e2:")[0::2]
-else:
- code,o,e=run("ip","-j","address","show")
- if code: out["error"]="ip: "+e
- else:
-  links=json.loads(o)
-  if sys.argv[1]=="inspect":
-   address,mac=sys.argv[2],sys.argv[3]
-   links=[l for l in links if l.get("address")==mac and any(a.get("local")==address for a in l.get("addr_info",[]))]
-  else:
-   links=[l for l in links if l.get("ifindex")==int(sys.argv[2])]
-  out["interfaces"]=[{"name":l["ifname"],"index":l["ifindex"]} for l in links]
-  if len(links)==1:
-   code,o,e=run("tc","-j","-s","qdisc","show","dev",links[0]["ifname"])
-   if code: out["error"]="tc: "+e
-   else:
-    out["qdiscs"]=json.loads(o)
-    code,o,e=run("tc","-j","filter","show","dev",links[0]["ifname"])
-    if code: out["error"]="tc filter: "+e
-    else: out["filters"]=json.loads(o,object_pairs_hook=pairs) if o.strip() else []
-print(json.dumps(out))
-`
-
-type netemQdisc struct {
-	Kind    string `json:"kind"`
-	Handle  string `json:"handle"`
-	Parent  string `json:"parent"`
-	Root    bool   `json:"root"`
-	Options struct {
-		Bands   json.RawMessage `json:"bands"`
-		Priomap json.RawMessage `json:"priomap"`
-		Delay   struct {
-			Delay  float64 `json:"delay"`
-			Jitter float64 `json:"jitter"`
-		} `json:"delay"`
-		// Loss is a fraction; tc prints no delay member for a zero delay.
-		Loss struct {
-			Loss float64 `json:"loss"`
-		} `json:"loss-random"`
-		// Rate is netem's rate; tc prints no rate member without one.
-		Rate  netemRate `json:"rate"`
-		Limit int       `json:"limit"`
-		// Reorder, Duplicate and Corrupt are netem's packet faults, and Gap
-		// its reorder gap; tc prints no fault member without the fault.
-		Reorder   netemFault  `json:"reorder"`
-		Duplicate netemFault  `json:"duplicate"`
-		Corrupt   netemFault  `json:"corrupt"`
-		Gap       netemNumber `json:"gap"`
-	} `json:"options"`
-	Bytes      uint64 `json:"bytes"`
-	Packets    uint64 `json:"packets"`
-	Drops      uint64 `json:"drops"`
-	Overlimits uint64 `json:"overlimits"`
-	Requeues   uint64 `json:"requeues"`
-	Backlog    uint64 `json:"backlog"`
-	Qlen       uint64 `json:"qlen"`
-}
-
-// netemRate is netem's rate member, an object whose rate is in bytes per
-// second. Other qdiscs, such as a foreign tbf, print a plain number under
-// the same key; it is not netem's rate, and reads as zero.
-type netemRate struct {
-	Rate uint64 `json:"rate"`
-}
-
-func (r *netemRate) UnmarshalJSON(data []byte) error {
-	if trimmed := strings.TrimSpace(string(data)); !strings.HasPrefix(trimmed, "{") {
-		*r = netemRate{}
-		return nil
-	}
-	type object netemRate
-	return json.Unmarshal(data, (*object)(r))
-}
-
-// netemFault is one of netem's reorder, duplicate and corrupt members: an
-// object with the probability under the member's own name and its
-// correlation, both fractions. Another qdisc's member of the same name that is
-// not such an object is not netem's, and reads as no fault.
-type netemFault map[string]float64
-
-func (f *netemFault) UnmarshalJSON(data []byte) error {
-	*f = nil
-	var members map[string]any
-	if json.Unmarshal(data, &members) != nil {
-		return nil
-	}
-	*f = netemFault{}
-	for key, value := range members {
-		if number, ok := value.(float64); ok {
-			(*f)[key] = number
-		}
-	}
-	return nil
-}
-
-// fault is the member in percentages; name is its probability's key.
-func (f netemFault) fault(name string) NetworkPacketFault {
-	percent := func(fraction float64) float64 { return math.Round(fraction*100*1e6) / 1e6 }
-	return NetworkPacketFault{Percent: percent(f[name]), Correlation: percent(f["correlation"])}
-}
-
-// netemNumber is netem's gap, a whole number; another qdisc's member of the
-// same name that is not one reads as zero.
-type netemNumber int
-
-func (n *netemNumber) UnmarshalJSON(data []byte) error {
-	var value float64
-	if json.Unmarshal(data, &value) != nil || value != math.Trunc(value) || math.Abs(value) > math.MaxInt32 {
-		*n = 0
-		return nil
-	}
-	*n = netemNumber(value)
-	return nil
-}
-
-type netemReport struct {
-	Namespace string   `json:"namespace"`
-	NetAdmin  bool     `json:"net_admin"`
-	Missing   []string `json:"missing"`
-	Broken    []string `json:"broken"`
-	Add       []any    `json:"add"`
-	Shown     string   `json:"shown"`
-	Delete    []any    `json:"delete"`
-	// Prio, U32, U32Shown and PrioDelete are the preflight of a delay with
-	// peers: a prio root and a u32 filter on the helper's loopback.
-	Prio       []any  `json:"prio"`
-	U32        []any  `json:"u32"`
-	U32Shown   string `json:"u32_shown"`
-	PrioDelete []any  `json:"prio_delete"`
-	// Rate, RateShown and RateDelete are the preflight of a Rate: a netem
-	// qdisc with a rate and a queue limit on the helper's loopback.
-	Rate       []any  `json:"rate"`
-	RateShown  string `json:"rate_shown"`
-	RateDelete []any  `json:"rate_delete"`
-	// Faults, FaultsShown and FaultsDelete are the preflight of a Reorder,
-	// Duplicate or Corrupt: a netem qdisc with the requested faults, each
-	// with a correlation, on the helper's loopback.
-	Faults       []any           `json:"faults"`
-	FaultsShown  string          `json:"faults_shown"`
-	FaultsDelete []any           `json:"faults_delete"`
-	Error        string          `json:"error"`
-	Qdiscs       json.RawMessage `json:"qdiscs"`
-	Filters      json.RawMessage `json:"filters"`
-	Links        []struct {
-		Name  string `json:"name"`
-		Index int    `json:"index"`
-	} `json:"interfaces"`
-}
-
-// root returns the root qdisc of the inspected interface.
-func (r netemReport) root() (netemQdisc, error) {
-	var qdiscs []netemQdisc
-	if err := json.Unmarshal(r.Qdiscs, &qdiscs); err != nil {
-		return netemQdisc{}, fmt.Errorf("parse tc qdisc output: %w", err)
-	}
-	for _, qdisc := range qdiscs {
-		if qdisc.Root {
-			return qdisc, nil
-		}
-	}
-	return netemQdisc{}, errors.New("tc reported no root qdisc")
-}
-
-func seconds(value float64) time.Duration {
-	return time.Duration(math.Round(value*1e6)) * time.Microsecond
 }
 
 // validateNetworkDelay checks a NetworkProfile before anything runs.
@@ -787,7 +502,10 @@ func validateDelay(delay NetworkProfile, plane bool) error {
 	case delay.Phase == ConnectionSetup && len(peers) == 0:
 		return nshelper.InvalidRequest("network delay Phase %v needs a Peer or Peers", delay.Phase)
 	}
-	for _, fault := range []namedFault{{"Reorder", delay.Reorder}, {"Duplicate", delay.Duplicate}, {"Corrupt", delay.Corrupt}} {
+	for _, fault := range []struct {
+		name  string
+		fault NetworkPacketFault
+	}{{"Reorder", delay.Reorder}, {"Duplicate", delay.Duplicate}, {"Corrupt", delay.Corrupt}} {
 		if err := fault.fault.validate(fault.name); err != nil {
 			return err
 		}
@@ -811,231 +529,6 @@ func validateDelay(delay NetworkProfile, plane bool) error {
 			return nshelper.InvalidRequest("network delay Peers has %v port %d twice", peer.Addr, peer.Port)
 		}
 		seen[peer] = true
-	}
-	return nil
-}
-
-// netemStep is one tc command of a delay's change.
-type netemStep struct {
-	label string
-	argv  []string
-}
-
-// peerBand is the prio band of a selective delay's root that leads to its
-// netem child; the filter sends the selected packets there.
-const peerBand = "3"
-
-// peerLeaf is one u32 filter of a delay with peers: the filter that selects
-// one peer's packets.
-type peerLeaf struct {
-	peer NetworkPeer
-	// protocol is tc's protocol of the filter, ip or ipv6.
-	protocol string
-	// pref is the filter's preference, table the u32 table that the kernel
-	// creates for that preference, and handle the filter's own key node.
-	pref, table, handle string
-}
-
-// planPeerLeaves lays out the filters of a delay with peers: one preference
-// per family, IPv4 first, each with its own u32 table, and one key node per
-// peer in the caller's order. A u32 filter has one protocol, so the families
-// cannot share a preference. The kernel numbers the u32 tables of one qdisc
-// from 800: in the order that their preferences are created; the filters are
-// added in this order, and each names its table, so a table that the kernel
-// numbered otherwise refuses the filter or shows it under another preference,
-// and neither is accepted as applied. One peer of one family gives the
-// single filter pref 10, handle 800::1.
-func planPeerLeaves(peers []NetworkPeer) []peerLeaf {
-	var leaves []peerLeaf
-	group := 0
-	for _, family := range []struct {
-		protocol string
-		match    func(netip.Addr) bool
-	}{{"ip", netip.Addr.Is4}, {"ipv6", netip.Addr.Is6}} {
-		node := 0
-		for _, peer := range peers {
-			if !family.match(peer.Addr) {
-				continue
-			}
-			node++
-			table := fmt.Sprintf("%x:", 0x800+group)
-			leaves = append(leaves, peerLeaf{peer: peer, protocol: family.protocol, pref: strconv.Itoa(10 + group),
-				table: table, handle: fmt.Sprintf("%s:%x", table, node)})
-		}
-		if node > 0 {
-			group++
-		}
-	}
-	return leaves
-}
-
-// u32Key is one 32-bit match of a u32 filter, at a byte offset of the IP
-// header, as tc prints it.
-type u32Key struct {
-	Off   int
-	Value uint32
-	Mask  uint32
-}
-
-// peerMatch is how a lease's filters read their peers: whether each port is
-// a TCP source port rather than a destination port, and whether only
-// segments with SYN set are selected.
-type peerMatch struct {
-	source, setup bool
-}
-
-// tcpFlags is the offset of the TCP flags byte in a TCP header, and tcpSYN
-// its SYN bit.
-const (
-	tcpFlags = 13
-	tcpSYN   = 0x02
-)
-
-// peerFilterKeys are the u32 keys that select packets to peer and, when port
-// is not zero, TCP packets to that destination port, or from that source port
-// with match.source, and with match.setup only TCP segments with SYN set. tc
-// aligns every key to a 32-bit word: the IPv4 protocol is at offset 8, the
-// IPv6 next header at offset 4, the destination port is the low half and the
-// source port the high half of the word at offset 20 (IPv4) or 40 (IPv6), and
-// the SYN bit is in the word at offset 32 (52), right after a header without
-// options or extension headers.
-func peerFilterKeys(peer netip.Addr, port uint16, match peerMatch) []u32Key {
-	var keys []u32Key
-	address := peer.AsSlice()
-	tcp := 20
-	protocol := u32Key{Off: 8, Value: 6 << 16, Mask: 0xff << 16}
-	if peer.Is4() {
-		keys = append(keys, u32Key{Off: 16, Value: binary.BigEndian.Uint32(address), Mask: 0xffffffff})
-	} else {
-		for word := range 4 {
-			keys = append(keys, u32Key{Off: 24 + 4*word, Value: binary.BigEndian.Uint32(address[4*word:]), Mask: 0xffffffff})
-		}
-		tcp, protocol = 40, u32Key{Off: 4, Value: 6 << 8, Mask: 0xff << 8}
-	}
-	if port != 0 || match.setup {
-		keys = append(keys, protocol)
-	}
-	switch {
-	case port != 0 && match.source:
-		keys = append(keys, u32Key{Off: tcp, Value: uint32(port) << 16, Mask: 0xffff << 16})
-	case port != 0:
-		keys = append(keys, u32Key{Off: tcp, Value: uint32(port), Mask: 0xffff})
-	}
-	if match.setup {
-		flags := tcp + tcpFlags
-		shift := 8 * (3 - flags%4)
-		keys = append(keys, u32Key{Off: flags - flags%4, Value: tcpSYN << shift, Mask: tcpSYN << shift})
-	}
-	return keys
-}
-
-// peerFilterArgs is the tc command that adds one filter of a delay with peers.
-func peerFilterArgs(device, root string, leaf peerLeaf, match peerMatch) []string {
-	family, bits, tcp := "ip", "/32", 20
-	if leaf.peer.Addr.Is6() {
-		family, bits, tcp = "ip6", "/128", 40
-	}
-	argv := []string{"tc", "filter", "add", "dev", device, "parent", root, "protocol", leaf.protocol, "pref", leaf.pref,
-		"handle", leaf.handle, "u32", "match", family, "dst", leaf.peer.Addr.String() + bits}
-	if leaf.peer.Port != 0 || match.setup {
-		argv = append(argv, "match", family, "protocol", "6", "0xff")
-	}
-	if leaf.peer.Port != 0 {
-		field := "dport"
-		if match.source {
-			field = "sport"
-		}
-		argv = append(argv, "match", family, field, strconv.Itoa(int(leaf.peer.Port)), "0xffff")
-	}
-	if match.setup {
-		argv = append(argv, "match", "u8", fmt.Sprintf("0x%02x", tcpSYN), fmt.Sprintf("0x%02x", tcpSYN), "at", strconv.Itoa(tcp+tcpFlags))
-	}
-	return append(argv, "flowid", root+peerBand)
-}
-
-// netemFilter is one entry of tc's filter dump, with the u32 keys that
-// netemScript collected under "matches".
-type netemFilter struct {
-	Parent   string `json:"parent"`
-	Protocol string `json:"protocol"`
-	Pref     int    `json:"pref"`
-	Kind     string `json:"kind"`
-	Options  struct {
-		Handle  string `json:"fh"`
-		FlowID  string `json:"flowid"`
-		Matches []struct {
-			Value   string `json:"value"`
-			Mask    string `json:"mask"`
-			OffMask string `json:"offmask"`
-			Off     int    `json:"off"`
-		} `json:"matches"`
-	} `json:"options"`
-}
-
-// checkPeerFilter reports why the egress filters of an interface are not
-// exactly the filters of a delay with these peers under root, or nil. Header
-// entries, which tc prints for each preference's chain and its u32 table, may
-// accompany the filters; any other filter is foreign state.
-func checkPeerFilter(data json.RawMessage, root string, peers []NetworkPeer, match peerMatch) error {
-	return checkPeerFilters(data, root, peers, match, true)
-}
-
-// checkPeerFilters is checkPeerFilter that, unless required, also accepts
-// only some of the filters, or none: the state of an apply that stopped
-// before its last filter.
-func checkPeerFilters(data json.RawMessage, root string, peers []NetworkPeer, match peerMatch, required bool) error {
-	var filters []netemFilter
-	if err := json.Unmarshal(data, &filters); err != nil {
-		return fmt.Errorf("parse tc filter output: %w", err)
-	}
-	leaves := planPeerLeaves(peers)
-	seen := map[string]bool{}
-	for _, filter := range filters {
-		pref := strconv.Itoa(filter.Pref)
-		group := slices.IndexFunc(leaves, func(leaf peerLeaf) bool { return leaf.protocol == filter.Protocol && leaf.pref == pref })
-		if filter.Parent != root || group < 0 || filter.Kind != "u32" {
-			return fmt.Errorf("a filter with parent %s, protocol %s, preference %d and kind %s is not the delay's", filter.Parent, filter.Protocol, filter.Pref, filter.Kind)
-		}
-		if len(filter.Options.Matches) == 0 && filter.Options.FlowID == "" {
-			// The preference's chain, or its u32 table.
-			if filter.Options.Handle != "" && filter.Options.Handle != leaves[group].table {
-				return fmt.Errorf("preference %d has the u32 table %s, not the delay's %s", filter.Pref, filter.Options.Handle, leaves[group].table)
-			}
-			continue
-		}
-		i := slices.IndexFunc(leaves, func(leaf peerLeaf) bool {
-			return leaf.protocol == filter.Protocol && leaf.pref == pref && leaf.handle == filter.Options.Handle
-		})
-		if i < 0 {
-			return fmt.Errorf("the filter %s of preference %d is not one of the delay's", filter.Options.Handle, filter.Pref)
-		}
-		leaf := leaves[i]
-		if seen[leaf.handle] {
-			return fmt.Errorf("the interface has the filter %s twice", leaf.handle)
-		}
-		seen[leaf.handle] = true
-		if filter.Options.FlowID != root+peerBand {
-			return fmt.Errorf("the filter %s leads to %s, not %s", leaf.handle, filter.Options.FlowID, root+peerBand)
-		}
-		var got []u32Key
-		for _, match := range filter.Options.Matches {
-			value, err1 := strconv.ParseUint(match.Value, 16, 32)
-			mask, err2 := strconv.ParseUint(match.Mask, 16, 32)
-			if err1 != nil || err2 != nil || match.OffMask != "" {
-				return fmt.Errorf("the filter %s has a key tc printed as %+v", leaf.handle, match)
-			}
-			got = append(got, u32Key{Off: match.Off, Value: uint32(value), Mask: uint32(mask)})
-		}
-		if want := peerFilterKeys(leaf.peer.Addr, leaf.peer.Port, match); !slices.Equal(got, want) {
-			return fmt.Errorf("the filter %s has the keys %v, not %v", leaf.handle, got, want)
-		}
-	}
-	if required {
-		for _, leaf := range leaves {
-			if !seen[leaf.handle] {
-				return fmt.Errorf("the filter %s for %v port %d is missing", leaf.handle, leaf.peer.Addr, leaf.peer.Port)
-			}
-		}
 	}
 	return nil
 }
@@ -1380,18 +873,41 @@ func applyNetworkDelay(ctx context.Context, backend netemBackend, id, network st
 		return nil, err
 	}
 	lease := newNetworkProfileLease(backend, helper, id, network, state, imageID, peers, delay)
-	lease.SourcePorts, lease.match.source = source, source
+	lease.SourcePorts, lease.shape.Match.Source = source, source
 	if err := lease.locate(ctx, state); err != nil {
 		return lease.discard(ctx, err)
 	}
-	lease.handle = fmt.Sprintf("%x:", 0x1000+rand.IntN(0xe000))
-	if keep, err := lease.runSteps(ctx, lease.plan(netemArguments(delay, lease.Rate, lease.QueueLimit))); err != nil {
+	lease.pickHandles()
+	if keep, err := lease.runSteps(ctx, lease.shape.Steps(lease.Interface, lease.params.Arguments())); err != nil {
 		if !keep {
 			return lease.discard(ctx, err)
 		}
 		return lease, err
 	}
-	return lease, lease.verifyApplied(ctx, delay)
+	return lease, lease.verifyApplied(ctx)
+}
+
+// pickHandles picks the lease's root handle and, with peers, a different
+// handle for its netem child.
+func (l *NetworkProfileLease) pickHandles() {
+	random := func() string { return fmt.Sprintf("%x:", 0x1000+rand.IntN(0xe000)) }
+	l.shape.Handle = random()
+	if len(l.shape.Peers) == 0 {
+		return
+	}
+	for l.shape.Child = random(); l.shape.Child == l.shape.Handle; {
+		l.shape.Child = random()
+	}
+}
+
+// verifyApplied reads the kernel's qdisc back and requires exactly the
+// requested profile.
+func (l *NetworkProfileLease) verifyApplied(ctx context.Context) error {
+	status, err := l.read(ctx)
+	if err != nil {
+		return fmt.Errorf("read the netem delay: %w", err)
+	}
+	return l.params.Verify(status.state)
 }
 
 // admitNetworkDelay checks the target's endpoint, that every IPv6 peer has an
@@ -1411,8 +927,8 @@ func admitNetworkDelay(ctx context.Context, backend netemBackend, id, network st
 			return nshelper.Target{}, nil, "", nshelper.InvalidRequest("network delay peer %s is IPv6, and the target has no IPv6 address on %s", peer.Addr, network)
 		}
 	}
-	imageID, err := preflightNetem(ctx, backend, delay.HelperImage, len(peers) > 0, delay.Rate > 0, delay.requestedFaults(),
-		peerMatch{source: source, setup: delay.Phase == ConnectionSetup})
+	imageID, err := preflightNetem(ctx, backend, delay.HelperImage, netem.Preflight{Rate: delay.Rate > 0,
+		Faults: delay.params().Requested(), Peers: len(peers) > 0, Match: netem.Match{Source: source, Setup: delay.Phase == ConnectionSetup}})
 	if err != nil {
 		return nshelper.Target{}, nil, "", err
 	}
@@ -1427,15 +943,33 @@ func newNetworkProfileLease(backend netemBackend, helper testcontainers.Containe
 		Jitter: delay.Jitter, Peer: delay.Peer, PeerPort: delay.PeerPort, Peers: slices.Clone(peers), Loss: delay.Loss, Direction: delay.Direction,
 		Phase: delay.Phase, backend: backend, helper: helper, shapes: true,
 		id: id, network: network, sandbox: state.SandboxID, helperImage: imageID,
-		peerPolicy: slices.Clone(peers), match: peerMatch{setup: delay.Phase == ConnectionSetup}}
-	if delay.Rate > 0 {
-		lease.Rate, lease.QueueLimit = delay.Rate, delay.QueueLimit
-		if lease.QueueLimit == 0 {
-			lease.QueueLimit = DefaultNetworkQueueLimit
-		}
-	}
+		shape: netem.Shape{Peers: netemPeers(peers), Match: netem.Match{Setup: delay.Phase == ConnectionSetup}}, params: delay.params()}
+	lease.Rate, lease.QueueLimit = NetworkRate(lease.params.Rate), lease.params.Limit
 	lease.Reorder, lease.Duplicate, lease.Corrupt = delay.Reorder, delay.Duplicate, delay.Corrupt
 	return lease
+}
+
+// params is the profile's netem qdisc, with the queue limit of a Rate
+// resolved.
+func (d NetworkProfile) params() netem.Params {
+	params := netem.Params{Delay: d.Delay, Jitter: d.Jitter, Loss: d.Loss,
+		Reorder: netem.Fault(d.Reorder), Duplicate: netem.Fault(d.Duplicate), Corrupt: netem.Fault(d.Corrupt)}
+	if d.Rate > 0 {
+		params.Rate, params.Limit = uint64(d.Rate), d.QueueLimit
+		if params.Limit == 0 {
+			params.Limit = DefaultNetworkQueueLimit
+		}
+	}
+	return params
+}
+
+// netemPeers converts a selection for internal/netem.
+func netemPeers(peers []NetworkPeer) []netem.Peer {
+	converted := make([]netem.Peer, len(peers))
+	for i, peer := range peers {
+		converted[i] = netem.Peer(peer)
+	}
+	return converted
 }
 
 // discard removes the helper of a lease that changed nothing in the kernel.
@@ -1455,7 +989,7 @@ func (l *NetworkProfileLease) locate(ctx context.Context, state nshelper.Target)
 	if len(report.Links) != 1 {
 		return fmt.Errorf("found %d interfaces with the target's address and MAC on %s", len(report.Links), l.network)
 	}
-	root, err := report.root()
+	root, err := report.Root()
 	if err != nil {
 		return err
 	}
@@ -1470,132 +1004,35 @@ func (l *NetworkProfileLease) locate(ctx context.Context, state nshelper.Target)
 	return nil
 }
 
-// netemArguments is the netem qdisc's parameter list for delay, with rate and
-// queueLimit as the lease resolved them.
-func netemArguments(delay NetworkProfile, rate NetworkRate, queueLimit int) []string {
-	netem := []string{"netem"}
-	// tc (iproute2 6.1, as in NetemHelperImage) sends a duplicate's
-	// correlation only together with a delay's correlation, and drops it
-	// silently otherwise. A zero delay correlation, which the kernel also
-	// has without one, makes it send both.
-	dupCorrelation := delay.Duplicate.Correlation != 0
-	if delay.Delay > 0 || dupCorrelation {
-		netem = append(netem, "delay", fmt.Sprintf("%dus", delay.Delay.Microseconds()))
-		if delay.Jitter > 0 || dupCorrelation {
-			netem = append(netem, fmt.Sprintf("%dus", delay.Jitter.Microseconds()))
-		}
-		if dupCorrelation {
-			netem = append(netem, "0%")
-		}
-	}
-	if delay.Loss > 0 {
-		netem = append(netem, "loss", strconv.FormatFloat(delay.Loss, 'f', -1, 64)+"%")
-	}
-	for _, fault := range delay.packetFaults() {
-		if !fault.fault.IsZero() {
-			netem = append(append(netem, fault.name), strings.Fields(fault.fault.String())...)
-		}
-	}
-	if rate > 0 {
-		netem = append(netem, "rate", strconv.FormatUint(uint64(rate), 10)+"bit", "limit", strconv.Itoa(queueLimit))
-	}
-	return netem
-}
-
-// plan is the tc commands that install netem under the lease's root handle:
-// netem itself as the root, or, with peers, a prio root whose every priority
-// is in band 1, netem on the peer band and the peer filters added last, so
-// nothing is delayed until the filters select the peers' packets. It picks
-// the child handle.
-func (l *NetworkProfileLease) plan(netem []string) []netemStep {
-	if len(l.peerPolicy) == 0 {
-		return []netemStep{{"add the netem delay", append([]string{"tc", "qdisc", "add", "dev", l.Interface, "root", "handle", l.handle}, netem...)}}
-	}
-	l.child = fmt.Sprintf("%x:", 0x1000+rand.IntN(0xe000))
-	for l.child == l.handle {
-		l.child = fmt.Sprintf("%x:", 0x1000+rand.IntN(0xe000))
-	}
-	priomap := slices.Repeat([]string{"0"}, 16)
-	steps := []netemStep{
-		{"add the delay's prio root", append([]string{"tc", "qdisc", "add", "dev", l.Interface, "root", "handle", l.handle, "prio", "bands", "3", "priomap"}, priomap...)},
-		{"add the netem delay", append([]string{"tc", "qdisc", "add", "dev", l.Interface, "parent", l.handle + peerBand, "handle", l.child}, netem...)},
-	}
-	leaves := planPeerLeaves(l.peerPolicy)
-	for i, leaf := range leaves {
-		label := "add the peer filter"
-		if len(leaves) > 1 {
-			label = fmt.Sprintf("add peer filter %d of %d", i+1, len(leaves))
-		}
-		steps = append(steps, netemStep{label, peerFilterArgs(l.Interface, l.handle, leaf, l.match)})
-	}
-	return steps
-}
-
 // runSteps runs the planned commands in order. On failure keep reports
 // whether the change may have reached the kernel, so the lease must be
 // returned; otherwise nothing changed and the helper can be discarded.
-func (l *NetworkProfileLease) runSteps(ctx context.Context, steps []netemStep) (keep bool, err error) {
+func (l *NetworkProfileLease) runSteps(ctx context.Context, steps []netem.Step) (keep bool, err error) {
 	for i, step := range steps {
-		result, err := l.backend.run(ctx, l.helper, step.label, step.argv...)
+		result, err := l.backend.run(ctx, l.helper, step.Label, step.Argv...)
 		if err != nil {
 			// The command may have reached the kernel; only the lease can tell.
 			if marker, unconfirmed := supervised.Unconfirmed(err); unconfirmed {
 				l.pending = marker
 			}
-			return true, fmt.Errorf("%s: %w", step.label, err)
+			return true, fmt.Errorf("%s: %w", step.Label, err)
 		}
 		if result.ExitCode == 0 && !result.TimedOut {
 			continue
 		}
-		cause := netemCommandError(step.label, result)
+		cause := netem.CommandError(step.Label, result)
 		if i > 0 {
 			// The root is the lease's; Restore removes it with the rest.
 			return true, cause
 		}
 		// tc changes nothing when the kernel refuses the request.
 		status, statusErr := l.read(ctx)
-		if statusErr != nil || status.Applied || status.RootHandle == l.handle {
+		if statusErr != nil || status.Applied || status.RootHandle == l.shape.Handle {
 			return true, errors.Join(cause, statusErr)
 		}
 		return false, cause
 	}
 	return false, nil
-}
-
-// verifyApplied reads the kernel's qdisc back and requires exactly the
-// requested delay, jitter, loss, rate, queue limit and packet faults.
-func (l *NetworkProfileLease) verifyApplied(ctx context.Context, delay NetworkProfile) error {
-	status, err := l.read(ctx)
-	if err != nil {
-		return fmt.Errorf("read the netem delay: %w", err)
-	}
-	// The kernel keeps the loss as a 32-bit probability.
-	if !status.Applied || status.Delay != delay.Delay || status.Jitter != delay.Jitter || math.Abs(status.Loss-delay.Loss) > 1e-4 ||
-		status.Rate != l.Rate || l.Rate > 0 && status.QueueLimit != l.QueueLimit {
-		return errors.Join(fmt.Errorf("the kernel reports root %s %s with delay %v, jitter %v, loss %v%%, rate %v and queue limit %d instead of the requested delay",
-			status.RootKind, status.RootHandle, status.Delay, status.Jitter, status.Loss, status.Rate, status.QueueLimit), status.mismatch)
-	}
-	return l.checkFaults(status)
-}
-
-// checkFaults compares the kernel's packet faults and reorder gap with the
-// request: a fault that the kernel did not keep, or keeps without being
-// asked, is an error.
-func (l *NetworkProfileLease) checkFaults(status NetworkProfileStatus) error {
-	kernel := map[string]NetworkPacketFault{"reorder": status.Reorder, "duplicate": status.Duplicate, "corrupt": status.Corrupt}
-	for _, fault := range (NetworkProfile{Reorder: l.Reorder, Duplicate: l.Duplicate, Corrupt: l.Corrupt}).packetFaults() {
-		if !fault.fault.matches(kernel[fault.name]) {
-			return fmt.Errorf("the kernel reports %s %v instead of the requested %v", fault.name, kernel[fault.name], fault.fault)
-		}
-	}
-	wantGap := 0
-	if !l.Reorder.IsZero() {
-		wantGap = 1
-	}
-	if status.Gap != wantGap {
-		return fmt.Errorf("the kernel reports a reorder gap of %d instead of %d", status.Gap, wantGap)
-	}
-	return nil
 }
 
 // admitNetemTarget refuses targets whose namespace the helper cannot join.
@@ -1613,7 +1050,7 @@ func admitNetemTarget(state nshelper.Target) error {
 // keywords) those packet faults in tc and the kernel, and for a delay with
 // peers also the kernel's prio qdisc and u32 classifier, in a helper without
 // a network, and returns the helper's image ID.
-func preflightNetem(ctx context.Context, backend netemBackend, image string, peers, rate bool, faults []string, match peerMatch) (string, error) {
+func preflightNetem(ctx context.Context, backend netemBackend, image string, preflight netem.Preflight) (string, error) {
 	helper, err := backend.startHelper(ctx, image, "none")
 	if err != nil {
 		return "", errors.Join(faulthook.ClassifyDocker(ctx, fmt.Errorf("start the netem preflight helper: %w", err)), removeNetemHelper(ctx, backend, helper))
@@ -1623,237 +1060,39 @@ func preflightNetem(ctx context.Context, backend netemBackend, image string, pee
 		if err != nil {
 			return "", fmt.Errorf("inspect the netem preflight helper: %w", err)
 		}
-		args := []string{"preflight"}
-		if rate {
-			args = append(args, "rate")
-		}
-		args = append(args, faults...)
-		if peers {
-			args = append(args, "peers")
-			if match.source {
-				args = append(args, "sport")
-			}
-			if match.setup {
-				args = append(args, "setup")
-			}
-		}
-		report, err := runNetemScript(ctx, backend, helper, "check the netem helper", args...)
+		report, err := runNetemScript(ctx, backend, helper, "check the netem helper", preflight.Args()...)
 		if err != nil {
 			return "", err
 		}
-		// The helper's script wrote this report; anything that it leaves out
-		// or gets wrong is a helper that does not meet the contract.
-		switch {
-		case report.Missing == nil:
-			return "", fmt.Errorf("%w: the preflight report lists no missing executables", ErrNetemImageUnsupported)
-		case len(report.Missing) > 0:
-			return "", fmt.Errorf("%w: missing %s", ErrNetemImageUnsupported, strings.Join(report.Missing, ", "))
-		case report.Broken == nil:
-			return "", fmt.Errorf("%w: the preflight report lists no broken commands", ErrNetemImageUnsupported)
-		case len(report.Broken) > 0:
-			return "", fmt.Errorf("%w: failed %s", ErrNetemImageUnsupported, strings.Join(report.Broken, ", "))
-		case !report.NetAdmin:
-			return "", ErrNetemPermissionDenied
-		}
-		code, text, err := netemResult(report.Add, "add")
-		if err != nil {
+		if err := preflight.Check(report); err != nil {
 			return "", err
-		}
-		if code != 0 {
-			return "", classifyNetem("add netem on the helper's loopback", code, text)
-		}
-		var shown []netemQdisc
-		if err := json.Unmarshal([]byte(report.Shown), &shown); err != nil || len(shown) == 0 || shown[0].Kind != "netem" {
-			return "", fmt.Errorf("%w: tc did not show the netem qdisc it added", ErrNetemImageUnsupported)
-		}
-		if code, text, err = netemResult(report.Delete, "delete"); err != nil {
-			return "", err
-		}
-		if code != 0 {
-			return "", classifyNetem("remove netem from the helper's loopback", code, text)
-		}
-		if rate {
-			if err := preflightRate(report); err != nil {
-				return "", err
-			}
-		}
-		if len(faults) > 0 {
-			if err := preflightFaults(report, faults); err != nil {
-				return "", err
-			}
-		}
-		if peers {
-			if err := preflightPeers(report, match); err != nil {
-				return "", err
-			}
 		}
 		return imageID, nil
 	}()
 	return imageID, errors.Join(err, removeNetemHelper(ctx, backend, helper))
 }
 
-// preflightRate checks the preflight's netem rate on the helper's loopback:
-// tc must parse netem's rate and limit, and the kernel must keep both.
-func preflightRate(report netemReport) error {
-	code, text, err := netemResult(report.Rate, "rate")
-	if err != nil {
-		return err
-	}
-	if code != 0 {
-		return classifyNetem("add a netem rate on the helper's loopback", code, text)
-	}
-	var shown []netemQdisc
-	if err := json.Unmarshal([]byte(report.RateShown), &shown); err != nil {
-		return fmt.Errorf("%w: tc did not show the netem rate it added", ErrNetemImageUnsupported)
-	}
-	i := slices.IndexFunc(shown, func(qdisc netemQdisc) bool { return qdisc.Kind == "netem" && qdisc.Handle == "c7e3:" })
-	switch {
-	case i < 0:
-		return fmt.Errorf("%w: tc did not show the netem rate it added", ErrNetemImageUnsupported)
-	case shown[i].Options.Rate.Rate != 125000 || shown[i].Options.Limit != 100:
-		return fmt.Errorf("%w: netem kept a rate of %d bytes/s and a limit of %d instead of 125000 and 100", ErrNetemKernelUnsupported,
-			shown[i].Options.Rate.Rate, shown[i].Options.Limit)
-	}
-	if code, text, err = netemResult(report.RateDelete, "rate_delete"); err != nil {
-		return err
-	}
-	if code != 0 {
-		return classifyNetem("remove the netem rate from the helper's loopback", code, text)
-	}
-	return nil
-}
-
-// preflightFault is the packet fault that the preflight adds for each
-// netem keyword, with a correlation, as netemScript's arguments say.
-var preflightFault = map[string]NetworkPacketFault{
-	"reorder":   {Percent: 25, Correlation: 50},
-	"duplicate": {Percent: 3, Correlation: 10},
-	"corrupt":   {Percent: 2, Correlation: 5},
-}
-
-// preflightFaults checks the preflight's netem packet faults on the
-// helper's loopback: tc must parse each requested fault with its
-// correlation, and the kernel must keep each, and for a reorder the gap.
-func preflightFaults(report netemReport, faults []string) error {
-	code, text, err := netemResult(report.Faults, "faults")
-	if err != nil {
-		return err
-	}
-	if code != 0 {
-		return classifyNetem("add netem's "+strings.Join(faults, ", ")+" on the helper's loopback", code, text)
-	}
-	var shown []netemQdisc
-	if err := json.Unmarshal([]byte(report.FaultsShown), &shown); err != nil {
-		return fmt.Errorf("%w: tc did not show the netem packet faults it added", ErrNetemImageUnsupported)
-	}
-	i := slices.IndexFunc(shown, func(qdisc netemQdisc) bool { return qdisc.Kind == "netem" && qdisc.Handle == "c7e4:" })
-	if i < 0 {
-		return fmt.Errorf("%w: tc did not show the netem packet faults it added", ErrNetemImageUnsupported)
-	}
-	options := shown[i].Options
-	kernel := map[string]netemFault{"reorder": options.Reorder, "duplicate": options.Duplicate, "corrupt": options.Corrupt}
-	for _, name := range faults {
-		if got := kernel[name].fault(name); !preflightFault[name].matches(got) {
-			return fmt.Errorf("%w: netem kept %s %v instead of %v", ErrNetemKernelUnsupported, name, got, preflightFault[name])
-		}
-	}
-	if slices.Contains(faults, "reorder") && options.Gap != 1 {
-		return fmt.Errorf("%w: netem kept a reorder gap of %d instead of 1", ErrNetemKernelUnsupported, options.Gap)
-	}
-	if code, text, err = netemResult(report.FaultsDelete, "faults_delete"); err != nil {
-		return err
-	}
-	if code != 0 {
-		return classifyNetem("remove the netem packet faults from the helper's loopback", code, text)
-	}
-	return nil
-}
-
-// preflightPeers checks the preflight's prio root and u32 filter on the
-// helper's loopback: what a delay with peers adds above netem.
-func preflightPeers(report netemReport, match peerMatch) error {
-	code, text, err := netemResult(report.Prio, "prio")
-	if err != nil {
-		return err
-	}
-	if code != 0 {
-		return classifyNetem("add a prio qdisc on the helper's loopback", code, text)
-	}
-	if code, text, err = netemResult(report.U32, "u32"); err != nil {
-		return err
-	}
-	if code != 0 {
-		return classifyNetem("add a u32 filter on the helper's loopback", code, text)
-	}
-	var shown []netemFilter
-	if err := json.Unmarshal([]byte(report.U32Shown), &shown); err != nil {
-		return fmt.Errorf("%w: tc did not show the u32 filter it added", ErrNetemImageUnsupported)
-	}
-	i := slices.IndexFunc(shown, func(filter netemFilter) bool { return filter.Kind == "u32" && filter.Options.FlowID == "c7e2:3" })
-	if i < 0 {
-		return fmt.Errorf("%w: tc did not show the u32 filter it added", ErrNetemImageUnsupported)
-	}
-	if match.source || match.setup {
-		// The source port and SYN keys must reach the kernel as the
-		// lease will read them back.
-		var port uint16 = 7000
-		var got []u32Key
-		for _, key := range shown[i].Options.Matches {
-			value, err1 := strconv.ParseUint(key.Value, 16, 32)
-			mask, err2 := strconv.ParseUint(key.Mask, 16, 32)
-			if err1 != nil || err2 != nil || key.OffMask != "" {
-				return fmt.Errorf("%w: tc printed the u32 key %+v", ErrNetemImageUnsupported, key)
-			}
-			got = append(got, u32Key{Off: key.Off, Value: uint32(value), Mask: uint32(mask)})
-		}
-		if want := peerFilterKeys(netip.MustParseAddr("127.0.0.2"), port, match); !slices.Equal(got, want) {
-			return fmt.Errorf("%w: the u32 filter kept the keys %v instead of %v", ErrNetemKernelUnsupported, got, want)
-		}
-	}
-	if code, text, err = netemResult(report.PrioDelete, "prio_delete"); err != nil {
-		return err
-	}
-	if code != 0 {
-		return classifyNetem("remove the prio qdisc from the helper's loopback", code, text)
-	}
-	return nil
-}
-
-// netemResult reads one [exit code, stderr] pair of the preflight report.
-func netemResult(value []any, name string) (int, string, error) {
-	malformed := fmt.Errorf("%w: the preflight report has no valid %s result", ErrNetemImageUnsupported, name)
-	if len(value) != 2 {
-		return 0, "", malformed
-	}
-	code, isNumber := value[0].(float64)
-	text, isText := value[1].(string)
-	if !isNumber || !isText || code != math.Trunc(code) || code < 0 || code > 255 {
-		return 0, "", malformed
-	}
-	return int(code), text, nil
-}
-
-// runNetemScript runs netemScript in helper.
-func runNetemScript(ctx context.Context, backend netemBackend, helper testcontainers.Container, label string, args ...string) (netemReport, error) {
-	result, err := backend.run(ctx, helper, label, append([]string{"python3", "-c", netemScript}, args...)...)
+// runNetemScript runs netem.Script in helper.
+func runNetemScript(ctx context.Context, backend netemBackend, helper testcontainers.Container, label string, args ...string) (netem.Report, error) {
+	result, err := backend.run(ctx, helper, label, append([]string{"python3", "-c", netem.Script}, args...)...)
 	var exit *supervised.ExitError
 	if errors.As(err, &exit) && (exit.Code == 126 || exit.Code == 127) {
-		return netemReport{}, fmt.Errorf("%w: it cannot run python3", ErrNetemImageUnsupported)
+		return netem.Report{}, fmt.Errorf("%w: it cannot run python3", ErrNetemImageUnsupported)
 	}
 	if err != nil {
-		return netemReport{}, fmt.Errorf("%s: %w", label, err)
+		return netem.Report{}, fmt.Errorf("%s: %w", label, err)
 	}
 	if result.TimedOut {
 		// Too slow says nothing about the image.
-		return netemReport{}, fmt.Errorf("%s timed out", label)
+		return netem.Report{}, fmt.Errorf("%s timed out", label)
 	}
 	if result.ExitCode != 0 || result.StdoutTruncated {
 		// The contract's script failed: the image, whatever tc reported.
-		return netemReport{}, fmt.Errorf("%w: %v", ErrNetemImageUnsupported, netemCommandError(label, result))
+		return netem.Report{}, fmt.Errorf("%w: %v", ErrNetemImageUnsupported, netem.CommandError(label, result))
 	}
-	var report netemReport
+	var report netem.Report
 	if err := json.Unmarshal(result.Stdout, &report); err != nil {
-		return netemReport{}, fmt.Errorf("%s: parse its report: %w", label, err)
+		return netem.Report{}, fmt.Errorf("%s: parse its report: %w", label, err)
 	}
 	return report, nil
 }
@@ -1873,37 +1112,13 @@ func startNetemHelper(ctx context.Context, backend netemBackend, image string, n
 }
 
 // inspectNetem reads the namespace, interface and qdiscs that helper sees,
-// selecting the interface as netemScript's args say.
-func inspectNetem(ctx context.Context, backend netemBackend, helper testcontainers.Container, args ...string) (netemReport, error) {
+// selecting the interface as netem.Script's args say.
+func inspectNetem(ctx context.Context, backend netemBackend, helper testcontainers.Container, args ...string) (netem.Report, error) {
 	report, err := runNetemScript(ctx, backend, helper, "inspect the delayed interface", args...)
 	if err == nil && report.Error != "" {
 		err = fmt.Errorf("inspect the delayed interface: %s", report.Error)
 	}
 	return report, err
-}
-
-func netemCommandError(label string, result supervised.Report) error {
-	if result.TimedOut {
-		return fmt.Errorf("%s timed out", label)
-	}
-	return classifyNetem(label, result.ExitCode, strings.TrimSpace(string(result.Stderr)))
-}
-
-// classifyNetem turns tc's exit code and error text into the error kinds of
-// the contract, or a *ceph.NativeFailure of tc.
-func classifyNetem(label string, code int, text string) error {
-	switch {
-	case strings.Contains(text, "Operation not permitted"):
-		return fmt.Errorf("%s: %w", label, ErrNetemPermissionDenied)
-	case strings.Contains(text, "Specified qdisc kind is unknown"):
-		return fmt.Errorf("%s: %w: no such qdisc", label, ErrNetemKernelUnsupported)
-	case strings.Contains(text, "TC classifier not found"):
-		return fmt.Errorf("%s: %w: no such classifier", label, ErrNetemKernelUnsupported)
-	case strings.Contains(text, "Unknown qdisc") || strings.Contains(text, "Unknown filter") || strings.Contains(text, "unparsable") ||
-		strings.Contains(text, `What is "`):
-		return fmt.Errorf("%s: %w: tc cannot parse it", label, ErrNetemImageUnsupported)
-	}
-	return fmt.Errorf("%s: %w", label, faulthook.NativeFailure("tc", code, nil, []byte(text)))
 }
 
 // removeNetemHelper removes helper, also after ctx ended: a helper of a
@@ -2014,120 +1229,16 @@ func (l *NetworkProfileLease) read(ctx context.Context) (NetworkProfileStatus, e
 	if report.Namespace != l.namespace || len(report.Links) != 1 {
 		return NetworkProfileStatus{Gone: true}, nil
 	}
-	root, err := report.root()
+	state, err := l.shape.Inspect(report)
 	if err != nil {
 		return NetworkProfileStatus{}, err
 	}
-	status := NetworkProfileStatus{Interface: report.Links[0].Name, RootKind: root.Kind, RootHandle: root.Handle, Qdiscs: report.Qdiscs, Filters: report.Filters}
-	netem := root
-	switch {
-	case len(l.peerPolicy) == 0:
-		if root.Kind == "netem" && root.Handle == l.handle {
-			status.mismatch = l.ownedPrefix(status)
-			status.Applied = status.mismatch == nil
-		}
-	case root.Kind == "prio" && root.Handle == l.handle:
-		// The delay is applied only as the whole hierarchy: the root, its
-		// netem child in the selected band, and the one filter to it.
-		var qdiscs []netemQdisc
-		if err := json.Unmarshal(report.Qdiscs, &qdiscs); err != nil {
-			return NetworkProfileStatus{}, fmt.Errorf("parse tc qdisc output: %w", err)
-		}
-		children := 0
-		for _, qdisc := range qdiscs {
-			if qdisc.Kind == "netem" && qdisc.Handle == l.child && qdisc.Parent == l.handle+peerBand {
-				netem, children = qdisc, children+1
-			}
-		}
-		status.mismatch = errors.Join(checkPeerPriorityMap(root), checkPeerFilter(report.Filters, l.handle, l.peerPolicy, l.match))
-		if children != 1 {
-			status.mismatch = errors.Join(status.mismatch, fmt.Errorf("the prio root has no netem child %s in band %s", l.child, l.handle+peerBand))
-		} else if err := l.ownedPrefix(status); status.mismatch == nil && err != nil {
-			status.mismatch = errors.Join(status.mismatch, err)
-		}
-		status.Applied = status.mismatch == nil
-	}
-	if status.Applied {
-		status.Delay, status.Jitter = seconds(netem.Options.Delay.Delay), seconds(netem.Options.Delay.Jitter)
-		status.Loss = math.Round(netem.Options.Loss.Loss*100*1e6) / 1e6
-		status.Packets, status.Bytes, status.Drops = netem.Packets, netem.Bytes, netem.Drops
-		status.Overlimits, status.Requeues, status.Backlog, status.QueueLength = netem.Overlimits, netem.Requeues, netem.Backlog, netem.Qlen
-		status.Rate, status.QueueLimit = NetworkRate(netem.Options.Rate.Rate)*8, netem.Options.Limit
-		status.Reorder, status.Duplicate = netem.Options.Reorder.fault("reorder"), netem.Options.Duplicate.fault("duplicate")
-		status.Corrupt, status.Gap = netem.Options.Corrupt.fault("corrupt"), int(netem.Options.Gap)
-	}
-	return status, nil
-}
-
-// checkPeerPriorityMap validates selection semantics independently of
-// ownership. An in-place edit can divert unselected traffic into netem
-// without replacing the root, child or filters that Restore owns.
-func checkPeerPriorityMap(root netemQdisc) error {
-	var bands int
-	var priorities []*int
-	if json.Unmarshal(root.Options.Bands, &bands) != nil || bands != 3 ||
-		json.Unmarshal(root.Options.Priomap, &priorities) != nil || len(priorities) != 16 {
-		return fmt.Errorf("unexpected prio routing: bands %s, priomap %s", root.Options.Bands, root.Options.Priomap)
-	}
-	for priority, band := range priorities {
-		if band == nil || *band != 0 {
-			return fmt.Errorf("prio priority %d does not select the unshaped first band: %s", priority, root.Options.Priomap)
-		}
-	}
-	return nil
-}
-
-// ownedPrefix checks that the qdiscs and filters under the lease's root are
-// a prefix of what applying the delay adds: the root, and for a selective
-// delay its netem child in the selected band and then the one filter.
-// Removing the root removes everything under it, so anything else there is
-// foreign; qdiscs outside the root, such as an ingress qdisc, are not.
-func (l *NetworkProfileLease) ownedPrefix(status NetworkProfileStatus) error {
-	var qdiscs []netemQdisc
-	if err := json.Unmarshal(status.Qdiscs, &qdiscs); err != nil {
-		return fmt.Errorf("parse tc qdisc output: %w", err)
-	}
-	rootKind := "netem"
-	if len(l.peerPolicy) > 0 {
-		rootKind = "prio"
-	}
-	// A qdisc is under the root when its parent is the root or a qdisc under
-	// it; tc does not promise to list a parent first.
-	under := map[string]bool{}
-	for changed := true; changed; {
-		changed = false
-		for _, qdisc := range qdiscs {
-			major, _, _ := strings.Cut(qdisc.Handle, ":")
-			parent, _, _ := strings.Cut(qdisc.Parent, ":")
-			if !under[major] && (qdisc.Root || under[parent]) {
-				under[major], changed = true, true
-			}
-		}
-	}
-	for _, qdisc := range qdiscs {
-		if major, _, _ := strings.Cut(qdisc.Handle, ":"); !under[major] {
-			continue
-		}
-		switch {
-		case qdisc.Root && qdisc.Kind == rootKind && qdisc.Handle == l.handle:
-		case len(l.peerPolicy) > 0 && !qdisc.Root && qdisc.Kind == "netem" && qdisc.Handle == l.child && qdisc.Parent == l.handle+peerBand:
-		case qdisc.Root:
-			return fmt.Errorf("the root is %s %s, not the delay's %s", qdisc.Kind, qdisc.Handle, rootKind)
-		default:
-			return fmt.Errorf("a %s qdisc %s under %s", qdisc.Kind, qdisc.Handle, qdisc.Parent)
-		}
-	}
-	if len(l.peerPolicy) > 0 {
-		return checkPeerFilters(status.Filters, l.handle, l.peerPolicy, l.match, false)
-	}
-	var filters []netemFilter
-	if err := json.Unmarshal(status.Filters, &filters); err != nil {
-		return fmt.Errorf("parse tc filter output: %w", err)
-	}
-	if len(filters) > 0 {
-		return fmt.Errorf("%d filters under the root", len(filters))
-	}
-	return nil
+	return NetworkProfileStatus{Applied: state.Applied, Interface: report.Links[0].Name, RootKind: state.RootKind, RootHandle: state.RootHandle,
+		Delay: state.Delay, Jitter: state.Jitter, Loss: state.Loss, Rate: NetworkRate(state.Rate), QueueLimit: state.Limit,
+		Reorder: NetworkPacketFault(state.Reorder), Duplicate: NetworkPacketFault(state.Duplicate), Corrupt: NetworkPacketFault(state.Corrupt), Gap: state.Gap,
+		Packets: state.Packets, Bytes: state.Bytes, Drops: state.Drops,
+		Overlimits: state.Overlimits, Requeues: state.Requeues, Backlog: state.Backlog, QueueLength: state.QueueLength,
+		Qdiscs: report.Qdiscs, Filters: report.Filters, state: state}, nil
 }
 
 // Restore removes the delay's qdisc and then the helper, after restoring
@@ -2175,11 +1286,11 @@ func (l *NetworkProfileLease) Restore(ctx context.Context) error {
 		// only while everything under it is what the apply added: removing
 		// the root removes all of it, so foreign state there is refused even
 		// when the delay itself is still applied.
-		if status.RootHandle == l.handle {
-			if err := l.ownedPrefix(status); err != nil {
-				return nshelper.InvalidRequest("the delayed interface's root %s carries state that the lease did not add (%v); remove it, then Restore again", l.handle, err)
+		if status.RootHandle == l.shape.Handle {
+			if err := l.shape.OwnedPrefix(status.Qdiscs, status.Filters); err != nil {
+				return nshelper.InvalidRequest("the delayed interface's root %s carries state that the lease did not add (%v); remove it, then Restore again", l.shape.Handle, err)
 			}
-			result, err := l.backend.run(ctx, l.helper, "remove the netem delay", "tc", "qdisc", "del", "dev", status.Interface, "root", "handle", l.handle)
+			result, err := l.backend.run(ctx, l.helper, "remove the netem delay", "tc", "qdisc", "del", "dev", status.Interface, "root", "handle", l.shape.Handle)
 			if err != nil {
 				if marker, unconfirmed := supervised.Unconfirmed(err); unconfirmed {
 					l.pending = marker
@@ -2187,7 +1298,7 @@ func (l *NetworkProfileLease) Restore(ctx context.Context) error {
 				return fmt.Errorf("remove the netem delay: %w", err)
 			}
 			if result.ExitCode != 0 || result.TimedOut {
-				return netemCommandError("remove the netem delay", result)
+				return netem.CommandError("remove the netem delay", result)
 			}
 			if status, err = l.read(ctx); err != nil {
 				return err

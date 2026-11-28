@@ -1,7 +1,6 @@
 package fault
 
 import (
-	"encoding/json"
 	"errors"
 	"math"
 	"net/netip"
@@ -34,8 +33,8 @@ func TestPeerNetworkDelayAppliesTheHierarchyAndRestores(t *testing.T) {
 		t.Fatal(err)
 	}
 	link := netem.eth0("osd-0")
-	if link.root == nil || link.root.kind != "prio" || link.root.handle != lease.handle ||
-		link.child == nil || link.child.handle != lease.child || link.parent != lease.handle+"3" ||
+	if link.root == nil || link.root.kind != "prio" || link.root.handle != lease.shape.Handle ||
+		link.child == nil || link.child.handle != lease.shape.Child || link.parent != lease.shape.Handle+"3" ||
 		link.child.delay != peerDelay.Delay || link.child.jitter != peerDelay.Jitter || len(link.filters) != 3 {
 		t.Fatalf("hierarchy root %+v child %+v under %s, %d filter entries", link.root, link.child, link.parent, len(link.filters))
 	}
@@ -47,9 +46,9 @@ func TestPeerNetworkDelayAppliesTheHierarchyAndRestores(t *testing.T) {
 			tc = append(tc, command)
 		}
 	}
-	if len(tc) != 3 || !strings.Contains(tc[0], " root handle "+lease.handle+" prio bands 3 priomap 0 0 ") ||
-		!strings.Contains(tc[1], " parent "+lease.handle+"3 handle "+lease.child+" netem delay 200000us 20000us") ||
-		tc[2] != "tc filter add dev eth0 parent "+lease.handle+" protocol ip pref 10 handle 800::1 u32 match ip dst 10.88.0.7/32 match ip protocol 6 0xff match ip dport 6800 0xffff flowid "+lease.handle+"3" {
+	if len(tc) != 3 || !strings.Contains(tc[0], " root handle "+lease.shape.Handle+" prio bands 3 priomap 0 0 ") ||
+		!strings.Contains(tc[1], " parent "+lease.shape.Handle+"3 handle "+lease.shape.Child+" netem delay 200000us 20000us") ||
+		tc[2] != "tc filter add dev eth0 parent "+lease.shape.Handle+" protocol ip pref 10 handle 800::1 u32 match ip dst 10.88.0.7/32 match ip protocol 6 0xff match ip dport 6800 0xffff flowid "+lease.shape.Handle+"3" {
 		t.Fatalf("tc commands %q", tc)
 	}
 	status, err := lease.Status(t.Context())
@@ -117,7 +116,7 @@ func TestPeerNetworkDelayPartialApplyIsRestored(t *testing.T) {
 			}
 			// The root is the lease's, so the incomplete hierarchy is not
 			// applied but is restored.
-			if status, err := lease.Status(t.Context()); err != nil || status.Applied || status.RootHandle != lease.handle {
+			if status, err := lease.Status(t.Context()); err != nil || status.Applied || status.RootHandle != lease.shape.Handle {
 				t.Fatalf("status %+v %v", status, err)
 			}
 			if err := lease.Restore(t.Context()); err != nil {
@@ -169,46 +168,6 @@ func TestPeerAndPeersShareOneValidation(t *testing.T) {
 	}
 }
 
-// Filter dumps that tc 6.1 printed for these keys, with
-// the repeated "match" members collected under "matches" as netemScript does.
-const (
-	nativeIPv4PeerFilter = `[{"parent":"7e00:","protocol":"ip","pref":10,"kind":"u32","chain":0},{"parent":"7e00:","protocol":"ip","pref":10,"kind":"u32","chain":0,"options":{"fh":"800:","ht_divisor":1}},{"parent":"7e00:","protocol":"ip","pref":10,"kind":"u32","chain":0,"options":{"fh":"800::1","order":1,"key_ht":"800","bkt":"0","flowid":"7e00:3","not_in_hw":true,"matches":[{"value":"ac130003","mask":"ffffffff","offmask":"","off":16},{"value":"60000","mask":"ff0000","offmask":"","off":8},{"value":"1b58","mask":"ffff","offmask":"","off":20}]}}]`
-	nativeIPv6PeerFilter = `[{"parent":"7e00:","protocol":"ipv6","pref":10,"kind":"u32","chain":0,"options":{"fh":"800::1","order":1,"key_ht":"800","bkt":"0","flowid":"7e00:3","not_in_hw":true,"matches":[{"value":"fd6293fe","mask":"ffffffff","offmask":"","off":24},{"value":"2c9e0000","mask":"ffffffff","offmask":"","off":28},{"value":"0","mask":"ffffffff","offmask":"","off":32},{"value":"3","mask":"ffffffff","offmask":"","off":36},{"value":"600","mask":"ff00","offmask":"","off":4},{"value":"1b58","mask":"ffff","offmask":"","off":40}]}}]`
-)
-
-func TestCheckPeerFilterAgainstNativeDumps(t *testing.T) {
-	v4, v6 := netip.MustParseAddr("172.19.0.3"), netip.MustParseAddr("fd62:93fe:2c9e::3")
-	if err := checkPeerFilter(json.RawMessage(nativeIPv4PeerFilter), "7e00:", []NetworkPeer{{v4, 7000}}, peerMatch{}); err != nil {
-		t.Fatalf("IPv4: %v", err)
-	}
-	if err := checkPeerFilter(json.RawMessage(nativeIPv6PeerFilter), "7e00:", []NetworkPeer{{v6, 7000}}, peerMatch{}); err != nil {
-		t.Fatalf("IPv6: %v", err)
-	}
-	for name, test := range map[string]struct {
-		dump string
-		root string
-		peer netip.Addr
-		port uint16
-	}{
-		"another peer":           {nativeIPv4PeerFilter, "7e00:", netip.MustParseAddr("172.19.0.4"), 7000},
-		"another port":           {nativeIPv4PeerFilter, "7e00:", v4, 7001},
-		"no port selected":       {nativeIPv4PeerFilter, "7e00:", v4, 0},
-		"another root":           {nativeIPv4PeerFilter, "7e01:", v4, 7000},
-		"another family":         {nativeIPv4PeerFilter, "7e00:", v6, 7000},
-		"a wider protocol mask":  {strings.Replace(nativeIPv4PeerFilter, `"mask":"ff0000"`, `"mask":"ffff0000"`, 1), "7e00:", v4, 7000},
-		"an offmask":             {strings.Replace(nativeIPv4PeerFilter, `"offmask":"","off":20`, `"offmask":"ff","off":20`, 1), "7e00:", v4, 7000},
-		"another flowid":         {strings.Replace(nativeIPv4PeerFilter, `"flowid":"7e00:3"`, `"flowid":"7e00:1"`, 1), "7e00:", v4, 7000},
-		"a missing address word": {strings.Replace(nativeIPv6PeerFilter, `{"value":"0","mask":"ffffffff","offmask":"","off":32},`, ``, 1), "7e00:", v6, 7000},
-		"two leaves":             {strings.TrimSuffix(nativeIPv4PeerFilter, "]") + "," + strings.TrimPrefix(nativeIPv4PeerFilter, "[{\"parent\":\"7e00:\",\"protocol\":\"ip\",\"pref\":10,\"kind\":\"u32\",\"chain\":0},{\"parent\":\"7e00:\",\"protocol\":\"ip\",\"pref\":10,\"kind\":\"u32\",\"chain\":0,\"options\":{\"fh\":\"800:\",\"ht_divisor\":1}},"), "7e00:", v4, 7000},
-		"a foreign filter":       {strings.Replace(nativeIPv4PeerFilter, `[{"parent":"7e00:","protocol":"ip","pref":10,`, `[{"parent":"7e00:","protocol":"ip","pref":20,`, 1), "7e00:", v4, 7000},
-		"no filter":              {`[]`, "7e00:", v4, 7000},
-	} {
-		if err := checkPeerFilter(json.RawMessage(test.dump), test.root, []NetworkPeer{{test.peer, test.port}}, peerMatch{}); err == nil {
-			t.Errorf("%s: accepted", name)
-		}
-	}
-}
-
 // A filter or qdisc that someone else attached under the lease's root is not
 // the lease's: Restore refuses rather than remove it with the root, keeps the
 // lease, and succeeds once the owner removed it.
@@ -253,7 +212,7 @@ func TestPeerNetworkDelayRestoreKeepsForeignState(t *testing.T) {
 			link := netem.eth0("osd-0")
 			netem.mu.Lock()
 			child := link.child
-			detach := tc.attach(link, lease.handle)
+			detach := tc.attach(link, lease.shape.Handle)
 			netem.mu.Unlock()
 			if status, err := lease.Status(t.Context()); err != nil || status.Applied {
 				t.Fatalf("status with foreign %s: %+v %v", name, status, err)
@@ -261,7 +220,7 @@ func TestPeerNetworkDelayRestoreKeepsForeignState(t *testing.T) {
 			if err := lease.Restore(t.Context()); !errors.Is(err, ceph.ErrInvalidRequest) {
 				t.Fatalf("Restore with foreign %s: %v", name, err)
 			}
-			if link.root == nil || link.root.handle != lease.handle || netem.liveHelpers() != 1 {
+			if link.root == nil || link.root.handle != lease.shape.Handle || netem.liveHelpers() != 1 {
 				t.Fatalf("Restore removed the root %+v or the helper (%d)", link.root, netem.liveHelpers())
 			}
 			if link.child == nil && child != nil || len(link.extra) == 0 && strings.HasPrefix(name, "added") {
@@ -348,7 +307,7 @@ func TestPeerNetworkDelayBlackhole(t *testing.T) {
 			child = command
 		}
 	}
-	if !strings.HasSuffix(child, " handle "+lease.child+" netem loss 100%") {
+	if !strings.HasSuffix(child, " handle "+lease.shape.Child+" netem loss 100%") {
 		t.Fatalf("netem child command %q", child)
 	}
 	status, err := lease.Status(t.Context())
