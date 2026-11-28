@@ -578,11 +578,16 @@ func (g *SyncGroup) policyImportWatchBaseline(ctx context.Context, destinationZo
 	}
 }
 
-// lockedSample is one sample under the topology lock.
+// errSampleLock marks a sample that ended while it waited for the topology
+// lock, before it read anything.
+var errSampleLock = errors.New("the topology lock was not acquired")
+
+// lockedSample is one sample under the topology lock. A sample that could not
+// take the lock returns errSampleLock with the lock wait's error.
 func (t *policyImportTarget) lockedSample(ctx context.Context) (BucketSyncPolicyStatus, bool, error) {
 	f := t.group.owner
 	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
-		return BucketSyncPolicyStatus{}, false, err
+		return BucketSyncPolicyStatus{}, false, fmt.Errorf("%w: %w", errSampleLock, err)
 	}
 	defer f.topologyMu.Unlock()
 	return t.sample(ctx)

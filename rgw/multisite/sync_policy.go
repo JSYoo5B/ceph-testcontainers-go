@@ -853,13 +853,25 @@ func decodeBucketInstance(data []byte, key string, g *SyncGroup) (*rgwBucketInst
 	return &rgwBucketInstance{Owner: info.member("owner"), PlacementRule: info.member("placement_rule"), policy: policy, version: decodeObjectVersion(metadata)}, true, nil
 }
 
+// zoneIDs resolves names, unique attached owned zones of the group's
+// zonegroup, to their native IDs in sorted order; with wildcard, ["*"] stays.
 func (g *SyncGroup) zoneIDs(names []string, wildcard bool) ([]string, error) {
+	if wildcard && len(names) == 1 && names[0] == "*" {
+		return []string{"*"}, nil
+	}
+	ids, err := g.orderedZoneIDs(names)
+	if err != nil {
+		return nil, err
+	}
+	slices.Sort(ids)
+	return ids, nil
+}
+
+// orderedZoneIDs resolves names as zoneIDs does, keeping their order.
+func (g *SyncGroup) orderedZoneIDs(names []string) ([]string, error) {
 	f := g.owner
 	if len(names) == 0 {
 		return nil, servicehook.Invalid(errors.New("RGW sync zone list must not be empty"))
-	}
-	if wildcard && len(names) == 1 && names[0] == "*" {
-		return []string{"*"}, nil
 	}
 	ids := make([]string, 0, len(names))
 	for _, name := range names {
@@ -874,12 +886,10 @@ func (g *SyncGroup) zoneIDs(names []string, wildcard bool) ([]string, error) {
 		}
 		ids = append(ids, found.ID)
 	}
-	slices.Sort(ids)
 	return ids, nil
 }
 
 func (g *SyncGroup) flowConfig(c SyncFlowConfig) ([]string, map[string]any, string, error) {
-	f := g.owner
 	if len(c.Zones) > 0 {
 		if !validRGWSyncID(c.ID) || c.SourceZone != "" || c.DestinationZone != "" || len(c.Zones) < 2 {
 			return nil, nil, "", servicehook.Invalid(errors.New("symmetrical RGW flow requires its ID and at least two zones"))
@@ -893,18 +903,11 @@ func (g *SyncGroup) flowConfig(c SyncFlowConfig) ([]string, map[string]any, stri
 	if c.ID != "" || c.SourceZone == "" || c.SourceZone == c.DestinationZone {
 		return nil, nil, "", servicehook.Invalid(errors.New("directional RGW flow requires distinct owned source/destination zones and no ID"))
 	}
-	if _, err := g.zoneIDs([]string{c.SourceZone, c.DestinationZone}, false); err != nil {
+	ids, err := g.orderedZoneIDs([]string{c.SourceZone, c.DestinationZone})
+	if err != nil {
 		return nil, nil, "", err
 	}
-	var source, dest string
-	for _, z := range f.zoneStates() {
-		if z.Name == c.SourceZone {
-			source = z.ID
-		}
-		if z.Name == c.DestinationZone {
-			dest = z.ID
-		}
-	}
+	source, dest := ids[0], ids[1]
 	return []string{"--flow-type", "directional", "--flow-id", source + "-to-" + dest, "--source-zone-id", source, "--dest-zone-id", dest}, map[string]any{"source_zone": source, "dest_zone": dest}, "directional", nil
 }
 

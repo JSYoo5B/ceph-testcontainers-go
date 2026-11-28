@@ -820,13 +820,9 @@ func (f *Fixture) zonePeriodsLag(ctx context.Context, master *rgwZoneState, stat
 				return fmt.Errorf("pull active RGW topology into %s: %w", state.Name, err)
 			}
 		}
-		data, err := f.realm.admin(ctx, state.client, state.Name, "period", "get", "--format", "json")
+		period, err := f.realm.committedPeriod(ctx, state)
 		if err == nil {
-			var period *rgwTopologyPeriod
-			period, err = decodeRGWTopologyPeriod(data)
-			if err == nil {
-				err = f.checkZonePeriod(period, master, states)
-			}
+			err = f.checkZonePeriod(period, master, states)
 		}
 		if err != nil {
 			return fmt.Errorf("RGW topology period in %s: %w", state.Name, err)
@@ -838,11 +834,7 @@ func (f *Fixture) zonePeriodsLag(ctx context.Context, master *rgwZoneState, stat
 // recordGroupMasters records each zonegroup's master zone from the master's
 // committed period.
 func (f *Fixture) recordGroupMasters(ctx context.Context, master *rgwZoneState, states []*rgwZoneState) error {
-	data, err := f.realm.admin(ctx, master.client, master.Name, "period", "get", "--format", "json")
-	if err != nil {
-		return err
-	}
-	period, err := decodeRGWTopologyPeriod(data)
+	period, err := f.realm.committedPeriod(ctx, master)
 	if err != nil {
 		return err
 	}

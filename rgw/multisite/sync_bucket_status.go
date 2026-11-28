@@ -153,14 +153,7 @@ func (f *Fixture) checkBucketWaitOwnership(g *SyncGroup, checkpoint *rgwSyncBuck
 		return errors.New("RGW owned sync group changed during bucket readiness wait")
 	}
 	for _, captured := range []*rgwZoneState{checkpoint.source, checkpoint.destination} {
-		attached := false
-		for _, current := range f.zoneStates() {
-			if current.Name == captured.Name && current.ID == captured.ID && current.client != nil && current.client == captured.client {
-				attached = true
-				break
-			}
-		}
-		if !attached {
+		if !f.stillAttached(captured.Name, captured.ID, captured.client) {
 			return errors.New("RGW bucket checkpoint zone is no longer attached and owned")
 		}
 	}

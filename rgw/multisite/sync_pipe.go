@@ -319,27 +319,31 @@ func (g *SyncGroup) destinationClass(ctx context.Context, config SyncPipeConfig,
 		if !state.Confirmed || state.RealmID != g.realmID || state.ZonegroupID != g.groupID || state.ZoneID != zone.ID || state.Name != target || !slices.ContainsFunc(state.StorageClasses, func(c placement.StorageClass) bool { return c.Name == config.DestinationStorageClass }) {
 			return servicehook.Invalid(errors.New("RGW destination class does not match its confirmed native placement/bucket scope"))
 		}
-		_, period, err := f.syncPolicyMaster(ctx)
-		if err != nil {
-			return err
+	}
+	if len(config.DestinationZones) == 0 {
+		return nil
+	}
+	// The committed period is the same for every destination zone.
+	_, period, err := f.syncPolicyMaster(ctx)
+	if err != nil {
+		return err
+	}
+	var committed map[string]any
+	for _, group := range syncPeriodGroups(period) {
+		if group["id"] != g.groupID {
+			continue
 		}
-		var committed map[string]any
-		for _, group := range syncPeriodGroups(period) {
-			if group["id"] != g.groupID {
-				continue
+		targets, _ := group["placement_targets"].([]any)
+		for _, value := range targets {
+			candidate, _ := value.(map[string]any)
+			if candidate["name"] == target {
+				committed = candidate
 			}
-			targets, _ := group["placement_targets"].([]any)
-			for _, value := range targets {
-				candidate, _ := value.(map[string]any)
-				if candidate["name"] == target {
-					committed = candidate
-				}
-			}
 		}
-		classes, _ := committed["storage_classes"].([]any)
-		if !slices.Contains(classes, any(config.DestinationStorageClass)) {
-			return servicehook.Invalid(errors.New("RGW destination class has not been published in the current committed period"))
-		}
+	}
+	classes, _ := committed["storage_classes"].([]any)
+	if !slices.Contains(classes, any(config.DestinationStorageClass)) {
+		return servicehook.Invalid(errors.New("RGW destination class has not been published in the current committed period"))
 	}
 	return nil
 }

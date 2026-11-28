@@ -165,18 +165,20 @@ func (f *Fixture) checkSyncWaitPins(pins map[string]syncWaitZonePin) error {
 		return servicehook.Invalid(errors.New("RGW multisite is terminated"))
 	}
 	for name, pin := range pins {
-		attached := false
-		for _, zone := range f.zoneStates() {
-			if zone.Name == name && zone.ID == pin.id && zone.client != nil && zone.client == pin.client {
-				attached = true
-				break
-			}
-		}
-		if !attached {
+		if !f.stillAttached(name, pin.id, pin.client) {
 			return errors.New("RGW sync readiness zone is no longer attached and owned")
 		}
 	}
 	return nil
+}
+
+// stillAttached reports whether the zone name is still attached and owned
+// with the native ID id and the CLI client that a wait captured. The caller
+// holds topologyMu.
+func (f *Fixture) stillAttached(name, id string, client testcontainers.Container) bool {
+	return slices.ContainsFunc(f.zoneStates(), func(zone *rgwZoneState) bool {
+		return zone.Name == name && zone.ID == id && zone.client != nil && zone.client == client
+	})
 }
 
 func (f *Fixture) syncStatusZones(name string, sources []string) (*rgwZoneState, error) {
