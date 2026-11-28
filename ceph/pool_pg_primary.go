@@ -296,7 +296,8 @@ func (h *PGPrimaryOverrideHandle) waitReady(ctx context.Context) error {
 func waitPGPrimaryReady(ctx context.Context, pg PGID, osd int, interval time.Duration, ready func(context.Context) (bool, error)) error {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	last := errors.New("no readiness observation completed")
+	// Every iteration sets last before the deadline checks read it.
+	var last error
 	for {
 		ok, err := ready(ctx)
 		if err != nil {
