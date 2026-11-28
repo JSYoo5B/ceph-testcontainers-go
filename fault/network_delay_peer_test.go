@@ -145,6 +145,30 @@ func TestPeerNetworkDelayValidation(t *testing.T) {
 	}
 }
 
+// TestPeerAndPeersShareOneValidation refuses the same invalid peer with the
+// same message whether it is given as Peer and PeerPort or as the one entry
+// of Peers: Peer and PeerPort are the one-peer form of Peers.
+func TestPeerAndPeersShareOneValidation(t *testing.T) {
+	for name, peer := range map[string]NetworkPeer{
+		"mapped":      {Addr: netip.MustParseAddr("::ffff:10.88.0.7"), Port: 6800},
+		"zoned":       {Addr: netip.MustParseAddr("fe80::1%eth0")},
+		"unspecified": {Addr: netip.IPv4Unspecified(), Port: 6800},
+	} {
+		t.Run(name, func(t *testing.T) {
+			one, many := peerDelay, peerDelay
+			one.Peer, one.PeerPort = peer.Addr, peer.Port
+			many.Peer, many.PeerPort, many.Peers = netip.Addr{}, 0, []NetworkPeer{peer}
+			oneErr, manyErr := validateNetworkDelay(one), validateNetworkDelay(many)
+			if !errors.Is(oneErr, ceph.ErrInvalidRequest) || !errors.Is(manyErr, ceph.ErrInvalidRequest) {
+				t.Fatalf("Peer: %v, Peers: %v", oneErr, manyErr)
+			}
+			if oneErr.Error() != manyErr.Error() {
+				t.Fatalf("Peer refused with %q, Peers with %q", oneErr, manyErr)
+			}
+		})
+	}
+}
+
 // Filter dumps that tc 6.1 printed for these keys, with
 // the repeated "match" members collected under "matches" as netemScript does.
 const (

@@ -746,7 +746,10 @@ func validateDelay(delay NetworkProfile, plane bool) error {
 			Err: errors.New("network delay needs NetworkProfile.HelperImage: the netem helper is never selected implicitly")}
 	}
 	// Every check runs: allowing a zero delay with a Loss must not skip the
-	// selection's checks.
+	// selection's checks. Peer and PeerPort are the one-peer form of Peers:
+	// past the checks of the form itself, both are checked as the one
+	// selection that every later stage uses.
+	peers := delay.selection()
 	noDelay := delay.Delay == 0 && (delay.Loss > 0 || delay.Rate > 0 || !delay.Duplicate.IsZero() || !delay.Corrupt.IsZero())
 	switch {
 	case plane && delay.Plane != ceph.PublicNetworkPlane && delay.Plane != ceph.ClusterNetworkPlane:
@@ -771,8 +774,6 @@ func validateDelay(delay NetworkProfile, plane bool) error {
 		return nshelper.InvalidRequest("network delay and jitter must be whole microseconds")
 	case delay.PeerPort != 0 && !delay.Peer.IsValid():
 		return nshelper.InvalidRequest("network delay PeerPort needs a Peer")
-	case delay.Peer.IsValid() && (delay.Peer.Is4In6() || delay.Peer.Zone() != "" || delay.Peer.IsUnspecified()):
-		return nshelper.InvalidRequest("network delay Peer %s is not a plain IPv4 or IPv6 address", delay.Peer)
 	case delay.Peer.IsValid() && delay.Peers != nil:
 		return nshelper.InvalidRequest("network delay takes either Peer and PeerPort or Peers")
 	case delay.Peers != nil && (len(delay.Peers) == 0 || len(delay.Peers) > MaxNetworkPeers):
@@ -781,9 +782,9 @@ func validateDelay(delay NetworkProfile, plane bool) error {
 		return nshelper.InvalidRequest("network delay Direction %v is not Outbound, Inbound or BothDirections", delay.Direction)
 	case delay.Phase < AllPackets || delay.Phase > ConnectionSetup:
 		return nshelper.InvalidRequest("network delay Phase %v is not AllPackets or ConnectionSetup", delay.Phase)
-	case delay.Direction != Outbound && !delay.Peer.IsValid() && delay.Peers == nil:
+	case delay.Direction != Outbound && len(peers) == 0:
 		return nshelper.InvalidRequest("network delay Direction %v needs a Peer or Peers: the other direction is shaped at each peer's endpoint", delay.Direction)
-	case delay.Phase == ConnectionSetup && !delay.Peer.IsValid() && delay.Peers == nil:
+	case delay.Phase == ConnectionSetup && len(peers) == 0:
 		return nshelper.InvalidRequest("network delay Phase %v needs a Peer or Peers", delay.Phase)
 	}
 	for _, fault := range []namedFault{{"Reorder", delay.Reorder}, {"Duplicate", delay.Duplicate}, {"Corrupt", delay.Corrupt}} {
@@ -802,7 +803,7 @@ func validateDelay(delay NetworkProfile, plane bool) error {
 		}
 	}
 	seen := map[NetworkPeer]bool{}
-	for _, peer := range delay.Peers {
+	for _, peer := range peers {
 		switch {
 		case !peer.Addr.IsValid() || peer.Addr.Is4In6() || peer.Addr.Zone() != "" || peer.Addr.IsUnspecified():
 			return nshelper.InvalidRequest("network delay peer %v is not a plain IPv4 or IPv6 address", peer.Addr)
