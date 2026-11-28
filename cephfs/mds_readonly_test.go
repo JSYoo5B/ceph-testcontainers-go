@@ -138,7 +138,7 @@ func (ctr *readOnlyControl) takeover(gid uint64) {
 	ctr.active = []fsbase.MDSInfo{{Name: standby.Name, GID: standby.GID, Rank: 0, State: "up:active"}}
 }
 
-var readOnlyTarget = MDSStatus{Name: "fixture-0", Rank: 0, GID: 4199, State: "up:active", Owned: true}
+var readOnlyTarget = MDSDaemonStatus{Name: "fixture-0", Rank: 0, GID: 4199, State: "up:active", Owned: true}
 
 // readOnlyFixture is "fixture" with the owned active fixture-0 (GID 4199)
 // and the owned standby fixture-1 (GID 4203). Their handles carry the
@@ -194,7 +194,7 @@ func TestCephFSMDSReadOnlyTargetsTheGIDConfirmsAndWaitsForAReplacement(t *testin
 	ctr.takeover(4203)
 	shared := *fault
 	holder, err := shared.WaitReplaced(t.Context())
-	if err != nil || holder != (MDSStatus{Name: "fixture-1", Rank: 0, GID: 4203, State: "up:active", Owned: true}) {
+	if err != nil || holder != (MDSDaemonStatus{Name: "fixture-1", Rank: 0, GID: 4203, State: "up:active", Owned: true}) {
 		t.Fatalf("WaitReplaced = %+v, %v", holder, err)
 	}
 	if got := ctr.forced(); len(got) != 1 {
@@ -426,12 +426,12 @@ func TestCephFSMDSReadOnlyWaitsForItsLocksWithTheCallersContext(t *testing.T) {
 }
 
 func TestParseMDSReadOnlyHealthAndCommands(t *testing.T) {
-	daemon := MDSStatus{Name: "a", Rank: 0}
+	daemon := MDSDaemonStatus{Name: "a", Rank: 0}
 	health := `{"status":"HEALTH_WARN","checks":{"MDS_READ_ONLY":{"severity":"HEALTH_WARN","summary":{"message":"1 MDSs are read only","count":1},"detail":[{"message":"mds.a(mds.0): MDS in read-only mode"}],"muted":false}},"mutes":[]}`
 	if reported, err := parseMDSReadOnlyHealth([]byte(health), daemon); err != nil || !reported {
 		t.Fatalf("native health = %t, %v", reported, err)
 	}
-	for _, other := range []MDSStatus{{Name: "ab", Rank: 0}, {Name: "a", Rank: 1}} {
+	for _, other := range []MDSDaemonStatus{{Name: "ab", Rank: 0}, {Name: "a", Rank: 1}} {
 		if reported, err := parseMDSReadOnlyHealth([]byte(health), other); err != nil || reported {
 			t.Fatalf("%+v matched another daemon's detail: %t, %v", other, reported, err)
 		}

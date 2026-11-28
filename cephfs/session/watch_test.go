@@ -335,7 +335,7 @@ func TestSessionWatchEndsOnAReplacedOrRemovedFilesystem(t *testing.T) {
 }
 
 // receive waits for the next event of w.
-func receive(t *testing.T, w *Watcher) WatchEvent {
+func receive(t *testing.T, w *SessionWatch) SessionWatchEvent {
 	t.Helper()
 	select {
 	case e, ok := <-w.Events():
@@ -346,7 +346,7 @@ func receive(t *testing.T, w *Watcher) WatchEvent {
 	case <-time.After(5 * time.Second):
 		t.Fatal("no event")
 	}
-	return WatchEvent{}
+	return SessionWatchEvent{}
 }
 
 func TestSessionWatchStreamsGapsAcrossATakeoverWithoutRemovals(t *testing.T) {
@@ -372,7 +372,7 @@ func TestSessionWatchStreamsGapsAcrossATakeoverWithoutRemovals(t *testing.T) {
 		t.Fatalf("gap = %+v", gap)
 	}
 	f.set(roster(1, "0:202"), map[int][]string{0: {row(10, 1, "open"), row(11, 2, "reconnecting")}})
-	var resumed WatchEvent
+	var resumed SessionWatchEvent
 	for resumed = receive(t, w); resumed.Kind == ceph.WatchGap; resumed = receive(t, w) {
 	}
 	if resumed.Kind != ceph.WatchResumed || !slices.Equal(resumed.Rebaselined, []int{0}) || resumed.Removed != nil || resumed.Changed != nil || len(resumed.Sessions) != 2 {
@@ -417,11 +417,11 @@ func TestSessionWatchRefusesInvalidRequests(t *testing.T) {
 	if _, err := Watch(t.Context(), fs, ceph.WatchConfig{}, 4, 0); !errors.Is(err, ceph.ErrInvalidRequest) {
 		t.Fatalf("client 0: %v", err)
 	}
-	var unstarted *Watcher
+	var unstarted *SessionWatch
 	if err := unstarted.Stop(); !errors.Is(err, ceph.ErrInvalidRequest) {
 		t.Fatalf("Stop of a nil watcher: %v", err)
 	}
-	if err := (&Watcher{}).Stop(); !errors.Is(err, ceph.ErrInvalidRequest) {
+	if err := (&SessionWatch{}).Stop(); !errors.Is(err, ceph.ErrInvalidRequest) {
 		t.Fatalf("Stop of an unstarted watcher: %v", err)
 	}
 	// A baseline that is not coherent starts nothing.

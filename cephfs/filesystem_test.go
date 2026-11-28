@@ -253,11 +253,11 @@ func TestCephFSScaleRejectsCountsBeforeNativeCommands(t *testing.T) {
 }
 
 func TestCephFSMDSRetirementRequiresSettledOwnedRanksAndPrefersIdle(t *testing.T) {
-	active := MDSStatus{Name: "tenant-0", Rank: 0, GID: 10, Owned: true, State: "up:active"}
-	replay := MDSStatus{Name: "tenant-1", Rank: 0, GID: 11, Owned: true, State: "up:standby-replay"}
-	idle := MDSStatus{Name: "tenant-2", Rank: -1, GID: 12, Owned: true, State: "up:standby"}
+	active := MDSDaemonStatus{Name: "tenant-0", Rank: 0, GID: 10, Owned: true, State: "up:active"}
+	replay := MDSDaemonStatus{Name: "tenant-1", Rank: 0, GID: 11, Owned: true, State: "up:standby-replay"}
+	idle := MDSDaemonStatus{Name: "tenant-2", Rank: -1, GID: 12, Owned: true, State: "up:standby"}
 	daemons := []*MDS{{ID: active.Name}, {ID: replay.Name}, {ID: idle.Name}}
-	status := &FilesystemStatus{MaxMDS: 1, Active: []MDSStatus{active}, StandbyReplay: []MDSStatus{replay}, Standby: []MDSStatus{idle}}
+	status := &FilesystemStatus{MaxMDS: 1, Active: []MDSDaemonStatus{active}, StandbyReplay: []MDSDaemonStatus{replay}, Standby: []MDSDaemonStatus{idle}}
 	if got := cephFSMDSRetirementCandidate(status, daemons, 1); got == nil || got.Name != idle.Name {
 		t.Fatalf("idle standby was not selected before replay follower: %+v", got)
 	}
@@ -265,7 +265,7 @@ func TestCephFSMDSRetirementRequiresSettledOwnedRanksAndPrefersIdle(t *testing.T
 	if got := cephFSMDSRetirementCandidate(status, daemons, 1); got != nil {
 		t.Fatalf("a retiring/unobserved owned rank allowed premature removal: %+v", got)
 	}
-	status.Standby = []MDSStatus{idle}
+	status.Standby = []MDSDaemonStatus{idle}
 	status.Active[0].Owned = false
 	if got := cephFSMDSRetirementCandidate(status, daemons, 1); got != nil {
 		t.Fatalf("external active daemon allowed owned topology contraction: %+v", got)
@@ -274,14 +274,14 @@ func TestCephFSMDSRetirementRequiresSettledOwnedRanksAndPrefersIdle(t *testing.T
 
 func TestCephFSReplayReadinessRejectsRetiredDuplicateAndMissingRanks(t *testing.T) {
 	status := &FilesystemStatus{MaxMDS: 2,
-		Active:        []MDSStatus{{Rank: 0, GID: 1, Owned: true}, {Rank: 1, GID: 2, Owned: true}},
-		StandbyReplay: []MDSStatus{{Rank: 0, GID: 3, Owned: true}, {Rank: 1, GID: 4, Owned: true}},
+		Active:        []MDSDaemonStatus{{Rank: 0, GID: 1, Owned: true}, {Rank: 1, GID: 2, Owned: true}},
+		StandbyReplay: []MDSDaemonStatus{{Rank: 0, GID: 3, Owned: true}, {Rank: 1, GID: 4, Owned: true}},
 	}
 	config := Config{ActiveMDS: 2, StandbyMDS: 2, StandbyReplay: true}
 	if !cephFSMDSReady(status, config) {
 		t.Fatal("valid replay followers did not satisfy readiness")
 	}
-	for _, invalid := range []MDSStatus{{Rank: 2, GID: 4, Owned: true}, {Rank: 0, GID: 4, Owned: true}, {Rank: 1, GID: 0, Owned: true}, {Rank: 1, GID: 4, Owned: false}} {
+	for _, invalid := range []MDSDaemonStatus{{Rank: 2, GID: 4, Owned: true}, {Rank: 0, GID: 4, Owned: true}, {Rank: 1, GID: 0, Owned: true}, {Rank: 1, GID: 4, Owned: false}} {
 		status.StandbyReplay[1] = invalid
 		if cephFSMDSReady(status, config) {
 			t.Fatalf("invalid replay follower accepted: %+v", invalid)

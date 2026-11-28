@@ -77,7 +77,7 @@ func cephFSKillMDS(t *testing.T, parent context.Context, daemon *cephfs.MDS) {
 	}
 }
 
-func cephFSWaitForReplacement(t *testing.T, parent context.Context, fs *cephfs.Filesystem, old, standby cephfs.MDSStatus) {
+func cephFSWaitForReplacement(t *testing.T, parent context.Context, fs *cephfs.Filesystem, old, standby cephfs.MDSDaemonStatus) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, 3*time.Minute)
 	defer cancel()

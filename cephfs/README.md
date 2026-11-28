@@ -109,17 +109,17 @@ if err != nil {
 
 To react to a filesystem's MDS topology while the SUT runs,
 `fs.WatchMDSs(ctx, cfg)` polls the FSMap in one goroutine and sends a change
-of `MDSStatus` (max_mds, active ranks, ordinary and replay standbys) on one
-channel, with the FSMap and MDSMap epochs of that read. Receive the baseline
+of the `FilesystemStatus` that `fs.MDSStatus` reads (max_mds, active ranks,
+ordinary and replay standbys, each an `MDSDaemonStatus`) on one channel, with the FSMap and MDSMap epochs of that read. Receive the baseline
 before you stop an MDS. A takeover, a restarted daemon's new GID and a
 standby that registers again are events; a rank still in replay is in no
-list, as in `MDSStatus`. A filesystem recreated under the same name, a removed
+list, as in `fs.MDSStatus`. A filesystem recreated under the same name, a removed
 filesystem and cluster termination end the watch. The watch never waits for
 readiness; use `WaitReady` for the requested standby capacity. The lifecycle
 that every Watch shares (baseline, gaps, overflow and `Stop`) is in
 [watching state](../docs/guides/contexts-and-cleanup.md#watching-state).
 
-To assert the rank holders and standbys of one `MDSStatus` read or watch
+To assert the rank holders and standbys of one `fs.MDSStatus` read or watch
 event, such as a takeover by another GID, use the optional
 [`cephfs/expect`](expect/README.md) package.
 

@@ -454,13 +454,13 @@ const (
 )
 
 // activeRank returns the active MDS of rank.
-func activeRank(status *cephfs.FilesystemStatus, rank int) (cephfs.MDSStatus, bool) {
+func activeRank(status *cephfs.FilesystemStatus, rank int) (cephfs.MDSDaemonStatus, bool) {
 	for _, active := range status.Active {
 		if active.Rank == rank {
 			return active, true
 		}
 	}
-	return cephfs.MDSStatus{}, false
+	return cephfs.MDSDaemonStatus{}, false
 }
 
 // runCephFSRetainedClient keeps one native client, its mount and an open fd
@@ -616,7 +616,7 @@ func runCephFSRetainedClient(t *testing.T, failover cephFSFailover, opts ...test
 		}
 	}
 	var after *cephfs.FilesystemStatus
-	var current cephfs.MDSStatus
+	var current cephfs.MDSDaemonStatus
 	for {
 		after, err = fs.MDSStatus(ctx)
 		if err == nil && len(after.Active) == activeRanks {
@@ -1993,7 +1993,7 @@ type cephFSSingleMDS struct {
 	Cluster *ceph.Container
 	Client  testcontainers.Container
 	FS      *cephfs.Filesystem
-	MDS     cephfs.MDSStatus
+	MDS     cephfs.MDSDaemonStatus
 	Version string
 }
 
@@ -2047,12 +2047,12 @@ func (m *cephFSSingleMDS) killMDS(t *testing.T, ctx context.Context) (*cephfs.MD
 
 // restartMDS starts the killed daemon again and waits until rank 0 is active
 // under a new GID, in the same container, without mds_log_pause.
-func (m *cephFSSingleMDS) restartMDS(t *testing.T, ctx context.Context, daemon *cephfs.MDS, cid string) cephfs.MDSStatus {
+func (m *cephFSSingleMDS) restartMDS(t *testing.T, ctx context.Context, daemon *cephfs.MDS, cid string) cephfs.MDSDaemonStatus {
 	t.Helper()
 	if err := daemon.Start(ctx); err != nil {
 		t.Fatal("restart MDS:", err)
 	}
-	var current cephfs.MDSStatus
+	var current cephfs.MDSDaemonStatus
 	for {
 		after, err := m.FS.MDSStatus(ctx)
 		if err == nil && len(after.Active) == 1 && after.Active[0].State == "up:active" && after.Active[0].GID != m.MDS.GID {

@@ -38,20 +38,20 @@
       "Session.Root field string",
       "Session.State field string"
     ],
-    "cephfs/session.WatchEvent": [
-      "WatchEvent.Added field []Session",
-      "WatchEvent.After field []RankHolder",
-      "WatchEvent.Before field []RankHolder",
-      "WatchEvent.Changed field []Change",
-      "WatchEvent.Err field error",
-      "WatchEvent.Finished field time.Time",
-      "WatchEvent.Kind field ceph.WatchEventKind",
-      "WatchEvent.MaxMDS field int",
-      "WatchEvent.Rebaselined field []int",
-      "WatchEvent.Removed field []Session",
-      "WatchEvent.Sequence field uint64",
-      "WatchEvent.Sessions field []Session",
-      "WatchEvent.Started field time.Time"
+    "cephfs/session.SessionWatchEvent": [
+      "SessionWatchEvent.Added field []Session",
+      "SessionWatchEvent.After field []RankHolder",
+      "SessionWatchEvent.Before field []RankHolder",
+      "SessionWatchEvent.Changed field []Change",
+      "SessionWatchEvent.Err field error",
+      "SessionWatchEvent.Finished field time.Time",
+      "SessionWatchEvent.Kind field ceph.WatchEventKind",
+      "SessionWatchEvent.MaxMDS field int",
+      "SessionWatchEvent.Rebaselined field []int",
+      "SessionWatchEvent.Removed field []Session",
+      "SessionWatchEvent.Sequence field uint64",
+      "SessionWatchEvent.Sessions field []Session",
+      "SessionWatchEvent.Started field time.Time"
     ]
   }
 }

@@ -141,16 +141,16 @@ func TestCephFSMDSDebugLevel(t *testing.T) {
 // waitMDSRespawned waits until the former standby serves rank 0 with its own
 // GID and the failed MDS is back as an owned standby with a new GID, which it
 // returns.
-func waitMDSRespawned(t *testing.T, ctx context.Context, fs *cephfs.Filesystem, failed, promoted cephfs.MDSStatus) cephfs.MDSStatus {
+func waitMDSRespawned(t *testing.T, ctx context.Context, fs *cephfs.Filesystem, failed, promoted cephfs.MDSDaemonStatus) cephfs.MDSDaemonStatus {
 	t.Helper()
-	var back cephfs.MDSStatus
+	var back cephfs.MDSDaemonStatus
 	seen, err := harness.Observe(ctx, 3*time.Minute, 30*time.Second, time.Second, func(probeCtx context.Context) (*cephfs.FilesystemStatus, bool, error) {
 		status, err := fs.MDSStatus(probeCtx)
 		if err != nil {
 			return status, false, nil
 		}
 		current, ok := activeRank(status, 0)
-		back = cephfs.MDSStatus{}
+		back = cephfs.MDSDaemonStatus{}
 		for _, standby := range status.Standby {
 			if standby.Name == failed.Name && standby.GID != failed.GID && standby.Owned {
 				back = standby

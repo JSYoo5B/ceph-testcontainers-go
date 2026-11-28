@@ -255,7 +255,7 @@ func (p cephFSPausedHolderPhase) run(t *testing.T, workdir, path string, contend
 	// The watch reports the holder's removal from a coherent sample of the
 	// daemon that held it, after the pause; the blocklist, read on its own,
 	// names the removed address.
-	removal := watched.await(t, ctx, time.Minute, func(e cephfssession.WatchEvent) bool { return len(e.Removed) > 0 })
+	removal := watched.await(t, ctx, time.Minute, func(e cephfssession.SessionWatchEvent) bool { return len(e.Removed) > 0 })
 	if err := watched.stop(t); err != nil {
 		t.Fatal("session watch:", err)
 	}

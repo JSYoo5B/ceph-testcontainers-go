@@ -46,13 +46,13 @@ func awaitMDSWatchEvent(t *testing.T, w *cephfs.MDSWatch, last *uint64, gaps *in
 }
 
 // mdsWatchRankHolder returns the active rank 0 of an event.
-func mdsWatchRankHolder(event cephfs.MDSWatchEvent) (cephfs.MDSStatus, bool) {
+func mdsWatchRankHolder(event cephfs.MDSWatchEvent) (cephfs.MDSDaemonStatus, bool) {
 	for _, active := range event.Status.Active {
 		if active.Rank == 0 && active.State == "up:active" {
 			return active, true
 		}
 	}
-	return cephfs.MDSStatus{}, false
+	return cephfs.MDSDaemonStatus{}, false
 }
 
 // testCephFSMDSWatch observes a rank takeover and the restored standby

@@ -36,24 +36,24 @@
       "Filesystem.MetadataPool field string"
     ],
     "cephfs.FilesystemStatus": [
-      "FilesystemStatus.Active field []MDSStatus",
+      "FilesystemStatus.Active field []MDSDaemonStatus",
       "FilesystemStatus.FilesystemID field int64",
       "FilesystemStatus.FilesystemName field string",
       "FilesystemStatus.MaxMDS field int",
-      "FilesystemStatus.Standby field []MDSStatus",
-      "FilesystemStatus.StandbyReplay field []MDSStatus"
+      "FilesystemStatus.Standby field []MDSDaemonStatus",
+      "FilesystemStatus.StandbyReplay field []MDSDaemonStatus"
     ],
     "cephfs.MDS": [
       "MDS embed testcontainers.Container",
       "MDS.FilesystemName field string",
       "MDS.ID field string"
     ],
-    "cephfs.MDSStatus": [
-      "MDSStatus.GID field uint64 `json:\"gid\"`",
-      "MDSStatus.Name field string `json:\"name\"`",
-      "MDSStatus.Owned field bool `json:\"owned\"`",
-      "MDSStatus.Rank field int `json:\"rank\"`",
-      "MDSStatus.State field string `json:\"state\"`"
+    "cephfs.MDSDaemonStatus": [
+      "MDSDaemonStatus.GID field uint64 `json:\"gid\"`",
+      "MDSDaemonStatus.Name field string `json:\"name\"`",
+      "MDSDaemonStatus.Owned field bool `json:\"owned\"`",
+      "MDSDaemonStatus.Rank field int `json:\"rank\"`",
+      "MDSDaemonStatus.State field string `json:\"state\"`"
     ],
     "cephfs.MDSWatchEvent": [
       "MDSWatchEvent.Epoch field uint64",

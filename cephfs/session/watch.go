@@ -41,7 +41,7 @@ type Change struct {
 	PreviousState string
 }
 
-// WatchEvent is one event of a Watcher.
+// SessionWatchEvent is one event of a SessionWatch.
 //
 // Sequence starts at 1 with the baseline and increases by one for each event,
 // and no event is dropped, so consecutive numbers mean the consumer saw every
@@ -77,7 +77,7 @@ type Change struct {
 // takeover for example, are its own reconnected view, not a continuation of
 // the previous daemon's list. The baseline has only Sessions. Each event has
 // its own slices, which the consumer may keep or change.
-type WatchEvent struct {
+type SessionWatchEvent struct {
 	Sequence          uint64
 	Kind              ceph.WatchEventKind
 	Started, Finished time.Time
@@ -90,20 +90,30 @@ type WatchEvent struct {
 	Err               error
 }
 
-// Watcher is a running watch of the client sessions of one filesystem. One
+// SessionWatch is a running watch of the client sessions of one filesystem. One
 // goroutine reads the sessions and sends events; Events closes after that
 // goroutine has stopped using the filesystem. Stop ends the watch and waits
 // for it.
-type Watcher struct {
-	stream *watch.Stream[WatchEvent]
+type SessionWatch struct {
+	stream *watch.Stream[SessionWatchEvent]
 }
+
+// Watcher is the former name of SessionWatch.
+//
+// Deprecated: Use SessionWatch.
+type Watcher = SessionWatch
+
+// WatchEvent is the former name of SessionWatchEvent.
+//
+// Deprecated: Use SessionWatchEvent.
+type WatchEvent = SessionWatchEvent
 
 // Events returns the receive-only event channel. The baseline is already in
 // it when Watch returns. The channel closes when the watch ends; Stop returns
 // why.
 //
 //purpose:observation
-func (w *Watcher) Events() <-chan WatchEvent {
+func (w *SessionWatch) Events() <-chan SessionWatchEvent {
 	if w == nil {
 		return nil
 	}
@@ -122,7 +132,7 @@ func (w *Watcher) Events() <-chan WatchEvent {
 // wait.
 //
 //purpose:observation,lifetime
-func (w *Watcher) Stop() error {
+func (w *SessionWatch) Stop() error {
 	if w == nil || !w.stream.Started() {
 		return servicehook.Invalid(errors.New(watchOperation + ": the watch is not started by Watch"))
 	}
@@ -175,7 +185,7 @@ func (w *Watcher) Stop() error {
 // otherwise changes a session.
 //
 //purpose:observation
-func Watch(ctx context.Context, fs *cephfs.Filesystem, cfg ceph.WatchConfig, clients ...uint64) (*Watcher, error) {
+func Watch(ctx context.Context, fs *cephfs.Filesystem, cfg ceph.WatchConfig, clients ...uint64) (*SessionWatch, error) {
 	if fs == nil {
 		return nil, servicehook.Invalid(errors.New(watchOperation + ": the filesystem is nil"))
 	}
@@ -393,14 +403,14 @@ func equalSamples(a, b sample) bool {
 		slices.EqualFunc(a.sessions, b.sessions, func(x, y Session) bool { return keyOf(x) == keyOf(y) && x.State == y.State })
 }
 
-func startWatch(ctx context.Context, settings watch.Settings, name string, read func(context.Context) (sample, error)) (*Watcher, error) {
-	stream, err := watch.Start(ctx, watch.Spec[sample, WatchEvent]{
+func startWatch(ctx context.Context, settings watch.Settings, name string, read func(context.Context) (sample, error)) (*SessionWatch, error) {
+	stream, err := watch.Start(ctx, watch.Spec[sample, SessionWatchEvent]{
 		Name:     name,
 		Settings: settings,
 		Read:     read,
 		Equal:    equalSamples,
-		Event: func(m watch.Meta, s sample, err error) WatchEvent {
-			e := WatchEvent{Sequence: m.Sequence, Kind: ceph.WatchEventKind(m.Kind), Started: m.Started, Finished: m.Finished,
+		Event: func(m watch.Meta, s sample, err error) SessionWatchEvent {
+			e := SessionWatchEvent{Sequence: m.Sequence, Kind: ceph.WatchEventKind(m.Kind), Started: m.Started, Finished: m.Finished,
 				Before: slices.Clone(s.before), After: slices.Clone(s.after), Err: err}
 			if err == nil {
 				e.MaxMDS = s.maxMDS
@@ -413,5 +423,5 @@ func startWatch(ctx context.Context, settings watch.Settings, name string, read 
 	if err != nil {
 		return nil, err
 	}
-	return &Watcher{stream: stream}, nil
+	return &SessionWatch{stream: stream}, nil
 }

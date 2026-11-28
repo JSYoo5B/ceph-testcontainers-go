@@ -199,8 +199,8 @@ func awaitMDSDone(t *testing.T, w *MDSWatch) {
 }
 
 var (
-	mdsWatchActive0  = MDSStatus{Name: "tenant-0", Rank: 0, GID: 101, State: "up:active", Owned: true}
-	mdsWatchStandby1 = MDSStatus{Name: "tenant-1", Rank: -1, GID: 102, State: "up:standby", Owned: true}
+	mdsWatchActive0  = MDSDaemonStatus{Name: "tenant-0", Rank: 0, GID: 101, State: "up:active", Owned: true}
+	mdsWatchStandby1 = MDSDaemonStatus{Name: "tenant-1", Rank: -1, GID: 102, State: "up:standby", Owned: true}
 )
 
 func TestMDSWatchBaselineIsBufferedBeforeWatchMDSsReturns(t *testing.T) {
@@ -208,7 +208,7 @@ func TestMDSWatchBaselineIsBufferedBeforeWatchMDSsReturns(t *testing.T) {
 	w := startTestMDSWatch(t, t.Context(), watch.Settings{Interval: time.Hour, Timeout: time.Second, Buffer: 1}, source)
 	select {
 	case event := <-w.Events():
-		want := FilesystemStatus{FilesystemName: "tenant", FilesystemID: 41, MaxMDS: 1, Active: []MDSStatus{mdsWatchActive0}, Standby: []MDSStatus{mdsWatchStandby1}}
+		want := FilesystemStatus{FilesystemName: "tenant", FilesystemID: 41, MaxMDS: 1, Active: []MDSDaemonStatus{mdsWatchActive0}, Standby: []MDSDaemonStatus{mdsWatchStandby1}}
 		if event.Sequence != 1 || event.Kind != ceph.WatchBaseline || event.Epoch != 20 || event.MDSMapEpoch != 12 || event.Err != nil || !reflect.DeepEqual(event.Status, want) {
 			t.Fatalf("baseline = %+v", event)
 		}
@@ -268,15 +268,15 @@ func TestMDSWatchReportsTakeoverAndRestoredStandbyInOrder(t *testing.T) {
 		t.Fatalf("events = %+v", events)
 	}
 	// A rank in replay is not active, so MDSStatus lists it in no list.
-	took := MDSStatus{Name: "tenant-1", Rank: 0, GID: 102, State: "up:active", Owned: true}
+	took := MDSDaemonStatus{Name: "tenant-1", Rank: 0, GID: 102, State: "up:active", Owned: true}
 	want := []struct {
-		active  []MDSStatus
-		standby []MDSStatus
+		active  []MDSDaemonStatus
+		standby []MDSDaemonStatus
 	}{
-		{[]MDSStatus{mdsWatchActive0}, []MDSStatus{mdsWatchStandby1}},
+		{[]MDSDaemonStatus{mdsWatchActive0}, []MDSDaemonStatus{mdsWatchStandby1}},
 		{nil, nil},
-		{[]MDSStatus{took}, nil},
-		{[]MDSStatus{took}, []MDSStatus{{Name: "tenant-0", Rank: -1, GID: 201, State: "up:standby", Owned: true}}},
+		{[]MDSDaemonStatus{took}, nil},
+		{[]MDSDaemonStatus{took}, []MDSDaemonStatus{{Name: "tenant-0", Rank: -1, GID: 201, State: "up:standby", Owned: true}}},
 	}
 	for i, event := range events {
 		if event.Sequence != uint64(i+1) || (i > 0 && event.Kind != ceph.WatchChanged) {
@@ -305,7 +305,7 @@ func TestMDSWatchReportsMaxMDSAndUnownedRanks(t *testing.T) {
 		s.info["gid_300"] = fsbase.MDSInfo{Name: "outsider", Rank: 1, GID: 300, State: "up:active", JoinFSCID: 41}
 	})
 	changed := nextMDSEvent(t, w)
-	if len(changed.Status.Active) != 2 || changed.Status.Active[1] != (MDSStatus{Name: "outsider", Rank: 1, GID: 300, State: "up:active"}) {
+	if len(changed.Status.Active) != 2 || changed.Status.Active[1] != (MDSDaemonStatus{Name: "outsider", Rank: 1, GID: 300, State: "up:active"}) {
 		t.Fatalf("unowned rank = %+v", changed.Status)
 	}
 }
@@ -560,7 +560,7 @@ func TestMDSWatchSnapshotsAreIndependent(t *testing.T) {
 	// comparison state nor a later event.
 	baseline.Status.Active[0].GID = 999
 	baseline.Status.Standby[0].State = "edited"
-	baseline.Status.Standby = append(baseline.Status.Standby, MDSStatus{Name: "appended"})
+	baseline.Status.Standby = append(baseline.Status.Standby, MDSDaemonStatus{Name: "appended"})
 	source.awaitReads(t, 3)
 	if n := len(w.Events()); n != 0 {
 		t.Fatalf("a consumer edit produced %d events", n)
@@ -569,7 +569,7 @@ func TestMDSWatchSnapshotsAreIndependent(t *testing.T) {
 	first := nextMDSEvent(t, w)
 	source.failActive("up:active")
 	second := nextMDSEvent(t, w)
-	if first.Status.Active[0] != mdsWatchActive0 || !slices.Equal(first.Status.Standby, []MDSStatus{mdsWatchStandby1}) {
+	if first.Status.Active[0] != mdsWatchActive0 || !slices.Equal(first.Status.Standby, []MDSDaemonStatus{mdsWatchStandby1}) {
 		t.Fatalf("first change = %+v", first.Status)
 	}
 	first.Status.Active[0].Name = "edited"
@@ -719,7 +719,7 @@ func TestMDSWatchHoldsNoLockBetweenReadsOrDuringDelivery(t *testing.T) {
 	if status, err := fs.MDSStatus(t.Context()); err != nil || status.Active[0].GID != 202 {
 		t.Fatalf("consumer query during the watch = %+v, %v", status, err)
 	}
-	if baseline := nextMDSEvent(t, w); baseline.Kind != ceph.WatchBaseline || baseline.Epoch != 5 || baseline.Status.Active[0] != (MDSStatus{Name: "a", Rank: 0, GID: 101, State: "up:active", Owned: true}) {
+	if baseline := nextMDSEvent(t, w); baseline.Kind != ceph.WatchBaseline || baseline.Epoch != 5 || baseline.Status.Active[0] != (MDSDaemonStatus{Name: "a", Rank: 0, GID: 101, State: "up:active", Owned: true}) {
 		t.Fatalf("baseline = %+v", baseline)
 	}
 	if changed := nextMDSEvent(t, w); changed.Kind != ceph.WatchChanged || changed.Epoch != 6 || changed.MDSMapEpoch != 6 || changed.Status.Active[0].GID != 202 {

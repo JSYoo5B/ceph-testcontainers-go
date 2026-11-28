@@ -55,7 +55,8 @@ type Config struct {
 }
 
 // MDS is an owned metadata daemon. ID is its static Ceph daemon name;
-// MDSStatus reports its current rank and GID. Stop/Start can inject failures.
+// Filesystem.MDSStatus reports its current rank and GID in an
+// MDSDaemonStatus. Stop/Start can inject failures.
 // Cluster termination removes stopped and partially initialized daemons too.
 //
 // On a ceph.AddressDualStack cluster every MDS advertises a concrete IPv4 and
@@ -104,10 +105,11 @@ type Filesystem struct {
 	mds mdsState
 }
 
-// MDSStatus records a metadata daemon's current native FSMap identity. GID
-// changes after process restart. Ordinary standbys have rank -1; replay standbys
-// follow the rank they would replace. Owned identifies this fixture's daemons.
-type MDSStatus struct {
+// MDSDaemonStatus records one metadata daemon's current native FSMap
+// identity. GID changes after process restart. Ordinary standbys have rank -1;
+// replay standbys follow the rank they would replace. Owned identifies this
+// fixture's daemons.
+type MDSDaemonStatus struct {
 	Name  string `json:"name"`
 	Rank  int    `json:"rank"`
 	GID   uint64 `json:"gid"`
@@ -115,15 +117,21 @@ type MDSStatus struct {
 	Owned bool   `json:"owned"`
 }
 
+// MDSStatus is the former name of MDSDaemonStatus. Filesystem.MDSStatus,
+// which returns a FilesystemStatus, keeps its name.
+//
+// Deprecated: Use MDSDaemonStatus.
+type MDSStatus = MDSDaemonStatus
+
 // FilesystemStatus contains active ranks and this fixture's ordinary/replay
 // standbys. Standbys belonging to another filesystem are never counted.
 type FilesystemStatus struct {
 	FilesystemName string
 	FilesystemID   int64
 	MaxMDS         int
-	Active         []MDSStatus
-	Standby        []MDSStatus
-	StandbyReplay  []MDSStatus
+	Active         []MDSDaemonStatus
+	Standby        []MDSDaemonStatus
+	StandbyReplay  []MDSDaemonStatus
 }
 
 // startFilesystem creates dedicated pools and ActiveMDS+StandbyMDS daemons
@@ -775,7 +783,7 @@ func (f mdsFleet) publishStartedMDS(ctx context.Context, id string, ctr testcont
 	return daemon
 }
 
-func (f mdsFleet) retireMDS(ctx context.Context, candidate MDSStatus) error {
+func (f mdsFleet) retireMDS(ctx context.Context, candidate MDSDaemonStatus) error {
 	c := f.core.Cluster()
 	var daemon *MDS
 	daemons, err := f.mdsSnapshot(ctx)
@@ -831,7 +839,7 @@ func cephFSMDSSettled(status *FilesystemStatus, active, owned int) bool {
 
 // ownedActiveRanks reports whether active holds ranks 0, 1, ... in order,
 // each by an owned daemon with a GID.
-func ownedActiveRanks(active []MDSStatus) bool {
+func ownedActiveRanks(active []MDSDaemonStatus) bool {
 	for rank, daemon := range active {
 		if daemon.Rank != rank || !daemon.Owned || daemon.GID == 0 {
 			return false
@@ -840,11 +848,11 @@ func ownedActiveRanks(active []MDSStatus) bool {
 	return true
 }
 
-func cephFSMDSRetirementCandidate(status *FilesystemStatus, daemons []*MDS, active int) *MDSStatus {
+func cephFSMDSRetirementCandidate(status *FilesystemStatus, daemons []*MDS, active int) *MDSDaemonStatus {
 	if !cephFSMDSSettled(status, active, len(daemons)) {
 		return nil
 	}
-	for _, candidates := range [][]MDSStatus{status.Standby, status.StandbyReplay} {
+	for _, candidates := range [][]MDSDaemonStatus{status.Standby, status.StandbyReplay} {
 		for i := len(daemons) - 1; i >= 0; i-- {
 			for _, candidate := range candidates {
 				if candidate.Name == daemons[i].ID && candidate.Owned && candidate.GID != 0 {
@@ -1020,8 +1028,8 @@ func cephFSMDSReady(status *FilesystemStatus, config Config) bool {
 }
 
 // mdsStatus is the public status of one decoded FSMap daemon entry.
-func mdsStatus(info fsbase.MDSInfo) MDSStatus {
-	return MDSStatus{Name: info.Name, Rank: info.Rank, GID: info.GID, State: info.State, Owned: info.Owned}
+func mdsStatus(info fsbase.MDSInfo) MDSDaemonStatus {
+	return MDSDaemonStatus{Name: info.Name, Rank: info.Rank, GID: info.GID, State: info.State, Owned: info.Owned}
 }
 
 // errFilesystemAbsent is the decode error of an FSMap that does not hold the
@@ -1080,7 +1088,7 @@ func decodeCephFSMDSTopology(data []byte, name string, daemons []*MDS) (mdsTopol
 				status.Standby = append(status.Standby, mdsStatus(info))
 			}
 		}
-		less := func(a, b MDSStatus) int {
+		less := func(a, b MDSDaemonStatus) int {
 			if a.Rank != b.Rank {
 				return cmp.Compare(a.Rank, b.Rank)
 			}
