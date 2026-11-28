@@ -84,8 +84,8 @@ func probeSettlementState(f *probeSettlementCLI) *state {
 	s.accountMarker = "fixture-owned-account"
 	f.accountName = s.accountMarker
 	f.keys = map[string]string{"mgr/dashboard/crt": string(s.cert), "mgr/dashboard/key": string(s.key), multiclusterOption: fixtureMulticlusterRecord("initial-session")}
-	s.certificate = &configKey{name: "mgr/dashboard/crt", installed: s.cert}
-	s.privateKey = &configKey{name: "mgr/dashboard/key", installed: s.key}
+	s.certificate = &configKey{replacedValue{name: "mgr/dashboard/crt", installed: s.cert}}
+	s.privateKey = &configKey{replacedValue{name: "mgr/dashboard/key", installed: s.key}}
 	s.multicluster = &multiclusterState{}
 	return s
 }

@@ -1,7 +1,6 @@
 package dashboard
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -425,7 +424,10 @@ func (p *pendingMutation) settle(ctx context.Context) error {
 }
 
 // runWithInput runs a ceph CLI command in the control container with input as
-// its standard input, so that secrets stay out of its arguments.
+// its standard input, so that secrets stay out of its arguments. The command
+// runs once: unlike ceph.Container.Ceph, a native command is not run again
+// when no MON answered within --connect-timeout, so it gets twice the 5
+// seconds that the ceph package's own commands allow for each connection.
 func runWithInput(ctx context.Context, c *ceph.Container, label string, input []byte, args ...string) error {
 	result, _, err := runInputCommand(ctx, c, ceph.NativeCommand{
 		Argv: append([]string{"ceph", "--connect-timeout", "10"}, args...), Timeout: time.Minute,
@@ -936,63 +938,43 @@ func (s *state) deleteAccount(ctx context.Context) error {
 	return nil
 }
 
-// configKey is one config-key entry that Start replaced: its prior value and
-// whether it existed, and the value Start installed.
+// configKey is one config-key entry that Start replaced.
 type configKey struct {
-	name     string
-	existed  bool
-	previous []byte
-	// installed is the value Start wrote, nil before it tried.
-	installed []byte
-	write     pendingMutation
+	replacedValue
+}
+
+// configKeyValue reads a config-key entry and whether it exists.
+func configKeyValue(ctx context.Context, c *ceph.Container, name string) ([]byte, bool, error) {
+	value, err := c.Ceph(ctx, "config-key", "get", name)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("read %s: %w", name, err)
+	}
+	return value, true, nil
 }
 
 func readConfigKey(ctx context.Context, c *ceph.Container, name string) (*configKey, error) {
-	value, err := c.Ceph(ctx, "config-key", "get", name)
-	if errors.Is(err, fs.ErrNotExist) {
-		return &configKey{name: name}, nil
-	}
+	value, found, err := configKeyValue(ctx, c, name)
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", name, err)
+		return nil, err
 	}
-	return &configKey{name: name, existed: true, previous: value}, nil
+	return &configKey{replacedValue{name: name, existed: found, previous: value}}, nil
 }
 
 // restore puts the prior entry back, or removes an entry that did not exist
 // before Start, when the stored entry is still the one Start installed.
 func (k *configKey) restore(ctx context.Context, c *ceph.Container) error {
-	if k.installed == nil {
-		return nil
-	}
-	if err := k.write.settle(ctx); err != nil {
-		return err
-	}
-	current, err := c.Ceph(ctx, "config-key", "get", k.name)
-	switch {
-	case errors.Is(err, fs.ErrNotExist):
-		if !k.existed {
-			return nil
-		}
-		return &ceph.OperationError{Kind: ceph.ErrInvalidRequest, Op: "restore " + k.name, Err: errors.New("removed outside the dashboard fixture; refusing restoration")}
-	case err != nil:
-		return fmt.Errorf("read %s: %w", k.name, err)
-	}
-	current = bytes.TrimSpace(current)
-	if k.existed && bytes.Equal(current, bytes.TrimSpace(k.previous)) {
-		return nil
-	}
-	if !bytes.Equal(current, bytes.TrimSpace(k.installed)) {
-		return &ceph.OperationError{Kind: ceph.ErrInvalidRequest, Op: "restore " + k.name, Err: errors.New("changed outside the dashboard fixture; refusing restoration")}
-	}
-	if !k.existed {
-		_, err = c.Ceph(ctx, "config-key", "rm", k.name)
-	} else {
-		err = k.write.track(runWithInput(ctx, c, "restore "+k.name, k.previous, "config-key", "set", k.name, "-i", "-"))
-	}
-	if err != nil {
-		return fmt.Errorf("restore %s: %w", k.name, err)
-	}
-	return nil
+	return k.replacedValue.restore(ctx,
+		func(ctx context.Context) ([]byte, bool, error) { return configKeyValue(ctx, c, k.name) },
+		func(ctx context.Context) error {
+			_, err := c.Ceph(ctx, "config-key", "rm", k.name)
+			return err
+		},
+		func(ctx context.Context, previous []byte) error {
+			return runWithInput(ctx, c, "restore "+k.name, previous, "config-key", "set", k.name, "-i", "-")
+		})
 }
 
 // multiclusterState is the module's multi-cluster record before Start. The

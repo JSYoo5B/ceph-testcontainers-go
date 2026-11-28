@@ -227,7 +227,7 @@ func TestRestorePartialCertificateInstall(t *testing.T) {
 func TestRestoreCertificateRetriesLostReplyAndPreservesOutsideValue(t *testing.T) {
 	f := &restoreCLI{keys: map[string]string{"mgr/dashboard/crt": "outside-cert"}, loseRemoveReply: true}
 	s := dashboardRestoreState(f)
-	s.certificate = &configKey{name: "mgr/dashboard/crt", installed: s.cert}
+	s.certificate = &configKey{replacedValue{name: "mgr/dashboard/crt", installed: s.cert}}
 	if err := s.restore(t.Context()); !errors.Is(err, ceph.ErrInvalidRequest) || f.keys["mgr/dashboard/crt"] != "outside-cert" {
 		t.Fatalf("foreign certificate after restore: %v, %v", f.keys, err)
 	}
@@ -362,7 +362,7 @@ func TestRestoreSettlesLateTLSRollback(t *testing.T) {
 	f := &lateWriteCLI{restoreCLI: &restoreCLI{keys: map[string]string{key: "installed"}}, stopFailures: 2}
 	s := dashboardRestoreState(f.restoreCLI)
 	s.cluster = testhelper.TestCluster(f, testhelper.TestConfig{StartupTimeout: time.Second})
-	s.certificate = &configKey{name: key, existed: true, previous: []byte("original"), installed: []byte("installed")}
+	s.certificate = &configKey{replacedValue{name: key, existed: true, previous: []byte("original"), installed: []byte("installed")}}
 
 	var pending *ceph.NativeCommandUnstoppedError
 	if err := s.restore(t.Context()); !errors.As(err, &pending) || f.delayed == nil || f.keys[key] != "installed" || s.registry.active != s {
@@ -389,7 +389,7 @@ func TestRestoreSettlesLateGatewayKeyWrites(t *testing.T) {
 				f := &lateWriteCLI{restoreCLI: &restoreCLI{keys: map[string]string{}}, stopFailures: 2}
 				s := dashboardRestoreState(f.restoreCLI)
 				s.cluster = testhelper.TestCluster(f, testhelper.TestConfig{StartupTimeout: time.Second})
-				key := &rgwKeyOption{option: option, command: strings.ToLower(strings.ReplaceAll(option, "_", "-"))}
+				key := newRGWKeyOption(option, strings.ToLower(strings.ReplaceAll(option, "_", "-")))
 				s.link = &GatewayLink{&linkState{dashboard: s, keys: []*rgwKeyOption{key}}}
 				var err error
 				var wantAfterWrite string
@@ -398,9 +398,9 @@ func TestRestoreSettlesLateGatewayKeyWrites(t *testing.T) {
 					wantAfterWrite = "fixture-value"
 					err = key.install(t.Context(), s.cluster, wantAfterWrite)
 				case "rollback":
-					key.existed, key.previous, key.installed = true, "prior-value", "fixture-value"
-					f.keys[key.name()] = key.installed
-					wantAfterWrite = key.previous
+					key.existed, key.previous, key.installed = true, []byte("prior-value"), []byte("fixture-value")
+					f.keys[key.name] = string(key.installed)
+					wantAfterWrite = string(key.previous)
 					err = s.restore(t.Context())
 				}
 				var pending *ceph.NativeCommandUnstoppedError
@@ -418,14 +418,65 @@ func TestRestoreSettlesLateGatewayKeyWrites(t *testing.T) {
 					// The old (absent) value was visible throughout the failed Restore.
 					f.delayed()
 				}
-				if f.keys[key.name()] != wantAfterWrite {
+				if f.keys[key.name] != wantAfterWrite {
 					t.Fatal("late command did not write the requested value")
 				}
 				if err := s.restore(t.Context()); err != nil || s.registry.active != nil || s.link != nil || f.delayed != nil {
 					t.Fatalf("Restore did not settle the pending link: %v", err)
 				}
-				if actual, found := f.keys[key.name()]; found != key.existed || actual != key.previous {
+				if actual, found := f.keys[key.name]; found != key.existed || actual != string(key.previous) {
 					t.Fatal("settled link did not restore the original gateway API key option")
+				}
+			})
+		}
+	}
+}
+
+// TestRestoreJudgesWhitespaceTheSameForEveryStore shows that a dashboard
+// config-key entry and a gateway API key option judge a stored value that
+// differs only in surrounding whitespace alike: it is still the installed (or
+// the prior) value, while any other change is refused and left as it is.
+func TestRestoreJudgesWhitespaceTheSameForEveryStore(t *testing.T) {
+	stores := []struct {
+		name    string
+		key     string
+		restore func(*state, replacedValue) error
+	}{
+		{"config-key", "mgr/dashboard/crt", func(s *state, v replacedValue) error {
+			return (&configKey{v}).restore(t.Context(), s.cluster)
+		}},
+		{"gateway option", "mgr/dashboard/RGW_API_ACCESS_KEY", func(s *state, v replacedValue) error {
+			key := newRGWKeyOption("RGW_API_ACCESS_KEY", "rgw-api-access-key")
+			key.replacedValue = v
+			return key.restore(t.Context(), s.cluster)
+		}},
+	}
+	for _, store := range stores {
+		for _, test := range []struct {
+			name             string
+			existed          bool
+			stored           string
+			refused, removed bool
+		}{
+			{name: "installed with a trailing newline", stored: "installed\n", removed: true},
+			{name: "installed with surrounding spaces", stored: " installed ", removed: true},
+			{name: "prior value with a trailing newline", existed: true, stored: "prior\n"},
+			{name: "changed", stored: "installed-2", refused: true},
+		} {
+			t.Run(store.name+"/"+test.name, func(t *testing.T) {
+				f := &restoreCLI{keys: map[string]string{store.key: test.stored}}
+				s := dashboardRestoreState(f)
+				v := replacedValue{name: store.key, existed: test.existed, installed: []byte("installed")}
+				if test.existed {
+					v.previous = []byte("prior")
+				}
+				err := store.restore(s, v)
+				if refused := errors.Is(err, ceph.ErrInvalidRequest); refused != test.refused || (!test.refused && err != nil) {
+					t.Fatalf("restore: %v, want refused=%t", err, test.refused)
+				}
+				stored, found := f.keys[store.key]
+				if found == test.removed || (found && stored != test.stored) {
+					t.Fatalf("stored %q found=%t, want removed=%t", stored, found, test.removed)
 				}
 			})
 		}
