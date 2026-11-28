@@ -1103,6 +1103,9 @@ func ApplyNetworkProfile(ctx context.Context, c *ceph.Container, target testcont
 }
 
 func temporaryNetworkDelay(ctx context.Context, c *ceph.Container, target testcontainers.Container, delay NetworkProfile, backend netemBackend) (*NetworkProfileLease, error) {
+	if err := requireCluster(c, "a network profile"); err != nil {
+		return nil, err
+	}
 	if backend == nil {
 		backend = dockerNetemBackend{label: faulthook.OwnedLabel(c)}
 	}
@@ -1925,10 +1928,14 @@ func removeNetemHelper(ctx context.Context, backend netemBackend, helper testcon
 // exactly the lease's filters, with the requested address and port keys,
 // are present and nothing else is under the root; Filters holds tc's filter
 // dump with each u32 filter's keys under matches. The counters are the
-// child's, so they count only selected packets.
+// child's, so they count only selected packets. A nil lease is refused with
+// an error matching ceph.ErrInvalidRequest.
 //
 //purpose:observation
 func (l *NetworkProfileLease) Status(ctx context.Context) (NetworkProfileStatus, error) {
+	if l == nil {
+		return NetworkProfileStatus{}, unavailable("network profile")
+	}
 	if err := lockMutex(ctx, &l.mu); err != nil {
 		return NetworkProfileStatus{}, err
 	}
@@ -2126,7 +2133,7 @@ func (l *NetworkProfileLease) ownedPrefix(status NetworkProfileStatus) error {
 // each owned peer lease. A delay whose interface is gone needs no removal. A
 // root qdisc that someone replaced, or a filter or qdisc that someone added
 // under the lease's root, is refused, not removed, and the lease stays
-// retryable.
+// retryable. A nil lease has nothing to restore.
 //
 //purpose:condition,lifetime
 func (l *NetworkProfileLease) Restore(ctx context.Context) error {
@@ -2300,14 +2307,14 @@ func (dockerNetemBackend) cancel(ctx context.Context, helper testcontainers.Cont
 //
 //purpose:condition
 func ApplyZoneProfile(ctx context.Context, c *ceph.Container, zone string, delay NetworkProfile) (*NetworkProfileLease, error) {
+	if err := requireCluster(c, "a zone profile"); err != nil {
+		return nil, err
+	}
 	if err := validateNetworkDelay(delay); err != nil {
 		return nil, err
 	}
 	if delay.Direction != Outbound {
 		return nil, nshelper.InvalidRequest("a zone profile shapes the zone's egress: Direction must be Outbound, apply a profile to the other zone for its direction")
-	}
-	if c == nil {
-		return nil, nshelper.InvalidRequest("a zone profile requires a cluster")
 	}
 	router, name, err := faulthook.ZoneRouter(ctx, c, zone, delay.Plane)
 	if err != nil {

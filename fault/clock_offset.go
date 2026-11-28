@@ -135,6 +135,9 @@ func ApplyClockOffset(ctx context.Context, c *ceph.Container, ctr testcontainers
 }
 
 func applyClockOffsetInCluster(ctx context.Context, c *ceph.Container, ctr testcontainers.Container, offset time.Duration, engine clockEngine) (lease *ClockOffsetLease, err error) {
+	if err := requireCluster(c, "a clock offset"); err != nil {
+		return nil, err
+	}
 	text, whole := clockOffsetText(int64(offset))
 	switch {
 	case offset == 0 || !whole:
@@ -271,7 +274,7 @@ func (lease *ClockOffsetLease) isComplete(ctx context.Context) (bool, error) {
 //purpose:observation
 func (lease *ClockOffsetLease) Status(ctx context.Context) (ClockOffsetStatus, error) {
 	if lease == nil {
-		return ClockOffsetStatus{}, errors.New("clock offset is unavailable")
+		return ClockOffsetStatus{}, unavailable("clock offset")
 	}
 	if err := lockMutex(ctx, &lease.mu); err != nil {
 		return ClockOffsetStatus{}, err
@@ -328,12 +331,13 @@ func clockStatusState(state clockStepState) ClockOffsetState {
 // nothing. A stopped container gets the +0 file back, which its daemon reads
 // when it starts. A restarted daemon is a new process: Restore then requires
 // the +0 file and a measurement of the new process at the reference. A paused
-// container is refused and stays retryable.
+// container is refused and stays retryable. A nil lease has nothing to
+// restore.
 //
 //purpose:condition,lifetime
 func (lease *ClockOffsetLease) Restore(ctx context.Context) error {
 	if lease == nil {
-		return errors.New("clock offset is unavailable")
+		return nil
 	}
 	if err := lockMutex(ctx, &lease.mu); err != nil {
 		return err
