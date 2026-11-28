@@ -781,7 +781,7 @@ func presentsCertificate(ctx context.Context, target, want string) error {
 // error. The module's own records, such as its access database and
 // session-token signing key, stay. Restore is idempotent.
 //
-//purpose:construction,handoff,lifetime
+//purpose:lifetime
 func (d *Dashboard) Restore(ctx context.Context) error {
 	if d == nil || d.state == nil {
 		return errors.New("dashboard is unavailable")

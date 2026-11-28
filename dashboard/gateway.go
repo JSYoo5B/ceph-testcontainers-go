@@ -385,7 +385,7 @@ func backendError(result probeResult) error {
 // it is; the user is still removed. Remove is idempotent, including through a
 // copy of the link. Dashboard.Restore also removes the active link.
 //
-//purpose:construction,condition,lifetime
+//purpose:condition,lifetime
 func (l *GatewayLink) Remove(ctx context.Context) error {
 	if l == nil || l.linkState == nil {
 		return errors.New("dashboard gateway link is unavailable")
