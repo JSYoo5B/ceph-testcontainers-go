@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/faulthook"
@@ -53,32 +54,66 @@ type backend interface {
 	// copy returns the content of the regular file at path.
 	copy(ctx context.Context, id, path string) (io.ReadCloser, error)
 	remove(ctx context.Context, id string) error
+	// close releases what the operations hold open. A later operation
+	// opens it again.
+	close() error
 }
 
 func classifyDocker(ctx context.Context, err error) error { return faulthook.ClassifyDocker(ctx, err) }
 
-type dockerBackend struct{}
+// dockerBackend runs the Docker operations of one capture session through
+// one Docker client, which the first operation opens and close releases.
+// The capture's ready and stop waits poll the helper every pollInterval, so
+// the client lives as long as the session, not as one call.
+type dockerBackend struct {
+	mu     sync.Mutex
+	client *testcontainers.DockerClient
+}
 
-// newDockerClient opens the Docker client of every backend operation; tests
-// replace it with a client of a fake Engine API.
+// newDockerClient opens the Docker client of a backend; tests replace it with
+// a client of a fake Engine API.
 //
 //testdouble:wired-operation
 var newDockerClient = func(ctx context.Context) (*testcontainers.DockerClient, error) {
 	return testcontainers.NewDockerClientWithOpts(ctx)
 }
 
-func withDocker[T any](ctx context.Context, do func(*testcontainers.DockerClient) (T, error)) (T, error) {
-	docker, err := newDockerClient(ctx)
+// docker returns the session's client, opening it on first use.
+func (b *dockerBackend) docker(ctx context.Context) (*testcontainers.DockerClient, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.client == nil {
+		client, err := newDockerClient(ctx)
+		if err != nil {
+			return nil, err
+		}
+		b.client = client
+	}
+	return b.client, nil
+}
+
+func (b *dockerBackend) close() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.client == nil {
+		return nil
+	}
+	err := b.client.Close()
+	b.client = nil
+	return err
+}
+
+func withDocker[T any](ctx context.Context, b *dockerBackend, do func(*testcontainers.DockerClient) (T, error)) (T, error) {
+	docker, err := b.docker(ctx)
 	if err != nil {
 		var zero T
 		return zero, err
 	}
-	result, err := do(docker)
-	return result, errors.Join(err, docker.Close())
+	return do(docker)
 }
 
-func (dockerBackend) target(ctx context.Context, id, network string) (nshelper.Target, error) {
-	return withDocker(ctx, func(docker *testcontainers.DockerClient) (nshelper.Target, error) {
+func (b *dockerBackend) target(ctx context.Context, id, network string) (nshelper.Target, error) {
+	return withDocker(ctx, b, func(docker *testcontainers.DockerClient) (nshelper.Target, error) {
 		return nshelper.Inspect(ctx, docker, id, network)
 	})
 }
@@ -93,7 +128,7 @@ func helperOptions(networkMode string, argv []string) []testcontainers.Container
 	}, nshelper.Confine(container.NetworkMode(networkMode), "NET_RAW", "capture-helper")...)
 }
 
-func (dockerBackend) run(ctx context.Context, image, networkMode string, argv []string) (string, error) {
+func (b *dockerBackend) run(ctx context.Context, image, networkMode string, argv []string) (string, error) {
 	helper, err := testcontainers.Run(ctx, image, helperOptions(networkMode, argv)...)
 	if helper == nil {
 		return "", err
@@ -101,7 +136,7 @@ func (dockerBackend) run(ctx context.Context, image, networkMode string, argv []
 	return helper.GetContainerID(), err
 }
 
-func (b dockerBackend) probe(ctx context.Context, image, networkMode string, argv []string) (probeResult, string, error) {
+func (b *dockerBackend) probe(ctx context.Context, image, networkMode string, argv []string) (probeResult, string, error) {
 	id, err := b.run(ctx, image, networkMode, argv)
 	if err != nil {
 		return probeResult{}, id, err
@@ -121,7 +156,7 @@ func (b dockerBackend) probe(ctx context.Context, image, networkMode string, arg
 				if err != nil {
 					return result, err
 				}
-				result.imageID, err = withDocker(probeCtx, func(docker *testcontainers.DockerClient) (string, error) {
+				result.imageID, err = withDocker(probeCtx, b, func(docker *testcontainers.DockerClient) (string, error) {
 					inspection, err := docker.ContainerInspect(probeCtx, id, mobycl.ContainerInspectOptions{})
 					return inspection.Container.Image, err
 				})
@@ -137,8 +172,8 @@ func (b dockerBackend) probe(ctx context.Context, image, networkMode string, arg
 	return result, id, err
 }
 
-func (dockerBackend) platform(ctx context.Context, imageID string) (string, error) {
-	return withDocker(ctx, func(docker *testcontainers.DockerClient) (string, error) {
+func (b *dockerBackend) platform(ctx context.Context, imageID string) (string, error) {
+	return withDocker(ctx, b, func(docker *testcontainers.DockerClient) (string, error) {
 		inspection, err := docker.ImageInspect(ctx, imageID)
 		if err != nil {
 			return "", err
@@ -151,8 +186,8 @@ func (dockerBackend) platform(ctx context.Context, imageID string) (string, erro
 	})
 }
 
-func (dockerBackend) state(ctx context.Context, id string) (helperState, error) {
-	return withDocker(ctx, func(docker *testcontainers.DockerClient) (helperState, error) {
+func (b *dockerBackend) state(ctx context.Context, id string) (helperState, error) {
+	return withDocker(ctx, b, func(docker *testcontainers.DockerClient) (helperState, error) {
 		inspection, err := docker.ContainerInspect(ctx, id, mobycl.ContainerInspectOptions{})
 		if err != nil {
 			return helperState{}, err
@@ -182,9 +217,9 @@ func (b *cappedBuffer) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func (dockerBackend) logs(ctx context.Context, id string, limit int) ([]byte, []byte, error) {
+func (b *dockerBackend) logs(ctx context.Context, id string, limit int) ([]byte, []byte, error) {
 	type output struct{ stdout, stderr []byte }
-	result, err := withDocker(ctx, func(docker *testcontainers.DockerClient) (output, error) {
+	result, err := withDocker(ctx, b, func(docker *testcontainers.DockerClient) (output, error) {
 		stream, err := docker.ContainerLogs(ctx, id, mobycl.ContainerLogsOptions{ShowStdout: true, ShowStderr: true})
 		if err != nil {
 			return output{}, err
@@ -196,8 +231,8 @@ func (dockerBackend) logs(ctx context.Context, id string, limit int) ([]byte, []
 	return result.stdout, result.stderr, err
 }
 
-func (dockerBackend) exists(ctx context.Context, id, path string) (bool, error) {
-	return withDocker(ctx, func(docker *testcontainers.DockerClient) (bool, error) {
+func (b *dockerBackend) exists(ctx context.Context, id, path string) (bool, error) {
+	return withDocker(ctx, b, func(docker *testcontainers.DockerClient) (bool, error) {
 		stat, err := docker.ContainerStatPath(ctx, id, mobycl.ContainerStatPathOptions{Path: path})
 		if err != nil {
 			if errdefs.IsNotFound(err) {
@@ -209,8 +244,8 @@ func (dockerBackend) exists(ctx context.Context, id, path string) (bool, error) 
 	})
 }
 
-func (dockerBackend) signal(ctx context.Context, id, signal string) error {
-	_, err := withDocker(ctx, func(docker *testcontainers.DockerClient) (struct{}, error) {
+func (b *dockerBackend) signal(ctx context.Context, id, signal string) error {
+	_, err := withDocker(ctx, b, func(docker *testcontainers.DockerClient) (struct{}, error) {
 		_, err := docker.ContainerKill(ctx, id, mobycl.ContainerKillOptions{Signal: signal})
 		return struct{}{}, err
 	})
@@ -235,14 +270,14 @@ func (f tarFile) Close() error {
 // independently of Docker transport errors returned by copy.
 var errCaptureNotRegular = errors.New("the capture file is not a regular file")
 
-func (dockerBackend) copy(ctx context.Context, id, path string) (io.ReadCloser, error) {
-	docker, err := newDockerClient(ctx)
+func (b *dockerBackend) copy(ctx context.Context, id, path string) (io.ReadCloser, error) {
+	docker, err := b.docker(ctx)
 	if err != nil {
 		return nil, err
 	}
 	result, err := docker.CopyFromContainer(ctx, id, mobycl.CopyFromContainerOptions{SourcePath: path})
 	if err != nil {
-		return nil, errors.Join(err, docker.Close())
+		return nil, err
 	}
 	archive := tar.NewReader(result.Content)
 	header, err := archive.Next()
@@ -250,13 +285,13 @@ func (dockerBackend) copy(ctx context.Context, id, path string) (io.ReadCloser, 
 		err = errCaptureNotRegular
 	}
 	if err != nil {
-		return nil, errors.Join(err, result.Content.Close(), docker.Close())
+		return nil, errors.Join(err, result.Content.Close())
 	}
-	return tarFile{Reader: archive, closers: []io.Closer{result.Content, docker}}, nil
+	return tarFile{Reader: archive, closers: []io.Closer{result.Content}}, nil
 }
 
-func (dockerBackend) remove(ctx context.Context, id string) error {
-	_, err := withDocker(ctx, func(docker *testcontainers.DockerClient) (struct{}, error) {
+func (b *dockerBackend) remove(ctx context.Context, id string) error {
+	_, err := withDocker(ctx, b, func(docker *testcontainers.DockerClient) (struct{}, error) {
 		_, err := docker.ContainerRemove(ctx, id, mobycl.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
 		return struct{}{}, err
 	})

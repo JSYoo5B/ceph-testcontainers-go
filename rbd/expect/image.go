@@ -3,6 +3,7 @@ package expect
 import (
 	"fmt"
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/expectfmt"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
 	"strings"
 )
@@ -91,9 +92,9 @@ type MirrorImageMismatch struct {
 // String names the reason and the evaluated values.
 func (m MirrorImageMismatch) String() string {
 	if m.Reason == MirrorImageMismatchInstance {
-		return fmt.Sprintf("instance: want other than %s, observed %s", m.Want, quoteEmpty(m.Observed))
+		return fmt.Sprintf("instance: want other than %s, observed %s", m.Want, expectfmt.QuoteEmpty(m.Observed))
 	}
-	return fmt.Sprintf("%s: want %s, observed %s", m.Reason, quoteEmpty(m.Want), quoteEmpty(m.Observed))
+	return fmt.Sprintf("%s: want %s, observed %s", m.Reason, expectfmt.QuoteEmpty(m.Want), expectfmt.QuoteEmpty(m.Observed))
 }
 
 // MirrorImageEvaluation is the result of evaluating one observation.
@@ -120,20 +121,7 @@ func (e MirrorImageEvaluation) String() string {
 		fmt.Fprintf(&b, " new instance")
 	}
 	b.WriteString(": ")
-	if e.Matched {
-		b.WriteString("match")
-		return b.String()
-	}
-	for i, m := range e.Mismatches {
-		if i == evaluationShown {
-			fmt.Fprintf(&b, "; %d more", len(e.Mismatches)-i)
-			break
-		}
-		if i > 0 {
-			b.WriteString("; ")
-		}
-		b.WriteString(m.String())
-	}
+	expectfmt.WriteMismatches(&b, e.Matched, e.Mismatches)
 	return b.String()
 }
 
@@ -216,7 +204,7 @@ func (e MirrorImage) mismatches(observed mirror.ImageStatus) []MirrorImageMismat
 		result = append(result, MirrorImageMismatch{Reason: MirrorImageMismatchState, Want: "up+replaying", Observed: observed.State})
 	}
 	if observed.SourceMirrorState != "enabled" || observed.DestinationMirrorState != "enabled" {
-		result = append(result, MirrorImageMismatch{Reason: MirrorImageMismatchMirrorState, Want: "enabled/enabled", Observed: quoteEmpty(observed.SourceMirrorState) + "/" + quoteEmpty(observed.DestinationMirrorState)})
+		result = append(result, MirrorImageMismatch{Reason: MirrorImageMismatchMirrorState, Want: "enabled/enabled", Observed: expectfmt.QuoteEmpty(observed.SourceMirrorState) + "/" + expectfmt.QuoteEmpty(observed.DestinationMirrorState)})
 	}
 	if !observed.SourcePrimary || observed.DestinationPrimary {
 		result = append(result, MirrorImageMismatch{Reason: MirrorImageMismatchPrimary, Want: "primary/non-primary", Observed: primaryText(observed.SourcePrimary) + "/" + primaryText(observed.DestinationPrimary)})

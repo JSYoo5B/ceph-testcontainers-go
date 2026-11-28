@@ -90,6 +90,7 @@ type fakeBackend struct {
 	copyErr         error
 	copyReader      io.ReadCloser // explicit stream failure supplied by retrieval tests
 	removeErrs      []error
+	closes          int
 	running         bool
 	exitCode        int
 	signals         []string
@@ -210,6 +211,14 @@ func (f *fakeBackend) copy(context.Context, string, string) (io.ReadCloser, erro
 		return f.copyReader, nil
 	}
 	return io.NopCloser(bytes.NewReader(f.file)), nil
+}
+
+// close counts the releases of the session's Docker client.
+func (f *fakeBackend) close() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.closes++
+	return nil
 }
 
 func (f *fakeBackend) remove(_ context.Context, id string) error {
@@ -972,5 +981,36 @@ func TestStopPreservesDownloadErrorAtFileLimit(t *testing.T) {
 	if !errors.Is(err, failure) || errors.Is(err, ErrFailed) || report.Retrieved || report.File.Complete ||
 		report.File.Status != "" || report.RetrievedBytes != req.maxBytes() || !report.HelperRemoved {
 		t.Fatalf("report = %+v, error = %v", report, err)
+	}
+}
+
+// TestSessionReleasesItsBackendAtStopOrFailedStart shows that a session
+// keeps its backend open from Start to Stop and that a failed Start releases
+// it.
+func TestSessionReleasesItsBackendAtStopOrFailedStart(t *testing.T) {
+	f := newFakeBackend()
+	session, err := startFake(t, f, request(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.closes != 0 {
+		t.Fatalf("a started session released its backend %d times", f.closes)
+	}
+	if _, err := session.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if f.closes != 1 {
+		t.Fatalf("Stop released the backend %d times, want once", f.closes)
+	}
+
+	f = newFakeBackend()
+	f.noFile = true
+	req := request(t)
+	req.ReadyTimeout = 50 * time.Millisecond
+	if session, err := startFake(t, f, req); session != nil || !errors.Is(err, ErrFailed) {
+		t.Fatalf("failed start: %v %v", session, err)
+	}
+	if f.closes != 1 {
+		t.Fatalf("a failed Start released the backend %d times, want once", f.closes)
 	}
 }

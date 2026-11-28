@@ -3,6 +3,7 @@ package expect
 import (
 	"fmt"
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/expectfmt"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
 	"maps"
 	"slices"
@@ -112,7 +113,7 @@ func (m ReceiverMismatch) String() string {
 		if subject == "" {
 			subject = "cohort"
 		}
-		return fmt.Sprintf("%s %s: want %s, observed %s", subject, m.Reason, m.Want, quoteEmpty(m.Observed))
+		return fmt.Sprintf("%s %s: want %s, observed %s", subject, m.Reason, m.Want, expectfmt.QuoteEmpty(m.Observed))
 	case ReceiverMismatchInstance:
 		return fmt.Sprintf("%s instance: want other than %s, observed %s", m.Daemon, m.Want, m.Observed)
 	case ReceiverMismatchProblem:
@@ -140,9 +141,6 @@ type ReceiversEvaluation struct {
 	Matched     bool
 }
 
-// evaluationShown bounds the mismatches that an evaluation's String lists.
-const evaluationShown = 8
-
 // String summarizes the expectation and at most eight mismatches.
 func (e ReceiversEvaluation) String() string {
 	var b strings.Builder
@@ -169,20 +167,7 @@ func (e ReceiversEvaluation) String() string {
 		b.WriteString(" exact")
 	}
 	fmt.Fprintf(&b, " in cohort [%s]: ", strings.Join(e.Observed.ExpectedDaemons, " "))
-	if e.Matched {
-		b.WriteString("match")
-		return b.String()
-	}
-	for i, m := range e.Mismatches {
-		if i == evaluationShown {
-			fmt.Fprintf(&b, "; %d more", len(e.Mismatches)-i)
-			break
-		}
-		if i > 0 {
-			b.WriteString("; ")
-		}
-		b.WriteString(m.String())
-	}
+	expectfmt.WriteMismatches(&b, e.Matched, e.Mismatches)
 	return b.String()
 }
 
@@ -340,7 +325,7 @@ func (s ReceiverDaemon) mismatches(observed mirror.ReceiverStatus) []ReceiverMis
 	var result []ReceiverMismatch
 	if daemon.PoolState != "running" || !daemon.NamespaceDiscovered || daemon.InstanceID == "" {
 		result = append(result, ReceiverMismatch{Reason: ReceiverMismatchDiscovered, Daemon: s.Name, Want: "pool running, namespace discovered",
-			Observed: fmt.Sprintf("pool %s, namespace discovered=%t, instance %s", quoteEmpty(daemon.PoolState), daemon.NamespaceDiscovered, quoteEmpty(daemon.InstanceID))})
+			Observed: fmt.Sprintf("pool %s, namespace discovered=%t, instance %s", expectfmt.QuoteEmpty(daemon.PoolState), daemon.NamespaceDiscovered, expectfmt.QuoteEmpty(daemon.InstanceID))})
 	}
 	if s.NewInstance && daemon.InstanceID == s.Baseline.InstanceID {
 		result = append(result, ReceiverMismatch{Reason: ReceiverMismatchInstance, Daemon: s.Name, Want: s.Baseline.InstanceID, Observed: daemon.InstanceID})
@@ -353,13 +338,6 @@ func runningText(running bool) string {
 		return "running"
 	}
 	return "stopped"
-}
-
-func quoteEmpty(s string) string {
-	if s == "" {
-		return `""`
-	}
-	return s
 }
 
 func cloneReceiverStatus(s mirror.ReceiverStatus) mirror.ReceiverStatus {

@@ -131,30 +131,20 @@ func (d *Dashboard) AddGateway(ctx context.Context, gateway *rgw.Gateway) (*Gate
 	if err != nil {
 		return link, fmt.Errorf("%s: %w", op, err)
 	}
-	for _, key := range []*rgwKeyOption{{option: "RGW_API_ACCESS_KEY", command: "rgw-api-access-key"}, {option: "RGW_API_SECRET_KEY", command: "rgw-api-secret-key"}} {
-		value := access
-		if key.option == "RGW_API_SECRET_KEY" {
-			value = secret
-		}
+	for _, k := range []struct{ option, command, value string }{
+		{"RGW_API_ACCESS_KEY", "rgw-api-access-key", access},
+		{"RGW_API_SECRET_KEY", "rgw-api-secret-key", secret},
+	} {
+		key := newRGWKeyOption(k.option, k.command)
 		link.keys = append(link.keys, key)
-		if err := key.install(ctx, s.cluster, value); err != nil {
+		if err := key.install(ctx, s.cluster, k.value); err != nil {
 			return link, fmt.Errorf("%s: %w", op, err)
 		}
 	}
-	var last error
-	for {
-		if last = link.check(ctx); last == nil {
-			return link, nil
-		}
-		if err := s.ready(); err != nil {
-			return link, errors.Join(last, err)
-		}
-		select {
-		case <-ctx.Done():
-			return link, fmt.Errorf("%s: %w", op, errors.Join(ctx.Err(), last))
-		case <-time.After(2 * time.Second):
-		}
+	if err := retry(ctx, 2*time.Second, func() (bool, error) { return s.stopUnlessReady(link.check(ctx)) }); err != nil {
+		return link, fmt.Errorf("%s: %w", op, err)
 	}
+	return link, nil
 }
 
 // checkGateway requires an owned gateway of c that is the only RGW daemon in
@@ -395,7 +385,7 @@ func backendError(result probeResult) error {
 // it is; the user is still removed. Remove is idempotent, including through a
 // copy of the link. Dashboard.Restore also removes the active link.
 //
-//purpose:construction,condition,lifetime
+//purpose:condition,lifetime
 func (l *GatewayLink) Remove(ctx context.Context) error {
 	if l == nil || l.linkState == nil {
 		return errors.New("dashboard gateway link is unavailable")
@@ -451,52 +441,42 @@ func (l *GatewayLink) remove(ctx context.Context) error {
 // options are manager options in the central configuration, written through
 // the module's own commands with the value on standard input.
 type rgwKeyOption struct {
-	option, command string
-	existed         bool
-	previous        string
-	installed       string
-	write           pendingMutation
+	command string
+	replacedValue
 }
 
-func (k *rgwKeyOption) name() string { return "mgr/dashboard/" + k.option }
+func newRGWKeyOption(option, command string) *rgwKeyOption {
+	return &rgwKeyOption{command: command, replacedValue: replacedValue{name: "mgr/dashboard/" + option}}
+}
+
+// value reads the stored option and whether it is set.
+func (k *rgwKeyOption) value(ctx context.Context, c *ceph.Container) ([]byte, bool, error) {
+	value, found, err := managerOption(ctx, c, k.name)
+	if !found || err != nil {
+		return nil, false, err
+	}
+	return []byte(value), true, nil
+}
 
 func (k *rgwKeyOption) install(ctx context.Context, c *ceph.Container, value string) error {
-	previous, found, err := managerOption(ctx, c, k.name())
+	previous, found, err := k.value(ctx, c)
 	if err != nil {
 		return err
 	}
-	k.existed, k.previous, k.installed = found, previous, value
-	return k.write.track(runWithInput(ctx, c, "set dashboard "+k.command, []byte(value), "dashboard", "set-"+k.command, "-i", "-"))
+	k.existed, k.previous, k.installed = found, previous, []byte(value)
+	return k.write.track(runWithInput(ctx, c, "set dashboard "+k.command, k.installed, "dashboard", "set-"+k.command, "-i", "-"))
 }
 
 // restore puts the prior value back, or resets an option that was not set
-// before, when the stored value is still the installed one. An install that
-// never applied leaves nothing to restore.
+// before, when the stored value is still the installed one.
 func (k *rgwKeyOption) restore(ctx context.Context, c *ceph.Container) error {
-	if k.installed == "" {
-		return nil
-	}
-	if err := k.write.settle(ctx); err != nil {
-		return err
-	}
-	current, found, err := managerOption(ctx, c, k.name())
-	if err != nil {
-		return err
-	}
-	if found == k.existed && current == k.previous {
-		// The install never applied, or the prior value is back.
-		return nil
-	}
-	if !found || current != k.installed {
-		return &ceph.OperationError{Kind: ceph.ErrInvalidRequest, Op: "restore " + k.name(), Err: errors.New("changed outside the dashboard fixture; refusing restoration")}
-	}
-	if !k.existed {
-		_, err = c.Ceph(ctx, "dashboard", "reset-"+k.command)
-	} else {
-		err = k.write.track(runWithInput(ctx, c, "restore dashboard "+k.command, []byte(k.previous), "dashboard", "set-"+k.command, "-i", "-"))
-	}
-	if err != nil {
-		return fmt.Errorf("restore %s: %w", k.name(), err)
-	}
-	return nil
+	return k.replacedValue.restore(ctx,
+		func(ctx context.Context) ([]byte, bool, error) { return k.value(ctx, c) },
+		func(ctx context.Context) error {
+			_, err := c.Ceph(ctx, "dashboard", "reset-"+k.command)
+			return err
+		},
+		func(ctx context.Context, previous []byte) error {
+			return runWithInput(ctx, c, "restore dashboard "+k.command, previous, "dashboard", "set-"+k.command, "-i", "-")
+		})
 }

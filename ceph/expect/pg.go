@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/expectfmt"
 )
 
 // PGs states the placement groups a test expects in one ceph.Pool.PGs
@@ -144,9 +145,6 @@ type PGEvaluation struct {
 	Matched     bool
 }
 
-// pgEvaluationShown bounds the mismatches that String lists.
-const pgEvaluationShown = 8
-
 // String summarizes the expectation and at most eight mismatches.
 func (e PGEvaluation) String() string {
 	x := e.Expectation
@@ -197,20 +195,7 @@ func (e PGEvaluation) String() string {
 		}
 	}
 	fmt.Fprintf(&b, " in %d observed: ", len(e.Observed.PGs))
-	if e.Matched {
-		b.WriteString("match")
-		return b.String()
-	}
-	for i, m := range e.Mismatches {
-		if i == pgEvaluationShown {
-			fmt.Fprintf(&b, "; %d more", len(e.Mismatches)-i)
-			break
-		}
-		if i > 0 {
-			b.WriteString("; ")
-		}
-		b.WriteString(m.String())
-	}
+	expectfmt.WriteMismatches(&b, e.Matched, e.Mismatches)
 	return b.String()
 }
 
@@ -341,7 +326,7 @@ func (e PGs) validate() error {
 		return invalid("pins a negative pool ID")
 	}
 	if e.FSID != "" {
-		if !validFSID(e.FSID) {
+		if _, ok := nativeUUID(e.FSID); !ok {
 			return invalid("pins an invalid FSID")
 		}
 	}
