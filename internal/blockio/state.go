@@ -3,16 +3,15 @@ package blockio
 import (
 	"encoding/json"
 	"fmt"
-	"slices"
 	"strings"
 )
 
-// View is one reply of blockControlScript.
+// View is one reply of Script: the fields of observe, of step and settled,
+// and of loopid.
 type View struct {
-	Action  string `json:"action"`
-	Name    string `json:"name"`
-	Created bool   `json:"created"`
-	Error   string `json:"error"`
+	Action string `json:"action"`
+	Name   string `json:"name"`
+	Error  string `json:"error"`
 	// observe
 	Exists   bool    `json:"exists"`
 	State    string  `json:"state"`
@@ -24,25 +23,24 @@ type View struct {
 	Live     *string `json:"live"`
 	Inactive *string `json:"inactive"`
 	InFlight []int64 `json:"in_flight"`
-	// step, settled, written
-	Op   string `json:"op"`
-	ID   string `json:"id"`
-	Done bool   `json:"done"`
-	RC   int    `json:"rc"`
-	// write, read
-	SHA256  string `json:"sha256"`
+	// step, settled
+	Op      string `json:"op"`
+	ID      string `json:"id"`
+	Done    bool   `json:"done"`
+	RC      int    `json:"rc"`
 	Started bool   `json:"started"`
-	// loop, loopid, unloop
-	Loop        string   `json:"loop"`
-	File        string   `json:"file"`
-	Inode       uint64   `json:"inode"`
-	Detached    bool     `json:"detached"`
-	FileRemoved bool     `json:"file_removed"`
-	Holders     []string `json:"holders"`
-	// Lazy is a detach the kernel accepted for a busy loop and has not done.
-	Lazy bool `json:"lazy"`
+	// loopid
+	File    string   `json:"file"`
+	Inode   uint64   `json:"inode"`
+	Holders []string `json:"holders"`
 }
 
+// Parse decodes the reply of Script's action and refuses one that is for
+// another action or lacks a field the action always reports: an observe
+// reply without its tables or two in-flight counters, an absence that a
+// failed listing leaves unproven, a step or settled reply without its
+// status, or a readable loopid reply without its identity. It refuses an
+// action that Script does not dispatch.
 func Parse(raw []byte, action string) (View, error) {
 	var r View
 	if err := json.Unmarshal(raw, &r); err != nil {
@@ -69,10 +67,6 @@ func Parse(raw []byte, action string) (View, error) {
 		} else if r.Error != "" {
 			return r, fmt.Errorf("control observe did not establish absence: %s", r.Error)
 		}
-	case "create":
-		required = append(required, "created", "error")
-	case "creation":
-		required = append(required, "done")
 	case "step", "settled":
 		required = append(required, "id", "done")
 		if action == "step" {
@@ -83,30 +77,10 @@ func Parse(raw []byte, action string) (View, error) {
 		} else if action == "settled" {
 			required = append(required, "started")
 		}
-	case "loop":
-		required = append(required, "loop", "file", "inode", "error")
-		if r.Loop != "" {
-			required = append(required, "major", "minor")
-		}
 	case "loopid":
 		if r.Error == "" {
 			required = append(required, "file", "inode", "holders")
 		}
-	case "unloop":
-		required = append(required, "holders", "detached", "error")
-	case "rmfile":
-		required = append(required, "file_removed")
-	case "write":
-		required = append(required, "sha256", "started")
-	case "written":
-		required = append(required, "done")
-		if r.Done {
-			required = append(required, "rc", "error")
-		}
-	case "read":
-		required = append(required, "rc", "sha256")
-	case "hold":
-		required = append(required, "started")
 	default:
 		return r, fmt.Errorf("unknown control reply action %q", action)
 	}
@@ -185,9 +159,6 @@ const (
 	Suspended       = "suspended"        // recorded table live, nothing inactive, suspended
 	SuspendedLoaded = "suspended-loaded" // recorded table live, wanted table inactive, suspended
 	SwappedOnHold   = "swapped-on-hold"  // wanted table live, suspended
-	// LoadRefused is what apply returns when the kernel refused the wanted
-	// table; the node keeps the recorded one.
-	LoadRefused = "load-refused"
 )
 
 // Normalize makes table strings comparable: dmsetup prints a trailing space
@@ -255,13 +226,6 @@ func Forward(state string) string {
 		return "resume"
 	}
 	return ""
-}
-
-// Refuses reports the states in which the control does nothing at all to
-// the node: it is not the owned node, or another actor or an unsettled step
-// holds it.
-func Refuses(state string) bool {
-	return slices.Contains([]string{Gone, IdentityChanged, Foreign, StepUnsettled}, state)
 }
 
 // Release verdicts of an owned node.

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/blockio"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -22,9 +23,9 @@ const (
 	ctlError  = "0 131072 error"
 )
 
-func ctlView(state string, live string, inactive *string) dmControlReply {
+func ctlView(state string, live string, inactive *string) dmView {
 	l := live
-	return dmControlReply{Action: "observe", Exists: true, UUID: "TC-CTL-x", Major: 253, Minor: 4, State: state, Live: &l, Inactive: inactive, InFlight: []int64{0, 0}}
+	return dmView{Action: "observe", Exists: true, UUID: "TC-CTL-x", Major: 253, Minor: 4, State: state, Live: &l, Inactive: inactive, InFlight: []int64{0, 0}}
 }
 
 func strp(s string) *string { return &s }
@@ -38,14 +39,14 @@ func TestClassifyDMExplainsOnlyWhatTheRecordExplains(t *testing.T) {
 	for name, test := range map[string]struct {
 		rec  dmRecord
 		want string
-		view dmControlReply
+		view dmView
 		is   string
 	}{
-		"gone":                       {owned, ctlError, dmControlReply{Action: "observe"}, dmGone},
-		"another UUID":               {owned, ctlError, func() dmControlReply { v := ctlView("ACTIVE", ctlLinear, nil); v.UUID = "TC-OTHER"; return v }(), dmIdentityChanged},
-		"another minor":              {owned, ctlError, func() dmControlReply { v := ctlView("ACTIVE", ctlLinear, nil); v.Minor = 5; return v }(), dmIdentityChanged},
+		"gone":                       {owned, ctlError, dmView{Action: "observe"}, dmGone},
+		"another UUID":               {owned, ctlError, func() dmView { v := ctlView("ACTIVE", ctlLinear, nil); v.UUID = "TC-OTHER"; return v }(), dmIdentityChanged},
+		"another minor":              {owned, ctlError, func() dmView { v := ctlView("ACTIVE", ctlLinear, nil); v.Minor = 5; return v }(), dmIdentityChanged},
 		"unsettled step first":       {unsettled, ctlError, ctlView("SUSPENDED", ctlLinear, strp(ctlError)), dmStepUnsettled},
-		"identity before unsettled":  {unsettled, ctlError, func() dmControlReply { v := ctlView("ACTIVE", ctlLinear, nil); v.UUID = "TC-OTHER"; return v }(), dmIdentityChanged},
+		"identity before unsettled":  {unsettled, ctlError, func() dmView { v := ctlView("ACTIVE", ctlLinear, nil); v.UUID = "TC-OTHER"; return v }(), dmIdentityChanged},
 		"unchanged":                  {owned, ctlError, ctlView("ACTIVE", ctlLinear, nil), dmUnchanged},
 		"trailing space":             {owned, ctlError, ctlView("ACTIVE", ctlError+" ", nil), dmApplied},
 		"loaded":                     {loaded, ctlError, ctlView("ACTIVE", ctlLinear, strp(ctlError+" ")), dmLoaded},
@@ -58,7 +59,7 @@ func TestClassifyDMExplainsOnlyWhatTheRecordExplains(t *testing.T) {
 		"replaced ours, suspended":   {loaded, "0 65536 linear 7:3 0", ctlView("SUSPENDED", ctlLinear, strp("0 65536 linear 7:3 0")), dmForeign},
 		"another live table":         {owned, ctlError, ctlView("ACTIVE", "0 65536 linear 7:3 0", nil), dmForeign},
 		"unknown state":              {owned, ctlError, ctlView("", ctlLinear, nil), dmForeign},
-		"no live table":              {owned, ctlError, func() dmControlReply { v := ctlView("ACTIVE", "", nil); v.Live = nil; return v }(), dmForeign},
+		"no live table":              {owned, ctlError, func() dmView { v := ctlView("ACTIVE", "", nil); v.Live = nil; return v }(), dmForeign},
 	} {
 		if got := classifyDM(test.rec, test.want, test.view); got != test.is {
 			t.Errorf("%s: %s, want %s", name, got, test.is)
@@ -83,11 +84,11 @@ func TestDMRecordKeepsAStepUntilItsStatusSaysSo(t *testing.T) {
 	// The load finishes after its wait: the retained table is the load.
 	late := owned
 	late.Begin("load", ctlError, "load-1")
-	late.Settle(dmControlReply{Done: false})
+	late.Settle(dmView{Done: false})
 	if late.Unsettled != "load" || late.UnsettledTable != ctlError || late.UnsettledID != "load-1" {
 		t.Fatalf("a load still running was not kept: %+v", late)
 	}
-	late.Settle(dmControlReply{Done: true})
+	late.Settle(dmView{Done: true})
 	if late.Unsettled != "" || late.Loaded != ctlError {
 		t.Fatalf("a late load was not recorded as the control's: %+v", late)
 	}
@@ -97,14 +98,14 @@ func TestDMRecordKeepsAStepUntilItsStatusSaysSo(t *testing.T) {
 
 	refused := owned
 	refused.Begin("load", ctlError, "load-1")
-	refused.Settle(dmControlReply{Done: true, RC: 1})
+	refused.Settle(dmView{Done: true, RC: 1})
 	if refused.Unsettled != "" || refused.Loaded != "" {
 		t.Errorf("a refused load: %+v", refused)
 	}
 
 	swapped := late
 	swapped.Begin("resume", "", "resume-1")
-	swapped.Settle(dmControlReply{Done: true})
+	swapped.Settle(dmView{Done: true})
 	if swapped.Live != ctlError || swapped.Loaded != "" {
 		t.Errorf("a resume of the loaded table: %+v", swapped)
 	}
@@ -133,18 +134,18 @@ func TestJudgeDMReleaseNeedsTheRecordedIdleNode(t *testing.T) {
 	loaded.Loaded = ctlError
 	for name, test := range map[string]struct {
 		rec  dmRecord
-		view dmControlReply
+		view dmView
 	}{
-		"opener":        {owned, func() dmControlReply { v := ctlView("ACTIVE", ctlLinear, nil); v.Open = 1; return v }()},
-		"write":         {owned, func() dmControlReply { v := ctlView("ACTIVE", ctlLinear, nil); v.InFlight = []int64{0, 1}; return v }()},
-		"read":          {owned, func() dmControlReply { v := ctlView("ACTIVE", ctlLinear, nil); v.InFlight = []int64{1, 0}; return v }()},
-		"no counters":   {owned, func() dmControlReply { v := ctlView("ACTIVE", ctlLinear, nil); v.InFlight = nil; return v }()},
+		"opener":        {owned, func() dmView { v := ctlView("ACTIVE", ctlLinear, nil); v.Open = 1; return v }()},
+		"write":         {owned, func() dmView { v := ctlView("ACTIVE", ctlLinear, nil); v.InFlight = []int64{0, 1}; return v }()},
+		"read":          {owned, func() dmView { v := ctlView("ACTIVE", ctlLinear, nil); v.InFlight = []int64{1, 0}; return v }()},
+		"no counters":   {owned, func() dmView { v := ctlView("ACTIVE", ctlLinear, nil); v.InFlight = nil; return v }()},
 		"suspended":     {owned, ctlView("SUSPENDED", ctlLinear, nil)},
 		"loaded":        {loaded, ctlView("ACTIVE", ctlLinear, strp(ctlError))},
 		"unsettled":     {unsettled, ctlView("ACTIVE", ctlLinear, nil)},
 		"fault live":    {owned, ctlView("ACTIVE", ctlError, nil)},
-		"reused name":   {owned, func() dmControlReply { v := ctlView("ACTIVE", ctlLinear, nil); v.UUID = "TC-OTHER"; return v }()},
-		"already gone":  {owned, dmControlReply{Action: "observe"}},
+		"reused name":   {owned, func() dmView { v := ctlView("ACTIVE", ctlLinear, nil); v.UUID = "TC-OTHER"; return v }()},
+		"already gone":  {owned, dmView{Action: "observe"}},
 		"foreign table": {owned, ctlView("ACTIVE", "0 65536 linear 7:3 0", nil)},
 	} {
 		if verdict, why := judgeDMRelease(test.rec, test.view); verdict != dmReleaseHeld {
@@ -155,18 +156,18 @@ func TestJudgeDMReleaseNeedsTheRecordedIdleNode(t *testing.T) {
 
 func TestJudgeLoopReleaseNeedsTheAttachedUnusedFile(t *testing.T) {
 	own := loopIdentity{Loop: "/dev/loop3", File: "/tc-blk/a", Inode: 41, Dev: "7:3"}
-	if ok, why := judgeLoopRelease(own, dmControlReply{File: "/tc-blk/a", Inode: 41}, nil); !ok {
+	if ok, why := judgeLoopRelease(own, dmView{File: "/tc-blk/a", Inode: 41}, nil); !ok {
 		t.Fatalf("the attached loop was held: %s", why)
 	}
 	for name, test := range map[string]struct {
-		seen dmControlReply
+		seen dmView
 		kept []string
 	}{
-		"another file":        {dmControlReply{File: "/tc-blk/n", Inode: 42}, nil},
-		"same path, new file": {dmControlReply{File: "/tc-blk/a", Inode: 43}, nil},
-		"detached":            {dmControlReply{Error: "No such file or directory"}, nil},
-		"kept mapping above":  {dmControlReply{File: "/tc-blk/a", Inode: 41}, []string{"tcctl-pl"}},
-		"held by a mapping":   {dmControlReply{File: "/tc-blk/a", Inode: 41, Holders: []string{"dm-0"}}, nil},
+		"another file":        {dmView{File: "/tc-blk/n", Inode: 42}, nil},
+		"same path, new file": {dmView{File: "/tc-blk/a", Inode: 43}, nil},
+		"detached":            {dmView{Error: "No such file or directory"}, nil},
+		"kept mapping above":  {dmView{File: "/tc-blk/a", Inode: 41}, []string{"tcctl-pl"}},
+		"held by a mapping":   {dmView{File: "/tc-blk/a", Inode: 41, Holders: []string{"dm-0"}}, nil},
 	} {
 		if ok, _ := judgeLoopRelease(own, test.seen, test.kept); ok {
 			t.Errorf("%s: released", name)
@@ -174,13 +175,15 @@ func TestJudgeLoopReleaseNeedsTheAttachedUnusedFile(t *testing.T) {
 	}
 }
 
-func TestBlockControlScriptCompiles(t *testing.T) {
+func TestBlockControlScriptsCompile(t *testing.T) {
 	python, err := exec.LookPath("python3")
 	if err != nil {
-		t.Skip("Python 3 is required to compile the keeper script")
+		t.Skip("Python 3 is required to compile the keeper scripts")
 	}
-	if out, err := exec.Command(python, "-I", "-c", "import sys; compile(sys.argv[1], 'control', 'exec')", blockControlScript).CombinedOutput(); err != nil {
-		t.Fatalf("%v: %s", err, out)
+	for name, script := range map[string]string{"control": blockio.Script, "test actions": blockTestScript} {
+		if out, err := exec.Command(python, "-I", "-c", "import sys; compile(sys.argv[1], 'control', 'exec')", script).CombinedOutput(); err != nil {
+			t.Fatalf("%s: %v: %s", name, err, out)
+		}
 	}
 }
 

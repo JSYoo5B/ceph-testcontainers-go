@@ -279,7 +279,7 @@ func TestBlockDeviceControlSupervision(t *testing.T) {
 			t.Fatalf("hold %s open: %+v", loop.Loop, r)
 		}
 		seen := f.keeper.do(t, ctx, "loopid", "-", loop.Loop)
-		if ok, why := judgeLoopRelease(loop, seen, nil); !ok {
+		if ok, why := judgeLoopRelease(loop, seen.dmView, nil); !ok {
 			t.Fatalf("an open loop without holders: %s", why)
 		}
 		r := f.keeper.do(t, ctx, "unloop", "-", loop.Loop, loop.File, strconv.FormatUint(loop.Inode, 10))
@@ -403,7 +403,7 @@ func waitWritten(t *testing.T, ctx context.Context, c *dmControl, bound time.Dur
 }
 
 // waitInFlight waits until the node has a write in flight.
-func waitInFlight(t *testing.T, ctx context.Context, c *dmControl, bound time.Duration) dmControlReply {
+func waitInFlight(t *testing.T, ctx context.Context, c *dmControl, bound time.Duration) dmView {
 	t.Helper()
 	for deadline := time.Now().Add(bound); ; time.Sleep(200 * time.Millisecond) {
 		v := c.observe(t, ctx)
