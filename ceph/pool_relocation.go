@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 )
@@ -81,31 +80,17 @@ func poolPlacementRuleName(pool string, placement PoolConfig) string {
 }
 
 func (pc poolCatalog) placementRule(ctx context.Context, pool string, desired PoolConfig) (string, bool, error) {
-	data, err := pc.conn.ceph(ctx, "osd", "crush", "rule", "dump", "--format", "json")
+	rules, err := pc.crushRules(ctx)
 	if err != nil {
 		return "", false, err
 	}
-	var rules []struct {
-		ID   *int   `json:"rule_id"`
-		Name string `json:"rule_name"`
-	}
-	if err := json.Unmarshal(data, &rules); err != nil || rules == nil {
-		return "", false, errors.New("decode native CRUSH rules")
-	}
-	ids := make(map[string]int, len(rules))
-	for _, rule := range rules {
-		if rule.ID == nil || rule.Name == "" {
-			return "", false, errors.New("incomplete native CRUSH rule")
-		}
-		ids[rule.Name] = *rule.ID
-	}
 	hashed := poolPlacementRuleName(pool, desired)
 	for _, name := range []string{"tc-" + pool + "-replicated", hashed} {
-		id, exists := ids[name]
+		rule, exists := crushRuleByName(rules, name)
 		if !exists {
 			continue
 		}
-		current, err := pc.rulePlacement(ctx, id)
+		current, err := rule.placement()
 		if err == nil && samePoolPlacement(current, desired) {
 			return name, true, nil
 		}

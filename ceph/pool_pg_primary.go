@@ -701,7 +701,11 @@ func decodePGPrimaryMap(data []byte) (pgPrimaryMap, string, error) {
 		if _, dup := result.pools[*pool.Name]; dup {
 			return pgPrimaryMap{}, "", failure
 		}
-		result.pools[*pool.Name] = pgPrimaryPool{id: *pool.ID, name: *pool.Name, pgNum: int(*pool.PGNum), replicated: *pool.Type == 1}
+		kind, err := poolKind(int(*pool.Type))
+		if err != nil {
+			return pgPrimaryMap{}, "", failure
+		}
+		result.pools[*pool.Name] = pgPrimaryPool{id: *pool.ID, name: *pool.Name, pgNum: int(*pool.PGNum), replicated: kind == "replicated"}
 	}
 	for _, osd := range *native.OSDs {
 		if osd.ID == nil || *osd.ID < 0 || osd.UUID == nil || osd.Up == nil {

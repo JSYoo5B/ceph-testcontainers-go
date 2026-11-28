@@ -13,7 +13,7 @@ import (
 func policyFixture(size, minSize, kind string) *poolFixtureContainer {
 	return &poolFixtureContainer{Output: map[string]string{
 		"osd pool ls detail --format json":  `[{"pool_id":7,"pool_name":"fixture","type":` + kind + `,"size":` + size + `,"min_size":` + minSize + `,"pg_num":8,"crush_rule":3,"quota_max_bytes":100,"quota_max_objects":4}]`,
-		"osd crush rule dump --format json": `[{"rule_id":3,"steps":[{"op":"take","item_name":"default"},{"op":"chooseleaf_firstn","type":"osd","num":0},{"op":"emit"}]}]`,
+		"osd crush rule dump --format json": `[{"rule_id":3,"rule_name":"tc-fixture-replicated","steps":[{"op":"take","item_name":"default"},{"op":"chooseleaf_firstn","type":"osd","num":0},{"op":"emit"}]}]`,
 		"osd crush dump --format json":      `{"devices":[{"id":0,"class":"ssd"},{"id":1,"class":"ssd"},{"id":2,"class":"ssd"}],"buckets":[{"id":-1,"name":"default","type_name":"root","items":[{"id":0,"weight":1},{"id":1,"weight":1},{"id":2,"weight":1}]}]}`,
 	}}
 }
