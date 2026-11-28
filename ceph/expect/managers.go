@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/expectfmt"
 )
 
 // Managers states the MGRMap ownership a test expects in one
@@ -130,9 +131,6 @@ type ManagerEvaluation struct {
 	Matched     bool
 }
 
-// managerEvaluationShown bounds the mismatches that String lists.
-const managerEvaluationShown = 8
-
 // String summarizes the expectation, the observed MGRMap and at most eight
 // mismatches.
 func (e ManagerEvaluation) String() string {
@@ -158,20 +156,7 @@ func (e ManagerEvaluation) String() string {
 		standbys[i] = standby.Name
 	}
 	fmt.Fprintf(&b, " in available=%t active %s gid %d standbys [%s]: ", e.Observed.Available, managerName(e.Observed.ActiveName), e.Observed.ActiveGID, strings.Join(standbys, " "))
-	if e.Matched {
-		b.WriteString("match")
-		return b.String()
-	}
-	for i, m := range e.Mismatches {
-		if i == managerEvaluationShown {
-			fmt.Fprintf(&b, "; %d more", len(e.Mismatches)-i)
-			break
-		}
-		if i > 0 {
-			b.WriteString("; ")
-		}
-		b.WriteString(m.String())
-	}
+	expectfmt.WriteMismatches(&b, e.Matched, e.Mismatches)
 	return b.String()
 }
 

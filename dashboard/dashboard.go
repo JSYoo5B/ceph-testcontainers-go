@@ -1,7 +1,6 @@
 package dashboard
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -356,17 +355,10 @@ func (s *state) hostListeners(ctx context.Context, observer *ceph.Observer, addr
 // waitCommands waits until the loaded module accepts its commands; a module
 // that is enabled but still loading refuses them with ENOTSUP.
 func waitCommands(ctx context.Context, c *ceph.Container) error {
-	var last error
-	for {
-		if _, last = c.Ceph(ctx, "dashboard", "get-jwt-token-ttl"); last == nil {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return errors.Join(ctx.Err(), last)
-		case <-time.After(time.Second):
-		}
-	}
+	return retry(ctx, time.Second, func() (bool, error) {
+		_, err := c.Ceph(ctx, "dashboard", "get-jwt-token-ttl")
+		return false, err
+	})
 }
 
 // inputCommand runs a native Ceph command with a secret on standard input.
@@ -432,7 +424,10 @@ func (p *pendingMutation) settle(ctx context.Context) error {
 }
 
 // runWithInput runs a ceph CLI command in the control container with input as
-// its standard input, so that secrets stay out of its arguments.
+// its standard input, so that secrets stay out of its arguments. The command
+// runs once: unlike ceph.Container.Ceph, a native command is not run again
+// when no MON answered within --connect-timeout, so it gets twice the 5
+// seconds that the ceph package's own commands allow for each connection.
 func runWithInput(ctx context.Context, c *ceph.Container, label string, input []byte, args ...string) error {
 	result, _, err := runInputCommand(ctx, c, ceph.NativeCommand{
 		Argv: append([]string{"ceph", "--connect-timeout", "10"}, args...), Timeout: time.Minute,
@@ -514,25 +509,31 @@ func (s *state) endpoint(ctx context.Context, report *probeReport, paths ...stri
 	if err != nil {
 		return "", err
 	}
-	var last error
-	for {
+	var url string
+	err = retry(ctx, 2*time.Second, func() (bool, error) {
 		listener, current, err := s.probeActive(ctx, observer, paths...)
 		if err == nil {
 			if report != nil {
 				*report = current
 			}
-			return listener.url, nil
+			url = listener.url
+			return false, nil
 		}
-		last = err
-		if readyErr := s.ready(); readyErr != nil {
-			return "", errors.Join(err, readyErr)
-		}
-		select {
-		case <-ctx.Done():
-			return "", errors.Join(ctx.Err(), last)
-		case <-time.After(2 * time.Second):
-		}
+		return s.stopUnlessReady(err)
+	})
+	if err != nil {
+		return "", err
 	}
+	return url, nil
+}
+
+// stopUnlessReady keeps a failed readiness attempt retryable while the
+// dashboard is still usable, and stops with both errors once it is not.
+func (s *state) stopUnlessReady(err error) (bool, error) {
+	if readyErr := s.ready(); readyErr != nil {
+		return true, errors.Join(err, readyErr)
+	}
+	return false, err
 }
 
 // activeListener is the listener that passed a readiness check: the URL the
@@ -634,22 +635,16 @@ func (d *Dashboard) HostEndpoint(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	var last error
-	for {
-		target, err := d.probeHost(ctx, observer, facts.UsesHostNetwork)
+	var target string
+	err = retry(ctx, 2*time.Second, func() (bool, error) {
+		var err error
+		target, err = d.probeHost(ctx, observer, facts.UsesHostNetwork)
 		if err == nil || errors.Is(err, ceph.ErrInvalidRequest) {
-			return target, err
+			return true, err
 		}
-		last = err
-		if readyErr := d.ready(); readyErr != nil {
-			return "", errors.Join(err, readyErr)
-		}
-		select {
-		case <-ctx.Done():
-			return "", errors.Join(ctx.Err(), last)
-		case <-time.After(2 * time.Second):
-		}
-	}
+		return d.stopUnlessReady(err)
+	})
+	return target, err
 }
 
 // probeHost runs the readiness check, translates the advertised URL to the
@@ -786,7 +781,7 @@ func presentsCertificate(ctx context.Context, target, want string) error {
 // error. The module's own records, such as its access database and
 // session-token signing key, stay. Restore is idempotent.
 //
-//purpose:construction,handoff,lifetime
+//purpose:lifetime
 func (d *Dashboard) Restore(ctx context.Context) error {
 	if d == nil || d.state == nil {
 		return errors.New("dashboard is unavailable")
@@ -868,17 +863,10 @@ func (s *state) restore(ctx context.Context) error {
 // no manager is available, so a failure other than a refusal is retried
 // until ctx ends; the handle reconciles an earlier uncertain restoration.
 func restoreModule(ctx context.Context, module *override.MGRModuleHandle) error {
-	for {
+	return retry(ctx, 2*time.Second, func() (bool, error) {
 		err := module.Restore(ctx)
-		if err == nil || errors.Is(err, ceph.ErrInvalidRequest) {
-			return err
-		}
-		select {
-		case <-ctx.Done():
-			return errors.Join(ctx.Err(), err)
-		case <-time.After(2 * time.Second):
-		}
-	}
+		return errors.Is(err, ceph.ErrInvalidRequest), err
+	})
 }
 
 // waitServiceWithdrawn waits, when the restored module is disabled, until
@@ -890,34 +878,29 @@ func waitServiceWithdrawn(ctx context.Context, c *ceph.Container) error {
 	if err != nil {
 		return err
 	}
-	var last error
-	for {
+	return retry(ctx, 2*time.Second, func() (bool, error) {
 		modules, err := observer.MGRModules(ctx)
-		if err == nil {
-			enabled := false
-			for _, module := range modules {
-				if module.Name == "dashboard" {
-					enabled = module.Enabled
-				}
-			}
-			if enabled {
-				return nil
-			}
-			var services map[string]string
-			if services, err = observer.ManagerServices(ctx); err == nil {
-				if _, found := services["dashboard"]; !found {
-					return nil
-				}
-				err = errors.New("the MGR map still advertises the dashboard service")
+		if err != nil {
+			return false, err
+		}
+		enabled := false
+		for _, module := range modules {
+			if module.Name == "dashboard" {
+				enabled = module.Enabled
 			}
 		}
-		last = err
-		select {
-		case <-ctx.Done():
-			return errors.Join(ctx.Err(), last)
-		case <-time.After(2 * time.Second):
+		if enabled {
+			return false, nil
 		}
-	}
+		services, err := observer.ManagerServices(ctx)
+		if err != nil {
+			return false, err
+		}
+		if _, found := services["dashboard"]; found {
+			return false, errors.New("the MGR map still advertises the dashboard service")
+		}
+		return false, nil
+	})
 }
 
 // checkAccount verifies the creation marker in the native account. The
@@ -955,63 +938,43 @@ func (s *state) deleteAccount(ctx context.Context) error {
 	return nil
 }
 
-// configKey is one config-key entry that Start replaced: its prior value and
-// whether it existed, and the value Start installed.
+// configKey is one config-key entry that Start replaced.
 type configKey struct {
-	name     string
-	existed  bool
-	previous []byte
-	// installed is the value Start wrote, nil before it tried.
-	installed []byte
-	write     pendingMutation
+	replacedValue
+}
+
+// configKeyValue reads a config-key entry and whether it exists.
+func configKeyValue(ctx context.Context, c *ceph.Container, name string) ([]byte, bool, error) {
+	value, err := c.Ceph(ctx, "config-key", "get", name)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("read %s: %w", name, err)
+	}
+	return value, true, nil
 }
 
 func readConfigKey(ctx context.Context, c *ceph.Container, name string) (*configKey, error) {
-	value, err := c.Ceph(ctx, "config-key", "get", name)
-	if errors.Is(err, fs.ErrNotExist) {
-		return &configKey{name: name}, nil
-	}
+	value, found, err := configKeyValue(ctx, c, name)
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", name, err)
+		return nil, err
 	}
-	return &configKey{name: name, existed: true, previous: value}, nil
+	return &configKey{replacedValue{name: name, existed: found, previous: value}}, nil
 }
 
 // restore puts the prior entry back, or removes an entry that did not exist
 // before Start, when the stored entry is still the one Start installed.
 func (k *configKey) restore(ctx context.Context, c *ceph.Container) error {
-	if k.installed == nil {
-		return nil
-	}
-	if err := k.write.settle(ctx); err != nil {
-		return err
-	}
-	current, err := c.Ceph(ctx, "config-key", "get", k.name)
-	switch {
-	case errors.Is(err, fs.ErrNotExist):
-		if !k.existed {
-			return nil
-		}
-		return &ceph.OperationError{Kind: ceph.ErrInvalidRequest, Op: "restore " + k.name, Err: errors.New("removed outside the dashboard fixture; refusing restoration")}
-	case err != nil:
-		return fmt.Errorf("read %s: %w", k.name, err)
-	}
-	current = bytes.TrimSpace(current)
-	if k.existed && bytes.Equal(current, bytes.TrimSpace(k.previous)) {
-		return nil
-	}
-	if !bytes.Equal(current, bytes.TrimSpace(k.installed)) {
-		return &ceph.OperationError{Kind: ceph.ErrInvalidRequest, Op: "restore " + k.name, Err: errors.New("changed outside the dashboard fixture; refusing restoration")}
-	}
-	if !k.existed {
-		_, err = c.Ceph(ctx, "config-key", "rm", k.name)
-	} else {
-		err = k.write.track(runWithInput(ctx, c, "restore "+k.name, k.previous, "config-key", "set", k.name, "-i", "-"))
-	}
-	if err != nil {
-		return fmt.Errorf("restore %s: %w", k.name, err)
-	}
-	return nil
+	return k.replacedValue.restore(ctx,
+		func(ctx context.Context) ([]byte, bool, error) { return configKeyValue(ctx, c, k.name) },
+		func(ctx context.Context) error {
+			_, err := c.Ceph(ctx, "config-key", "rm", k.name)
+			return err
+		},
+		func(ctx context.Context, previous []byte) error {
+			return runWithInput(ctx, c, "restore "+k.name, previous, "config-key", "set", k.name, "-i", "-")
+		})
 }
 
 // multiclusterState is the module's multi-cluster record before Start. The

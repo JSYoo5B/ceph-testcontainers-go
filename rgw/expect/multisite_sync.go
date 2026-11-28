@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/expectfmt"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
 )
 
@@ -84,7 +85,7 @@ type MultisiteDataSyncMismatch struct {
 
 // String names the reason and the evaluated values.
 func (m MultisiteDataSyncMismatch) String() string {
-	return fmt.Sprintf("%s: want %s, observed %s", m.Reason, quoteEmpty(m.Want), quoteEmpty(m.Observed))
+	return fmt.Sprintf("%s: want %s, observed %s", m.Reason, expectfmt.QuoteEmpty(m.Want), expectfmt.QuoteEmpty(m.Observed))
 }
 
 // MultisiteDataSyncEvaluation is the result of evaluating one observation.
@@ -111,20 +112,7 @@ func (e MultisiteDataSyncEvaluation) String() string {
 		fmt.Fprintf(&b, " (observed %d shards: %d incremental, %d full, %d behind, %d recovering)", s.Shards, s.IncrementalShards, s.FullShards, s.BehindShards, s.RecoveringShards)
 	}
 	b.WriteString(": ")
-	if e.Matched {
-		b.WriteString("match")
-		return b.String()
-	}
-	for i, m := range e.Mismatches {
-		if i == evaluationShown {
-			fmt.Fprintf(&b, "; %d more", len(e.Mismatches)-i)
-			break
-		}
-		if i > 0 {
-			b.WriteString("; ")
-		}
-		b.WriteString(m.String())
-	}
+	expectfmt.WriteMismatches(&b, e.Matched, e.Mismatches)
 	return b.String()
 }
 

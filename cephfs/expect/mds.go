@@ -9,6 +9,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/expectfmt"
 )
 
 // MDSs states the MDS topology a test expects of one filesystem in one
@@ -196,9 +197,6 @@ type MDSEvaluation struct {
 	Matched     bool
 }
 
-// mdsEvaluationShown bounds the mismatches that String lists.
-const mdsEvaluationShown = 8
-
 // String summarizes the expectation, the observation and at most eight
 // mismatches.
 func (e MDSEvaluation) String() string {
@@ -235,20 +233,7 @@ func (e MDSEvaluation) String() string {
 	o := e.Observed
 	fmt.Fprintf(&b, " in %q fs=%d max_mds=%d active=%d standby=%d standby-replay=%d: ",
 		o.FilesystemName, o.FilesystemID, o.MaxMDS, len(o.Active), len(o.Standby), len(o.StandbyReplay))
-	if e.Matched {
-		b.WriteString("match")
-		return b.String()
-	}
-	for i, m := range e.Mismatches {
-		if i == mdsEvaluationShown {
-			fmt.Fprintf(&b, "; %d more", len(e.Mismatches)-i)
-			break
-		}
-		if i > 0 {
-			b.WriteString("; ")
-		}
-		b.WriteString(m.String())
-	}
+	expectfmt.WriteMismatches(&b, e.Matched, e.Mismatches)
 	return b.String()
 }
 
