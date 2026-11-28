@@ -1,7 +1,6 @@
 package fault
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -113,50 +112,35 @@ func clockLedMeasured(center int64) clockOffsetInterval {
 	return clockOffsetInterval{Known: true, Lo: center - 40e6, Hi: center + 40e6}
 }
 
-func clockLedStep(label string, off int64, ack int64) clockOffsetStep {
+func clockLedStep(off int64, ack int64) clockOffsetStep {
 	text, _ := clockOffsetText(off)
 	return clockOffsetStep{
-		Label: label, IntendedNs: off, Write: clockWriteAcked, AckKnown: true, AckedMono: ack,
+		IntendedNs: off, Write: clockWriteAcked, AckKnown: true, AckedMono: ack,
 		File: clockLedFile(text), Target: clockLedTarget, Measured: clockLedMeasured(off),
 		SampleKnown: true, SampleLoMono: ack + 12*clockLedSec, TargetSampleOK: true,
 	}
 }
 
 func clockLedgerOK() clockOffsetLedger {
-	zero := "+0"
-	owned := clockOwnedFile{Path: cfgSelected, ExpectedText: zero,
+	owned := clockOwnedFile{Path: cfgSelected, ExpectedText: "+0",
 		Identity: clockFileIdentity{HasIdentity: true, Device: 7, Inode: 11}}
-	restore := clockLedStep("restore", 0, 300*clockLedSec)
-	return clockOffsetLedger{
-		Target: clockLedTarget, Owned: owned,
-		Env:      clockTargetEnvironment{Known: true, TimestampFile: strPtr(cfgSelected)},
-		Initial:  clockLedFile("+0"),
-		CacheSec: clockLedIntPtr(10), Baseline: clockLedMeasured(0), BaselineTarget: clockLedTarget,
-		Steps:   []clockOffsetStep{clockLedStep("plus", clockLedOff, 100*clockLedSec), clockLedStep("minus", -clockLedOff, 200*clockLedSec)},
-		Restore: &restore,
-		Cleanup: clockOffsetCleanup{Process: clockProcessExited, ExitKnown: true, ExitMono: 400 * clockLedSec,
-			File: clockFileRemoved, RemovedKnown: true, RemovedMono: 401 * clockLedSec},
-	}
+	return clockOffsetLedger{Target: clockLedTarget, Owned: owned, CacheSec: clockLedIntPtr(10), Baseline: clockLedMeasured(0)}
 }
 
-func wantClockLedger(t *testing.T, name string, j clockLedgerJudgement, restore clockRestoreState, step0 clockStepState, firstFailure string) {
-	t.Helper()
-	if j.Restore != restore {
-		t.Errorf("%s: restore %s (%s), want %s", name, j.Restore, j.RestoreReason, restore)
-	}
-	if step0 != "" && (len(j.Steps) == 0 || j.Steps[0].State != step0) {
-		t.Errorf("%s: step0 %+v, want %s", name, j.Steps, step0)
-	}
-	if (firstFailure == "") != (j.FirstFailure == "") || !strings.Contains(j.FirstFailure, firstFailure) {
-		t.Errorf("%s: first failure %q, want containing %q", name, j.FirstFailure, firstFailure)
-	}
+// clockLedLease is a lease that applied step, as Restore judges it.
+func clockLedLease(step clockOffsetStep) *ClockOffsetLease {
+	return &ClockOffsetLease{ledger: clockLedgerOK(), step: step}
 }
+
+func clockLedRestore() clockOffsetStep { return clockLedStep(0, 300*clockLedSec) }
 
 func TestClockOffsetLedgerHappyPath(t *testing.T) {
-	j := judgeClockOffsetLedger(clockLedgerOK())
-	wantClockLedger(t, "ok", j, clockRestoreVerified, clockStepAdmitted, "")
-	if j.Steps[1].State != clockStepAdmitted || j.CleanupVerdict != clockProvenanceValid {
-		t.Fatalf("unexpected: %s", j)
+	step := clockLedStep(clockLedOff, 100*clockLedSec)
+	if st, why := judgeClockStep(clockLedgerOK(), step); st != clockStepAdmitted {
+		t.Fatalf("step %s (%s)", st, why)
+	}
+	if st, why := clockLedLease(step).judgeRestore(clockLedRestore()); st != clockRestoreVerified {
+		t.Fatalf("restore %s (%s)", st, why)
 	}
 }
 
@@ -167,10 +151,15 @@ func TestClockOffsetLedgerAckIsNotAdmission(t *testing.T) {
 		"unknown interval": func(s *clockOffsetStep) { s.Measured = clockOffsetInterval{} },
 	}
 	for n, mut := range cases {
-		l := clockLedgerOK()
-		mut(&l.Steps[0])
-		j := judgeClockOffsetLedger(l)
-		wantClockLedger(t, n, j, clockRestoreVerified, clockStepAckOnly, "step plus")
+		step := clockLedStep(clockLedOff, 100*clockLedSec)
+		mut(&step)
+		if st, why := judgeClockStep(clockLedgerOK(), step); st != clockStepAckOnly {
+			t.Errorf("%s: step %s (%s), want %s", n, st, why, clockStepAckOnly)
+		}
+		// The restore still discriminates the reference from the intended offset.
+		if st, why := clockLedLease(step).judgeRestore(clockLedRestore()); st != clockRestoreVerified {
+			t.Errorf("%s: restore %s (%s), want %s", n, st, why, clockRestoreVerified)
+		}
 	}
 }
 
@@ -207,14 +196,10 @@ func TestClockOffsetLedgerStepControls(t *testing.T) {
 		{"wrong sign", func(s *clockOffsetStep) { s.Measured = clockLedMeasured(-clockLedOff) }, clockStepRejected},
 	}
 	for _, c := range cases {
-		l := clockLedgerOK()
-		c.mut(&l.Steps[0])
-		j := judgeClockOffsetLedger(l)
-		if j.Steps[0].State != c.want {
-			t.Errorf("%s: %s (%s), want %s", c.name, j.Steps[0].State, j.Steps[0].Reason, c.want)
-		}
-		if j.FirstFailure == "" {
-			t.Errorf("%s: non-admitted step left no first failure", c.name)
+		step := clockLedStep(clockLedOff, 100*clockLedSec)
+		c.mut(&step)
+		if st, why := judgeClockStep(clockLedgerOK(), step); st != c.want {
+			t.Errorf("%s: %s (%s), want %s", c.name, st, why, c.want)
 		}
 	}
 }
@@ -223,7 +208,8 @@ func TestClockOffsetLedgerCacheWindowBoundary(t *testing.T) {
 	// The pinned comparison is a whole-second difference greater than the
 	// duration, so the guaranteed refetch is duration+1 seconds after the ack.
 	l := clockLedgerOK()
-	s := &l.Steps[0]
+	step := clockLedStep(clockLedOff, 100*clockLedSec)
+	s := &step
 	s.Measured = clockLedMeasured(0)
 	s.SampleLoMono = s.AckedMono + 11*clockLedSec - 1
 	if st, _ := judgeClockStep(l, *s); st != clockStepPending {
@@ -244,39 +230,50 @@ func TestClockOffsetLedgerCacheWindowBoundary(t *testing.T) {
 }
 
 func TestClockOffsetLedgerAdmissionControls(t *testing.T) {
-	cases := map[string]func(*clockOffsetLedger){
-		"FAKETIME present":        func(l *clockOffsetLedger) { l.Env.Faketime = strPtr("+0") },
-		"FAKETIME empty":          func(l *clockOffsetLedger) { l.Env.Faketime = strPtr("") },
-		"env unknown":             func(l *clockOffsetLedger) { l.Env.Known = false },
-		"file not at zero":        func(l *clockOffsetLedger) { l.Owned.ExpectedText = "+5" },
-		"no identity":             func(l *clockOffsetLedger) { l.Owned.Identity = clockFileIdentity{} },
-		"baseline other instance": func(l *clockOffsetLedger) { l.BaselineTarget.PID++ },
-		"baseline unknown":        func(l *clockOffsetLedger) { l.Baseline = clockOffsetInterval{} },
-		"baseline not zero":       func(l *clockOffsetLedger) { l.Baseline = clockLedMeasured(clockLedOff) },
-		"target incomplete":       func(l *clockOffsetLedger) { l.Target = clockOffsetTarget{ID: "x"}; l.BaselineTarget = l.Target },
+	env := func() clockTargetEnvironment {
+		return clockTargetEnvironment{Known: true, TimestampFile: strPtr(cfgSelected)}
 	}
-	for n, mut := range cases {
-		l := clockLedgerOK()
-		mut(&l)
-		j := judgeClockOffsetLedger(l)
-		if j.Admission.Verdict == clockProvenanceValid {
+	files := map[string]func(*clockTargetEnvironment, *clockOwnedFile){
+		"FAKETIME present": func(e *clockTargetEnvironment, _ *clockOwnedFile) { e.Faketime = strPtr("+0") },
+		"FAKETIME empty":   func(e *clockTargetEnvironment, _ *clockOwnedFile) { e.Faketime = strPtr("") },
+		"env unknown":      func(e *clockTargetEnvironment, _ *clockOwnedFile) { e.Known = false },
+		"file not at zero": func(_ *clockTargetEnvironment, o *clockOwnedFile) { o.ExpectedText = "+5" },
+		"no identity":      func(_ *clockTargetEnvironment, o *clockOwnedFile) { o.Identity = clockFileIdentity{} },
+	}
+	for n, mut := range files {
+		e, owned := env(), clockLedgerOK().Owned
+		mut(&e, &owned)
+		if r := admitClockLiveFileMode(e, owned, clockLedFile("+0")); r.Verdict == clockProvenanceValid {
 			t.Errorf("%s: admitted", n)
 		}
-		for _, s := range j.Steps {
-			if s.State == clockStepAdmitted {
-				t.Errorf("%s: step %s admitted without admission", n, s.Label)
-			}
+	}
+	if r := admitClockLiveFileMode(env(), clockLedgerOK().Owned, clockLedFile("+0")); r.Verdict != clockProvenanceValid {
+		t.Fatalf("valid file refused: %s", r.Reason)
+	}
+
+	other := clockLedTarget
+	other.PID++
+	baselines := map[string]struct {
+		target, measured clockOffsetTarget
+		baseline         clockOffsetInterval
+	}{
+		"baseline other instance": {clockLedTarget, other, clockLedMeasured(0)},
+		"baseline unknown":        {clockLedTarget, clockLedTarget, clockOffsetInterval{}},
+		"baseline not zero":       {clockLedTarget, clockLedTarget, clockLedMeasured(clockLedOff)},
+		"target incomplete":       {clockOffsetTarget{ID: "x"}, clockOffsetTarget{ID: "x"}, clockLedMeasured(0)},
+	}
+	for n, c := range baselines {
+		if r := admitClockBaseline(c.target, c.measured, c.baseline); r.Verdict == clockProvenanceValid {
+			t.Errorf("%s: admitted", n)
 		}
-		if j.Restore == clockRestoreVerified {
-			t.Errorf("%s: restore verified without admission", n)
-		}
-		if j.FirstFailure == "" || len(j.Steps) != 2 {
-			t.Errorf("%s: receipt incomplete: %s", n, j)
-		}
+	}
+	if r := admitClockBaseline(clockLedTarget, clockLedTarget, clockLedMeasured(0)); r.Verdict != clockProvenanceValid {
+		t.Fatalf("valid baseline refused: %s", r.Reason)
 	}
 }
 
 func TestClockOffsetLedgerRestoreControls(t *testing.T) {
+	shift := clockLedMeasured(-clockLedOff)
 	cases := []struct {
 		name string
 		mut  func(*clockOffsetStep)
@@ -300,16 +297,13 @@ func TestClockOffsetLedgerRestoreControls(t *testing.T) {
 		{"interval spans offset", func(s *clockOffsetStep) {
 			s.Measured = clockOffsetInterval{Known: true, Lo: -clockLedOff - clockLedSec, Hi: clockLedSec}
 		}, clockRestoreUnknown},
+		{"in order", func(*clockOffsetStep) {}, clockRestoreVerified},
 	}
 	for _, c := range cases {
-		l := clockLedgerOK()
-		c.mut(l.Restore)
-		j := judgeClockOffsetLedger(l)
-		if j.Restore != c.want {
-			t.Errorf("%s: %s (%s), want %s", c.name, j.Restore, j.RestoreReason, c.want)
-		}
-		if !strings.Contains(j.FirstFailure, "restore") {
-			t.Errorf("%s: first failure %q does not name restore", c.name, j.FirstFailure)
+		restore := clockLedRestore()
+		c.mut(&restore)
+		if st, why := judgeClockRestore(clockLedgerOK(), restore, shift); st != c.want {
+			t.Errorf("%s: %s (%s), want %s", c.name, st, why, c.want)
 		}
 	}
 }
@@ -317,133 +311,47 @@ func TestClockOffsetLedgerRestoreControls(t *testing.T) {
 func TestClockOffsetLedgerDeletionLooksLikeZero(t *testing.T) {
 	// After unlinking, a fallback source may yield a measurement inside the
 	// reference interval. That must not be reported as a restoration.
-	l := clockLedgerOK()
-	l.Restore.File = clockObservedFile{KnownPresence: true}
-	l.Restore.Measured = clockLedMeasured(0)
-	j := judgeClockOffsetLedger(l)
-	if j.Restore != clockRestoreNotRestored {
-		t.Fatalf("deletion counted as restore: %s", j)
+	restore := clockLedRestore()
+	restore.File = clockObservedFile{KnownPresence: true}
+	restore.Measured = clockLedMeasured(0)
+	if st, why := clockLedLease(clockLedStep(clockLedOff, 100*clockLedSec)).judgeRestore(restore); st != clockRestoreNotRestored {
+		t.Fatalf("deletion counted as restore: %s (%s)", st, why)
 	}
 }
 
-func TestClockOffsetLedgerNoRestoreAttempt(t *testing.T) {
-	l := clockLedgerOK()
-	l.Restore = nil
-	j := judgeClockOffsetLedger(l)
-	if j.Restore != clockRestoreNotAttempted || j.FirstFailure != "" {
-		t.Fatalf("%s", j)
+func TestClockOffsetLeaseRestoreDiscriminatesTheStep(t *testing.T) {
+	// An admitted step is discriminated by its measured interval, any other
+	// step by the intended offset.
+	wide := clockLedStep(clockLedOff, 100*clockLedSec)
+	wide.Measured = clockOffsetInterval{Known: true, Lo: clockLedSec, Hi: clockLedOff + clockLedSec}
+	restore := clockLedRestore()
+	restore.Measured = clockOffsetInterval{Known: true, Lo: -clockLedSec / 2, Hi: 2 * clockLedSec}
+	if st, why := clockLedLease(wide).judgeRestore(restore); st != clockRestoreUnknown {
+		t.Errorf("admitted step overlapping the restore: %s (%s)", st, why)
 	}
-	// A disposed target is valid cleanup but never reported as restored.
-	if j.CleanupVerdict != clockProvenanceValid {
-		t.Fatalf("%s", j)
+	failed := clockOffsetStep{IntendedNs: clockLedOff, Write: clockWriteFailed}
+	if st, why := clockLedLease(failed).judgeRestore(restore); st != clockRestoreVerified {
+		t.Errorf("unacknowledged step: %s (%s)", st, why)
 	}
-}
+	restore.Measured = clockOffsetInterval{Known: true, Lo: -clockLedSec, Hi: clockLedOff}
+	if st, why := clockLedLease(failed).judgeRestore(restore); st != clockRestoreUnknown {
+		t.Errorf("unacknowledged step inside the restore interval: %s (%s)", st, why)
+	}
 
-func TestClockOffsetLedgerCleanupOwnership(t *testing.T) {
-	exited := clockOffsetCleanup{Process: clockProcessExited, ExitKnown: true, ExitMono: 10, File: clockFileRemoved, RemovedKnown: true, RemovedMono: 11}
-	cases := []struct {
-		name     string
-		c        clockOffsetCleanup
-		restored bool
-		want     clockProvenanceVerdict
-	}{
-		{"exit then remove", exited, false, clockProvenanceValid},
-		{"remove before exit", func() clockOffsetCleanup { c := exited; c.RemovedMono = 9; return c }(), false, clockProvenanceInvalid},
-		{"file left behind", clockOffsetCleanup{Process: clockProcessExited, ExitKnown: true, File: clockFilePresent}, false, clockProvenanceInvalid},
-		{"exit time missing", func() clockOffsetCleanup { c := exited; c.ExitKnown = false; return c }(), false, clockProvenanceInconclusive},
-		{"removal time missing", func() clockOffsetCleanup { c := exited; c.RemovedKnown = false; return c }(), false, clockProvenanceInconclusive},
-		{"live target unlinked", clockOffsetCleanup{Process: clockProcessRunning, File: clockFileRemoved}, true, clockProvenanceInvalid},
-		{"live target restored", clockOffsetCleanup{Process: clockProcessRunning, File: clockFilePresent}, true, clockProvenanceValid},
-		{"live target unrestored", clockOffsetCleanup{Process: clockProcessRunning, File: clockFilePresent}, false, clockProvenanceInvalid},
-		{"nothing recorded", clockOffsetCleanup{}, true, clockProvenanceInconclusive},
-		{"process unrecorded", clockOffsetCleanup{File: clockFileRemoved}, true, clockProvenanceInconclusive},
+	// A restarted daemon is a fresh instance: +0 file and reference measurement.
+	restarted := clockLedRestore()
+	restarted.Target.StartTicks++
+	step := clockLedStep(clockLedOff, 100*clockLedSec)
+	if st, why := clockLedLease(step).judgeRestore(restarted); st != clockRestoreVerified {
+		t.Errorf("restarted at the reference: %s (%s)", st, why)
 	}
-	for _, c := range cases {
-		if v, r := judgeClockCleanup(c.c, c.restored); v != c.want {
-			t.Errorf("%s: %s (%s), want %s", c.name, v, r, c.want)
-		}
+	restarted.Measured = clockLedMeasured(clockLedOff)
+	if st, why := clockLedLease(step).judgeRestore(restarted); st != clockRestoreNotRestored {
+		t.Errorf("restarted with the offset: %s (%s)", st, why)
 	}
-}
-
-func TestClockOffsetLedgerKeepsFirstFailureAndCleanupSeparate(t *testing.T) {
-	l := clockLedgerOK()
-	l.Steps[0].Write = clockWriteFailed
-	l.Steps[1].File = clockObservedFile{KnownPresence: true}
-	l.Cleanup = clockOffsetCleanup{Process: clockProcessRunning, File: clockFileRemoved, Errors: []string{"remove failed"}}
-	j := judgeClockOffsetLedger(l)
-	if !strings.HasPrefix(j.FirstFailure, "step plus unknown_outcome") {
-		t.Fatalf("first failure replaced: %q", j.FirstFailure)
-	}
-	if j.CleanupVerdict != clockProvenanceInvalid || len(j.CleanupErrors) != 1 {
-		t.Fatalf("cleanup merged into scenario: %s", j)
-	}
-	if len(j.Steps) != 2 {
-		t.Fatalf("partial ledger not emitted in full: %s", j)
-	}
-	// The judgement owns its error list.
-	l.Cleanup.Errors[0] = "changed"
-	if j.CleanupErrors[0] != "remove failed" {
-		t.Fatalf("judgement aliases caller memory")
-	}
-	if strings.Contains(j.String(), "+30") {
-		t.Fatalf("receipt carries file text: %s", j)
-	}
-}
-
-func TestClockOffsetLedgerRestoreChronology(t *testing.T) {
-	cases := []struct {
-		name string
-		mut  func(*clockOffsetLedger)
-		want clockRestoreState
-	}{
-		{"restore before offsets", func(l *clockOffsetLedger) {
-			l.Restore.AckedMono, l.Restore.SampleLoMono = 50*clockLedSec, 62*clockLedSec
-		}, clockRestoreUnknown},
-		{"restore acked before last measurement", func(l *clockOffsetLedger) {
-			l.Restore.AckedMono = l.Steps[1].SampleLoMono - 1
-			l.Restore.SampleLoMono = l.Restore.AckedMono + 12*clockLedSec
-		}, clockRestoreUnknown},
-		{"restore measured before last ack", func(l *clockOffsetLedger) { l.Restore.SampleLoMono = l.Steps[1].AckedMono }, clockRestoreUnknown},
-		{"earlier attempt has no time", func(l *clockOffsetLedger) {
-			l.Steps[0].Write, l.Steps[0].AckKnown = clockWriteFailed, false
-		}, clockRestoreUnknown},
-		{"in order", func(l *clockOffsetLedger) {}, clockRestoreVerified},
-	}
-	for _, c := range cases {
-		l := clockLedgerOK()
-		c.mut(&l)
-		if j := judgeClockOffsetLedger(l); j.Restore != c.want {
-			t.Errorf("%s: %s (%s), want %s", c.name, j.Restore, j.RestoreReason, c.want)
-		}
-	}
-	// Steps acknowledged out of order are not admitted.
-	l := clockLedgerOK()
-	l.Steps[1].AckedMono = l.Steps[0].AckedMono - 1
-	l.Steps[1].SampleLoMono = l.Steps[1].AckedMono + 12*clockLedSec
-	if j := judgeClockOffsetLedger(l); j.Steps[1].State == clockStepAdmitted {
-		t.Errorf("out-of-order step admitted: %s", j)
-	}
-}
-
-func TestClockRestoreNeedsAnObservedShift(t *testing.T) {
-	ackOnly := clockLedStep("plus", clockLedOff, 100*clockLedSec)
-	ackOnly.SampleKnown = false
-	for _, tc := range []struct {
-		name  string
-		steps []clockOffsetStep
-	}{
-		{"no steps", nil},
-		{"zero only", []clockOffsetStep{clockLedStep("zero", 0, 100*clockLedSec)}},
-		{"ack only", []clockOffsetStep{ackOnly}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			l := clockLedgerOK()
-			l.Steps = tc.steps
-			l.Cleanup = clockOffsetCleanup{Process: clockProcessRunning, File: clockFilePresent}
-			j := judgeClockOffsetLedger(l)
-			if j.Restore != clockRestoreUnknown || j.CleanupVerdict != clockProvenanceInvalid {
-				t.Fatalf("unwitnessed restore: %s", j)
-			}
-		})
+	restarted.Measured = clockLedMeasured(0)
+	restarted.File = clockLedFile("+30")
+	if st, why := clockLedLease(step).judgeRestore(restarted); st != clockRestoreNotRestored {
+		t.Errorf("restarted with the offset file: %s (%s)", st, why)
 	}
 }
