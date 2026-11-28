@@ -151,10 +151,11 @@ func (t RestartTarget) Resume(ctx context.Context) (Resumed, error) {
 // Restart stops and starts the running container once for r and confirms
 // that a new generation runs. A record whose restart is done is replaced; an
 // unsettled one is refused (Resume settles it). Stop runs with a three-second
-// grace under its own one-minute bound: when ctx ends first the record keeps
-// it and the next Resume waits for it. When Stop fails, Resume decides by the
-// run state whether the stop took effect. Start runs on a settlement budget
-// (SettlementContext) that the caller's cancellation does not end.
+// grace under its own one-minute bound. From then on the restart runs on a
+// settlement budget (SettlementContext) that the caller's cancellation does
+// not end: when the Stop has not returned within it, the record keeps the
+// Stop and the next Resume waits for it. When Stop fails, Resume decides by
+// the run state whether the stop took effect, then Start runs.
 func (t RestartTarget) Restart(ctx context.Context, r Restart) error {
 	id := t.Container.GetContainerID()
 	state, err := t.Container.State(ctx)
@@ -181,19 +182,27 @@ func (t RestartTarget) Restart(ctx context.Context, r Restart) error {
 		grace := restartGrace
 		stopErr = t.Container.Stop(stopCtx, &grace)
 	}()
+	// Once Stop is dispatched, the restart runs on a settlement budget that
+	// the caller's cancellation does not end.
+	settle, cancelSettle := SettlementContext(ctx)
+	defer cancelSettle()
 	select {
 	case <-stopped:
 		record.stopping = nil
-	case <-ctx.Done():
-		return fmt.Errorf("stop RGW for its restart: the Stop has not returned and the next restart settles it: %w", ctx.Err())
+	case <-settle.Done():
+		cause := ctx.Err()
+		if cause == nil {
+			cause = settle.Err()
+		}
+		return fmt.Errorf("stop RGW for its restart: the Stop has not returned and the next restart settles it: %w", cause)
 	}
 	if stopErr != nil {
-		if _, err := t.Resume(ctx); err != nil {
+		if _, err := t.Resume(settle); err != nil {
 			return errors.Join(fmt.Errorf("stop RGW for its restart: %w", stopErr), err)
 		}
 		return nil
 	}
-	return t.start(ctx, record, id)
+	return t.start(settle, record, id)
 }
 
 // Complete drops the record that owner's restart kept for its verification

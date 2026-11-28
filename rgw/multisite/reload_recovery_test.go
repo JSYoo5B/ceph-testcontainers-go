@@ -227,3 +227,19 @@ func TestZoneReloadResumesAPendingRestartOfAnotherRequester(t *testing.T) {
 		t.Fatalf("a later reload did not restart once: stops=%d starts=%d", m.stops, m.starts)
 	}
 }
+
+// A Stop that completes but cancels the caller and loses its reply, as a
+// placement test seam does, still ends in a started gateway in the same
+// call: once dispatched, the restart runs on its settlement budget.
+func TestZoneReloadFinishesARestartWhoseCallerCanceledDuringStop(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	m := &reloadGatewayModel{id: "owned", generation: "initial", running: true, stopError: errors.New("Docker response lost"), stopCanceled: cancel, stopRelease: closedChannel()}
+	zone, topology := reloadZone(m)
+	if err := topology.reloadZoneGateways(ctx, []*rgwZoneState{zone}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !m.running || m.stops != 1 || m.starts != 1 || pending(zone) {
+		t.Fatalf("the canceled restart was not finished: %+v", m)
+	}
+}
