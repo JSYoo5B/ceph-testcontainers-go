@@ -70,23 +70,17 @@ type DirectoryAdditionStatus struct {
 //
 //purpose:construction,condition
 func (mirror *Container) BeginDirectoryAddition(ctx context.Context, directory string) (*DirectoryAddition, error) {
-	if mirror == nil {
-		return nil, cephFSObserveGuard("CephFS directory addition fixture is unavailable")
-	}
 	return mirror.beginDirectoryAddition(ctx, directory, mirror.originalClusterIdentities)
 }
 
 func (mirror *Container) beginDirectoryAddition(ctx context.Context, directory string, readClusters func(context.Context) ([2]string, error)) (*DirectoryAddition, error) {
-	if mirror == nil {
-		return nil, cephFSObserveGuard("CephFS directory addition fixture is unavailable")
-	}
 	directory, err := normalizeMirrorDirectory(directory)
 	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
+	if err := mirror.lock(ctx); err != nil {
 		return nil, err
 	}
 	defer mirror.mu.Unlock()
@@ -166,7 +160,10 @@ func (r *DirectoryAddition) checkHandle(retained bool) error {
 		return cephFSObserveGuard("CephFS directory addition original identity is unavailable")
 	}
 	m := r.scope.mirror
-	if m.closed || r.superseded || (retained && m.ops.directoryAddition != r) || m.ops.peerGeneration != r.scope.generation {
+	if m.closed {
+		return errCephFSMirrorTerminated()
+	}
+	if r.superseded || (retained && m.ops.directoryAddition != r) || m.ops.peerGeneration != r.scope.generation {
 		return cephFSObserveGuard("CephFS directory addition owner is closed or superseded")
 	}
 	if !r.scope.sameFixture(false) || m.peer.pendingImport != nil {

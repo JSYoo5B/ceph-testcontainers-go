@@ -101,23 +101,17 @@ type DirectoryRemovalDaemonStatus struct {
 //
 //purpose:condition,lifetime
 func (mirror *Container) BeginDirectoryRemoval(ctx context.Context, directory string) (*DirectoryRemoval, error) {
-	if mirror == nil {
-		return nil, cephFSObserveGuard("CephFS directory removal fixture is unavailable")
-	}
 	return mirror.beginDirectoryRemoval(ctx, directory, mirror.originalClusterIdentities)
 }
 
 func (mirror *Container) beginDirectoryRemoval(ctx context.Context, directory string, readClusters func(context.Context) ([2]string, error)) (*DirectoryRemoval, error) {
-	if mirror == nil {
-		return nil, cephFSObserveGuard("CephFS directory removal fixture is unavailable")
-	}
 	directory, err := normalizeMirrorDirectory(directory)
 	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
+	if err := mirror.lock(ctx); err != nil {
 		return nil, err
 	}
 	defer mirror.mu.Unlock()
@@ -231,7 +225,10 @@ func (r *DirectoryRemoval) checkDirectoryRemovalHandle(allowRetired bool) error 
 		return cephFSObserveGuard("CephFS directory removal original identity is unavailable")
 	}
 	m := r.scope.mirror
-	if m.closed || r.superseded || m.ops.directoryRemoval != r || m.directories.generation(r.directory) != r.generation || r.generation == 0 || m.ops.peerGeneration != r.scope.generation {
+	if m.closed {
+		return errCephFSMirrorTerminated()
+	}
+	if r.superseded || m.ops.directoryRemoval != r || m.directories.generation(r.directory) != r.generation || r.generation == 0 || m.ops.peerGeneration != r.scope.generation {
 		return cephFSObserveGuard("CephFS directory removal owner is closed or superseded")
 	}
 	if !r.scope.sameFixture(false) {

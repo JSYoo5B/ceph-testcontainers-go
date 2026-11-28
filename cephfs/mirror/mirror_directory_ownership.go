@@ -95,20 +95,22 @@ func (o *cephFSDirectoryOwnership) rebalancePaths() []string {
 
 // registerDirectory records an acknowledged owned registration of directory:
 // a completed addition receipt of the path is superseded, the path's
-// generation advances and, with publish, Directories lists the path.
-// Directories is a published descriptor only; ownership never reads it back.
+// generation advances and, with publish, RegisteredDirectories lists the
+// path. The list is published only; ownership never reads it back.
 // Container.mu is held, or Run has not shared the mirror yet.
 func (mirror *Container) registerDirectory(directory string, publish bool) {
 	mirror.ops.supersedeDirectoryAddition(directory)
 	mirror.directories.register(directory)
-	if publish && !slices.Contains(mirror.Directories, directory) {
-		mirror.Directories = append(mirror.Directories, directory)
+	if publish && !slices.Contains(mirror.registered, directory) {
+		mirror.registered = append(mirror.registered, directory)
+		mirror.Directories = slices.Clone(mirror.registered)
 	}
 }
 
-// forgetDirectory drops the ownership of directory and its Directories entry.
+// forgetDirectory drops the ownership of directory and its listing.
 // Container.mu is held.
 func (mirror *Container) forgetDirectory(directory string) {
-	mirror.Directories = slices.DeleteFunc(mirror.Directories, func(item string) bool { return item == directory })
+	mirror.registered = slices.DeleteFunc(mirror.registered, func(item string) bool { return item == directory })
+	mirror.Directories = slices.Clone(mirror.registered)
 	mirror.directories.forget(directory)
 }

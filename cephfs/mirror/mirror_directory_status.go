@@ -11,6 +11,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
 // Snapshot identifies a source snapshot reported by the native
@@ -58,9 +59,6 @@ func (mirror *Container) DirectoryStatus(ctx context.Context, directory string) 
 	if err != nil {
 		return result, cephFSObserveGuard("CephFS mirror directory must be an absolute path")
 	}
-	if mirror == nil {
-		return result, cephFSObserveGuard("CephFS mirror fixture is unavailable")
-	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	return mirror.directoryStatus(ctx, directory, nil)
@@ -73,7 +71,7 @@ func (mirror *Container) DirectoryStatus(ctx context.Context, directory string) 
 // released before it returns.
 func (mirror *Container) directoryStatus(ctx context.Context, directory string, admit func(context.Context) error) (DirectoryStatus, error) {
 	var result DirectoryStatus
-	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
+	if err := mirror.lock(ctx); err != nil {
 		return result, err
 	}
 	defer mirror.mu.Unlock()
@@ -82,7 +80,7 @@ func (mirror *Container) directoryStatus(ctx context.Context, directory string, 
 			return result, err
 		}
 	}
-	if mirror.closed || mirror.pair.source == nil || mirror.pair.destination == nil || mirror.peer.pendingImport != nil || mirror.peer.id == "" || mirror.pair.sourceFilesystemID <= 0 || mirror.pair.destinationFilesystemID <= 0 || !mirror.pair.identityConfirmed || mirror.pair.sourceMetadataPoolID < 0 || mirror.pair.destinationMetadataPoolID < 0 {
+	if mirror.pair.source == nil || mirror.pair.destination == nil || mirror.peer.pendingImport != nil || mirror.peer.id == "" || mirror.pair.sourceFilesystemID <= 0 || mirror.pair.destinationFilesystemID <= 0 || !mirror.pair.identityConfirmed || mirror.pair.sourceMetadataPoolID < 0 || mirror.pair.destinationMetadataPoolID < 0 {
 		return result, cephFSObserveGuard("CephFS mirror filesystem and peer identities are not confirmed")
 	}
 	if !mirror.directories.owns(directory) {
@@ -318,7 +316,7 @@ func (mirror *Container) waitDirectory(ctx context.Context, directory string, re
 		return DirectoryStatus{}, cephFSObserveGuard("CephFS mirror directory must be an absolute path")
 	}
 	if mirror == nil {
-		return DirectoryStatus{}, cephFSObserveGuard("CephFS mirror fixture is unavailable")
+		return DirectoryStatus{}, cephFSRefusal("CephFS mirror fixture is unavailable")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Minute)
 	defer cancel()
@@ -326,12 +324,10 @@ func (mirror *Container) waitDirectory(ctx context.Context, directory string, re
 	return waitCephFSObservedDirectory(ctx, time.Second, func(attempt context.Context) (DirectoryStatus, error) {
 		attempt, cancel := context.WithTimeout(attempt, 30*time.Second)
 		defer cancel()
-		return mirror.directoryStatus(attempt, directory, func(ctx context.Context) error {
-			if mirror.closed {
-				return cephFSObserveGuard("the CephFS mirror has been terminated")
-			}
-			return pin.admit(ctx)
-		})
+		if err := pin.running(attempt); err != nil {
+			return DirectoryStatus{}, err
+		}
+		return mirror.directoryStatus(attempt, directory, pin.admit)
 	}, ready)
 }
 
@@ -403,6 +399,17 @@ func (e *cephFSObservationError) Is(target error) bool {
 func cephFSObserveGuard(message string) error {
 	return &cephFSObservationError{message: message, permanent: true}
 }
+
+// cephFSRefusal refuses a request that the fixture can never serve: a nil
+// or terminated mirror, or a terminated cluster. It matches
+// ceph.ErrInvalidRequest, and it is a permanent guard, so a wait or a watch
+// ends on it at once.
+func cephFSRefusal(message string) error {
+	return &cephFSObservationError{message: message, cause: servicehook.Invalid(errors.New(message)), permanent: true}
+}
+
+// errCephFSMirrorTerminated refuses every request to a terminated mirror.
+func errCephFSMirrorTerminated() error { return cephFSRefusal("CephFS mirror has been terminated") }
 func cephFSObserveQuery(operation string, cause error) error {
 	return &cephFSObservationError{message: operation + " failed", cause: cause}
 }

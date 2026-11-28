@@ -113,16 +113,17 @@ type Container struct {
 	// SourceClientEntity and DestinationClientEntity are the Cephx entities
 	// that the fixture created on each side for the daemons and the peer.
 	SourceClientEntity, DestinationClientEntity string
-	// Directories lists the paths registered through this fixture:
-	// Config.Directories, then later additions, without removed paths. Run
-	// fills it from Config.Directories before it registers them, so the
-	// Container that a failed Run returns may list paths Ceph never registered.
-	// The directory methods update it, so read it while none of them runs.
-	// Paths registered directly with the Ceph CLI are not included.
+	// Directories is a copy of what RegisteredDirectories returns, which
+	// the directory methods replace after each change.
+	//
+	// Deprecated: Use RegisteredDirectories, which takes a copy under the
+	// fixture's lock while the directory methods may run.
 	Directories []string
 
 	owned multicluster.Resources
 	mu    sync.Mutex
+	// registered is the list RegisteredDirectories returns.
+	registered []string
 	// pair is the source/destination identity that Run records; the
 	// exported descriptors above are copies a caller may edit, never a
 	// native selector.
@@ -250,7 +251,7 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	mirror := &Container{
 		SourceFilesystem: config.SourceFilesystem, DestinationFilesystem: config.DestinationFilesystem,
 		SourceClientEntity: "client." + sourceID, DestinationClientEntity: "client." + destinationID,
-		Directories: append([]string(nil), config.Directories...),
+		Directories: slices.Clone(config.Directories), registered: slices.Clone(config.Directories),
 		pair: cephFSMirrorPair{
 			source: config.Source, destination: config.Destination,
 			sourceFilesystem: config.SourceFilesystem, destinationFilesystem: config.DestinationFilesystem,
@@ -545,6 +546,23 @@ func countCephFSMirrorRegistrations(data []byte, filesystem, peerID string, owne
 	return len(registered), nil
 }
 
+// RegisteredDirectories lists the paths registered through this fixture:
+// Config.Directories, then later additions, without removed paths. Run lists
+// Config.Directories before it registers them, so the Container that a failed
+// Run returns may list paths Ceph never registered. Paths registered directly
+// with the Ceph CLI are not included. The returned slice is a copy taken
+// under the fixture's lock.
+//
+//purpose:observation
+func (mirror *Container) RegisteredDirectories() []string {
+	if mirror == nil {
+		return nil
+	}
+	mirror.mu.Lock()
+	defer mirror.mu.Unlock()
+	return slices.Clone(mirror.registered)
+}
+
 // Daemons returns the owned daemon inventory sorted by DaemonName, including
 // stopped and partially started processes. The returned slice is a copy.
 // Native assignment convergence is asynchronous.
@@ -572,15 +590,12 @@ func (mirror *Container) Daemons() []*Daemon {
 //
 //purpose:construction,condition
 func (mirror *Container) AddDaemon(ctx context.Context, daemonName string, opts ...testcontainers.ContainerCustomizer) (*Daemon, error) {
-	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
+	if err := mirror.lock(ctx); err != nil {
 		return nil, err
 	}
 	defer mirror.mu.Unlock()
 	if err := mirror.ops.guardPeerRemovalOverlap(); err != nil {
 		return nil, err
-	}
-	if mirror.closed {
-		return nil, servicehook.Invalid(errors.New("CephFS mirror has been terminated"))
 	}
 	if mirror.pair.source == nil || mirror.pair.destination == nil || !mirror.roster.configured() {
 		return nil, errors.New("CephFS mirror is not initialized")
@@ -614,6 +629,23 @@ func (mirror *Container) AddDaemon(ctx context.Context, daemonName string, opts 
 	return daemon, nil
 }
 
+// lock takes Container.mu for a public method. A nil and a terminated
+// fixture are refused before anything else, as requests the fixture can
+// never serve; after success the caller unlocks.
+func (mirror *Container) lock(ctx context.Context) error {
+	if mirror == nil {
+		return cephFSRefusal("CephFS mirror fixture is unavailable")
+	}
+	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
+		return err
+	}
+	if mirror.closed {
+		mirror.mu.Unlock()
+		return errCephFSMirrorTerminated()
+	}
+	return nil
+}
+
 // Called under mirror.mu. Register partial startup results before propagating
 // an error so either Daemon.Remove or Terminate can release them later.
 func (mirror *Container) registerDaemonContainer(container testcontainers.Container, daemonName string) *Daemon {
@@ -638,13 +670,10 @@ func (daemon *Daemon) Remove(ctx context.Context, opts ...testcontainers.Termina
 		return servicehook.Invalid(errors.New("CephFS mirror daemon is not owned by a mirror"))
 	}
 	mirror := daemon.owner
-	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
+	if err := mirror.lock(ctx); err != nil {
 		return err
 	}
 	defer mirror.mu.Unlock()
-	if mirror.closed {
-		return servicehook.Invalid(errors.New("CephFS mirror has been terminated"))
-	}
 	if !mirror.roster.has(daemon) {
 		return fmt.Errorf("CephFS mirror does not own daemon %q", daemon.DaemonName)
 	}
@@ -682,7 +711,7 @@ func (mirror *Container) Terminate(ctx context.Context, opts ...testcontainers.T
 //
 //purpose:condition
 func (mirror *Container) AttachManagers(ctx context.Context) error {
-	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
+	if err := mirror.lock(ctx); err != nil {
 		return err
 	}
 	defer mirror.mu.Unlock()
@@ -692,9 +721,6 @@ func (mirror *Container) AttachManagers(ctx context.Context) error {
 // Called under mirror.mu; Terminate uses the same lock so the Docker client
 // cannot close while a topology reconciliation is using it.
 func (mirror *Container) attachManagers(ctx context.Context) error {
-	if mirror.closed {
-		return servicehook.Invalid(errors.New("CephFS mirror has been terminated"))
-	}
 	if mirror.pair.source == nil || mirror.pair.destination == nil {
 		return errors.New("CephFS mirror is not initialized")
 	}
@@ -903,13 +929,10 @@ func (mirror *Container) AddDirectory(ctx context.Context, directory string) err
 	if err != nil {
 		return err
 	}
-	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
+	if err := mirror.lock(ctx); err != nil {
 		return err
 	}
 	defer mirror.mu.Unlock()
-	if mirror.closed {
-		return servicehook.Invalid(errors.New("CephFS mirror has been terminated"))
-	}
 	if err := mirror.ops.guardPeerRemovalOverlap(); err != nil {
 		return err
 	}
@@ -961,13 +984,10 @@ func (mirror *Container) RemoveDirectory(ctx context.Context, directory string) 
 	if err != nil {
 		return err
 	}
-	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
+	if err := mirror.lock(ctx); err != nil {
 		return err
 	}
 	defer mirror.mu.Unlock()
-	if mirror.closed {
-		return servicehook.Invalid(errors.New("CephFS mirror has been terminated"))
-	}
 	if err := mirror.ops.guardDirectoryAdditionOverlap(); err != nil {
 		return err
 	}
@@ -1048,15 +1068,12 @@ func (mirror *Container) RemoveDirectory(ctx context.Context, directory string) 
 //
 //purpose:condition
 func (mirror *Container) RebalanceDirectories(ctx context.Context) error {
-	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
+	if err := mirror.lock(ctx); err != nil {
 		return err
 	}
 	defer mirror.mu.Unlock()
 	if err := mirror.ops.guardPeerRemovalOverlap(); err != nil {
 		return err
-	}
-	if mirror.closed {
-		return servicehook.Invalid(errors.New("CephFS mirror has been terminated"))
 	}
 	if mirror.peer.id == "" {
 		return errors.New("CephFS mirror is not initialized")
@@ -1293,7 +1310,7 @@ func waitCephFSMirrorDirectoryReleased(ctx context.Context, list func(context.Co
 //
 //purpose:observation
 func (mirror *Container) PeerIDs(ctx context.Context) ([]string, error) {
-	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
+	if err := mirror.lock(ctx); err != nil {
 		return nil, err
 	}
 	defer mirror.mu.Unlock()
@@ -1327,13 +1344,10 @@ func (mirror *Container) peerRecords(ctx context.Context) (map[string]cephFSPeer
 //
 //purpose:condition,lifetime
 func (mirror *Container) RemovePeer(ctx context.Context, id string) error {
-	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
+	if err := mirror.lock(ctx); err != nil {
 		return err
 	}
 	defer mirror.mu.Unlock()
-	if mirror.closed {
-		return servicehook.Invalid(errors.New("CephFS mirror has been terminated"))
-	}
 	if err := mirror.ops.guardDirectoryAdditionOverlap(); err != nil {
 		return err
 	}
@@ -1377,12 +1391,9 @@ func (mirror *Container) RemovePeer(ctx context.Context, id string) error {
 //
 //purpose:condition
 func (mirror *Container) RebootstrapPeer(ctx context.Context) (string, error) {
-	if mirror == nil {
-		return "", cephFSObserveGuard("CephFS mirror fixture is unavailable")
-	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
+	if err := mirror.lock(ctx); err != nil {
 		return "", err
 	}
 	defer mirror.mu.Unlock()

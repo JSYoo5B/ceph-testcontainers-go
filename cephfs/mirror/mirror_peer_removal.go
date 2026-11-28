@@ -66,12 +66,9 @@ func (mirror *Container) BeginPeerRemoval(ctx context.Context, id string) (*Peer
 }
 
 func (mirror *Container) beginPeerRemoval(ctx context.Context, id string, readClusters func(context.Context) ([2]string, error)) (*PeerRemoval, error) {
-	if mirror == nil {
-		return nil, cephFSObserveGuard("CephFS mirror fixture is unavailable")
-	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
+	if err := mirror.lock(ctx); err != nil {
 		return nil, err
 	}
 	defer mirror.mu.Unlock()
@@ -166,7 +163,10 @@ func (r *PeerRemoval) checkHandle() error {
 		return cephFSObserveGuard("CephFS peer removal original identity is unavailable")
 	}
 	m := r.scope.mirror
-	if m.closed || m.ops.peerRemoval != r || m.ops.peerGeneration != r.scope.generation {
+	if m.closed {
+		return errCephFSMirrorTerminated()
+	}
+	if m.ops.peerRemoval != r || m.ops.peerGeneration != r.scope.generation {
 		return cephFSObserveGuard("CephFS peer removal owner is closed or superseded")
 	}
 	// The removal's own request clears the fixture's peer.

@@ -215,7 +215,7 @@ func runCephFSDirectoryAdditionIntent(t *testing.T, host bool) {
 	}
 	harness.CephFSDirectoryAdditionWaitScope(t, ctx, policy, []string{seed, foreign})
 	beforeMutations := counter.allAdds.Load()
-	if receipt, err := mirror.BeginDirectoryAddition(ctx, foreign); receipt != nil || err == nil || slices.Contains(mirror.Directories, foreign) || counter.allAdds.Load() != beforeMutations {
+	if receipt, err := mirror.BeginDirectoryAddition(ctx, foreign); receipt != nil || err == nil || slices.Contains(mirror.RegisteredDirectories(), foreign) || counter.allAdds.Load() != beforeMutations {
 		t.Fatal("typed intent adopted preexisting foreign native path", err)
 	}
 	if err := harness.CephFSDirectoryAdditionCheckScope(ctx, policy, []string{seed, foreign}); err != nil {
@@ -229,13 +229,13 @@ func runCephFSDirectoryAdditionIntent(t *testing.T, host bool) {
 		t.Fatal("prepared source directory changed absent native registration", err)
 	}
 	applied, err := mirror.BeginDirectoryAddition(ctx, added)
-	if applied == nil || !errors.Is(err, errCephFSDirectoryAdditionAppliedReplyLost) || counter.addedAttempts.Load() != 1 || counter.addedDispatches.Load() != 1 || counter.appliedLosses.Load() != 1 || slices.Contains(mirror.Directories, added) {
+	if applied == nil || !errors.Is(err, errCephFSDirectoryAdditionAppliedReplyLost) || counter.addedAttempts.Load() != 1 || counter.addedDispatches.Load() != 1 || counter.appliedLosses.Load() != 1 || slices.Contains(mirror.RegisteredDirectories(), added) {
 		t.Fatal("real successful add lost reply did not retain unpublished typed intent", err)
 	}
 	harness.CephFSDirectoryAdditionWaitScope(t, ctx, policy, []string{seed, foreign, added})
 	status, err := observeDirectoryAdditionStatus(t, ctx, applied)
 	harness.CephFSDirectoryAdditionAssertStatus(t, status, expected, added, true, false)
-	if err != nil || counter.addedDispatches.Load() != 1 || slices.Contains(mirror.Directories, added) || len(mirror.Daemons()) != 0 {
+	if err != nil || counter.addedDispatches.Load() != 1 || slices.Contains(mirror.RegisteredDirectories(), added) || len(mirror.Daemons()) != 0 {
 		t.Fatal("read-only visible Status published or resent addition", err)
 	}
 	cephFSDirectoryAdditionLog(t, "applied-visible-unpublished", status, counter, mirror, policy)
@@ -250,7 +250,7 @@ func runCephFSDirectoryAdditionIntent(t *testing.T, host bool) {
 	}
 	status, err = observeDirectoryAdditionStatus(t, ctx, applied)
 	harness.CephFSDirectoryAdditionAssertStatus(t, status, expected, added, true, true)
-	if err != nil || cephFSDirectoryAdditionPathCount(mirror.Directories, added) != 1 {
+	if err != nil || cephFSDirectoryAdditionPathCount(mirror.RegisteredDirectories(), added) != 1 {
 		t.Fatal("registered intent did not publish exactly one desired path", err)
 	}
 	cephFSDirectoryAdditionLog(t, "applied-explicit-reconcile", status, counter, mirror, policy)
@@ -283,7 +283,7 @@ func runCephFSDirectoryAdditionIntent(t *testing.T, host bool) {
 				t.Fatalf("outside registration before retry: %+v, %v", status, err)
 			}
 		}
-		if retired, err := mirror.BeginDirectoryAddition(ctx, path); retired != nil || !errors.As(err, &nativeRefusal) || nativeRefusal.ExitCode != 13 || refusal.attempts.Load() != 1 || slices.Contains(mirror.Directories, path) {
+		if retired, err := mirror.BeginDirectoryAddition(ctx, path); retired != nil || !errors.As(err, &nativeRefusal) || nativeRefusal.ExitCode != 13 || refusal.attempts.Load() != 1 || slices.Contains(mirror.RegisteredDirectories(), path) {
 			t.Fatalf("refused request for %q was replayed or claimed: attempts %d, err %v", path, refusal.attempts.Load(), err)
 		}
 	}
@@ -377,7 +377,7 @@ func runCephFSDirectoryAdditionIntent(t *testing.T, host bool) {
 	// Refuse direct removal of any outside path while the fixture is idle.
 	beforeCommands = counter.commands.Load()
 	for _, path := range []string{foreign, outside} {
-		if receipt, err := mirror.BeginDirectoryRemoval(ctx, path); receipt != nil || err == nil || counter.commands.Load() != beforeCommands || slices.Contains(mirror.Directories, path) {
+		if receipt, err := mirror.BeginDirectoryRemoval(ctx, path); receipt != nil || err == nil || counter.commands.Load() != beforeCommands || slices.Contains(mirror.RegisteredDirectories(), path) {
 			t.Fatalf("foreign policy %q gained privately owned removal authority: %v", path, err)
 		}
 	}
@@ -387,7 +387,7 @@ func runCephFSDirectoryAdditionIntent(t *testing.T, host bool) {
 	// native dispatch cannot still take effect.
 	unappliedCheckpoint := checkpoint(unapplied, "unapplied-request-backlog")
 	uncertain, err := mirror.BeginDirectoryAddition(ctx, unapplied)
-	if uncertain == nil || !errors.Is(err, errCephFSDirectoryAdditionUnappliedFault) || counter.unappliedAttempts.Load() != 1 || counter.unappliedDispatches.Load() != 0 || counter.unappliedFaults.Load() != 1 || slices.Contains(mirror.Directories, unapplied) {
+	if uncertain == nil || !errors.Is(err, errCephFSDirectoryAdditionUnappliedFault) || counter.unappliedAttempts.Load() != 1 || counter.unappliedDispatches.Load() != 0 || counter.unappliedFaults.Load() != 1 || slices.Contains(mirror.RegisteredDirectories(), unapplied) {
 		t.Fatal("unapplied attempt dispatched or published native ownership", err)
 	}
 	if err := harness.CephFSDirectoryAdditionCheckScope(ctx, policy, []string{seed, foreign, outside, added}); err != nil {
@@ -406,7 +406,7 @@ func runCephFSDirectoryAdditionIntent(t *testing.T, host bool) {
 	}
 	status, err = observeDirectoryAdditionStatus(t, ctx, uncertain)
 	harness.CephFSDirectoryAdditionAssertStatus(t, status, expected, unapplied, false, false)
-	if err != nil || cephFSDirectoryAdditionPathCount(mirror.Directories, unapplied) != 0 {
+	if err != nil || cephFSDirectoryAdditionPathCount(mirror.RegisteredDirectories(), unapplied) != 0 {
 		t.Fatal("unsettled intent gained ownership", err)
 	}
 	cephFSDirectoryAdditionAssertPendingGates(t, ctx, mirror, counter, unapplied, expected.PeerID)
@@ -585,7 +585,7 @@ func cephFSDirectoryAdditionLog(t *testing.T, stage string, status cephfsmirror.
 		OriginalClusterFSIDs                                                                                                                   [2]string
 		OriginalMetadataPoolIDs                                                                                                                [2]int64
 		OriginalMetadataPoolNames                                                                                                              [2]string
-	}{t.Name(), stage, status, slices.Clone(mirror.Directories), len(mirror.Daemons()), c.addedAttempts.Load(), c.addedDispatches.Load(), c.appliedLosses.Load(), c.unappliedAttempts.Load(), c.unappliedDispatches.Load(), c.unappliedFaults.Load(), c.removeDispatches.Load(), c.removeLosses.Load(), policy.FSIDs, policy.Pools, [2]string{policy.SourceFS.MetadataPool, policy.DestinationFS.MetadataPool}})
+	}{t.Name(), stage, status, slices.Clone(mirror.RegisteredDirectories()), len(mirror.Daemons()), c.addedAttempts.Load(), c.addedDispatches.Load(), c.appliedLosses.Load(), c.unappliedAttempts.Load(), c.unappliedDispatches.Load(), c.unappliedFaults.Load(), c.removeDispatches.Load(), c.removeLosses.Load(), policy.FSIDs, policy.Pools, [2]string{policy.SourceFS.MetadataPool, policy.DestinationFS.MetadataPool}})
 	if err != nil {
 		t.Fatal(err)
 	}

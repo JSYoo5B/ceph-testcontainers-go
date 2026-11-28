@@ -79,7 +79,7 @@ func TestCephFSMirrorDaemonRemovalRetainsFailedResourceAndPolicy(t *testing.T) {
 	a := &Daemon{Container: aContainer, DaemonName: "a"}
 	b := &Daemon{Container: bContainer, DaemonName: "b"}
 	mirror := &Container{Container: aContainer, roster: cephFSDaemonRoster{daemons: []*Daemon{a, b}, initial: a},
-		peer: cephFSMirrorPeer{id: "owned-peer"}, SourceClientEntity: "client.owned", DestinationClientEntity: "client.peer", Directories: []string{"/data"},
+		peer: cephFSMirrorPeer{id: "owned-peer"}, SourceClientEntity: "client.owned", DestinationClientEntity: "client.peer", registered: []string{"/data"},
 		pair: cephFSMirrorPair{sourceClient: "client.owned", destinationClient: "client.peer"}}
 	a.owner, b.owner = mirror, mirror
 	inventory := mirror.Daemons()
@@ -103,7 +103,7 @@ func TestCephFSMirrorDaemonRemovalRetainsFailedResourceAndPolicy(t *testing.T) {
 	if err := b.Remove(t.Context()); err != nil || len(mirror.Daemons()) != 0 {
 		t.Fatalf("last daemon or already-missing removal failed: %v", err)
 	}
-	if mirror.peer.id != "owned-peer" || mirror.SourceClientEntity != "client.owned" || mirror.DestinationClientEntity != "client.peer" || !reflect.DeepEqual(mirror.Directories, []string{"/data"}) {
+	if mirror.peer.id != "owned-peer" || mirror.SourceClientEntity != "client.owned" || mirror.DestinationClientEntity != "client.peer" || !reflect.DeepEqual(mirror.registered, []string{"/data"}) {
 		t.Fatal("daemon lifecycle changed peer/auth/directory policy")
 	}
 }
@@ -484,8 +484,8 @@ func TestCephFSMirrorNativeBarrierAndRebalanceUseRealJSONAndPrivateOwnership(t *
 			sourceFilesystem: "source", destinationFilesystem: "destination",
 		},
 		peer: cephFSMirrorPeer{id: cephFSObserverDraftPeer}, SourceFilesystem: "source", DestinationFilesystem: "destination",
-		roster:      cephFSDaemonRoster{sourceID: "owned-auth", daemons: []*Daemon{{Container: control, DaemonName: "a"}}},
-		Directories: []string{"/owned", "/foreign"}, directories: cephFSDirectoryOwnership{owned: map[string]bool{"/owned": true}},
+		roster:     cephFSDaemonRoster{sourceID: "owned-auth", daemons: []*Daemon{{Container: control, DaemonName: "a"}}},
+		registered: []string{"/owned", "/foreign"}, directories: cephFSDirectoryOwnership{owned: map[string]bool{"/owned": true}},
 	}
 	if err := mirror.loadFilesystemIdentity(t.Context()); err != nil {
 		t.Fatal(err)
@@ -496,7 +496,7 @@ func TestCephFSMirrorNativeBarrierAndRebalanceUseRealJSONAndPrivateOwnership(t *
 	if err := mirror.RebalanceDirectories(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(control.mutations, []string{"remove:/owned", "add:/owned"}) || !control.directories["/foreign"] || !reflect.DeepEqual(mirror.Directories, []string{"/owned", "/foreign"}) {
+	if !reflect.DeepEqual(control.mutations, []string{"remove:/owned", "add:/owned"}) || !control.directories["/foreign"] || !reflect.DeepEqual(mirror.registered, []string{"/owned", "/foreign"}) {
 		t.Fatalf("rebalance adopted public caller-added membership: mutations=%v policies=%v", control.mutations, control.directories)
 	}
 }

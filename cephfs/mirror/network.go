@@ -26,19 +26,19 @@ func (daemon *Daemon) InterruptPeerLink(ctx context.Context) (*fault.NetworkInte
 		return nil, servicehook.Invalid(errors.New("CephFS mirror daemon is not owned by a mirror"))
 	}
 	m := daemon.owner
-	if err := multicluster.LockObservation(ctx, &m.mu); err != nil {
+	if err := m.lock(ctx); err != nil {
 		return nil, err
 	}
 	defer m.mu.Unlock()
-	if m.closed || m.pair.destination == nil {
-		return nil, errors.New("peer interruption requires a live bridge CephFS mirror")
+	if m.pair.destination == nil {
+		return nil, servicehook.Invalid(errors.New("peer interruption requires a live bridge CephFS mirror"))
 	}
 	facts, err := ceph.FactsOf(m.pair.destination)
 	if err != nil {
 		return nil, err
 	}
 	if facts.UsesHostNetwork {
-		return nil, errors.New("peer interruption requires a live bridge CephFS mirror")
+		return nil, servicehook.Invalid(errors.New("peer interruption requires a bridge-network CephFS mirror"))
 	}
 	if !m.roster.has(daemon) || daemon.Container == nil {
 		return nil, servicehook.Invalid(fmt.Errorf("CephFS mirror daemon %s is not owned", daemon.DaemonName))

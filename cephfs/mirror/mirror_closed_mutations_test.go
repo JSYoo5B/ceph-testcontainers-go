@@ -33,7 +33,7 @@ func TestCephFSMirrorPolicyMutationsRefuseTerminatedOwner(t *testing.T) {
 				if err := m.Terminate(t.Context()); (err != nil) != cleanupFailure {
 					t.Fatalf("termination: %v", err)
 				}
-				beforePaths := slices.Clone(m.Directories)
+				beforePaths := slices.Clone(m.registered)
 				beforeNative := slices.Clone(s.directories)
 				peer := m.peer.id
 				calls, adds, removes, peers := len(s.calls), s.adds, s.removals, s.peerRemovalControlFake.removals
@@ -57,7 +57,7 @@ func TestCephFSMirrorPolicyMutationsRefuseTerminatedOwner(t *testing.T) {
 				if len(s.calls) != calls || s.adds != adds || s.removals != removes || s.peerRemovalControlFake.removals != peers {
 					t.Error("closed owner dispatched native queries or mutations")
 				}
-				if !slices.Equal(m.Directories, beforePaths) || !slices.Equal(s.directories, beforeNative) || m.peer.id != peer {
+				if !slices.Equal(m.registered, beforePaths) || !slices.Equal(s.directories, beforeNative) || m.peer.id != peer {
 					t.Error("closed owner changed policy or ownership")
 				}
 				failed = false

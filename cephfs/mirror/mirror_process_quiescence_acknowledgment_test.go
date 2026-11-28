@@ -92,7 +92,7 @@ func TestCephFSProcessQuiescenceAcknowledgmentPeerAcceptanceAndFreshRetry(t *tes
 
 func TestCephFSProcessQuiescenceAcknowledgmentDirectoryReconcilesExactLostReply(t *testing.T) {
 	r, m, s, _, raw := beginDirectoryAcknowledgmentFixture(t, true)
-	m.Directories = append(m.Directories, "/other")
+	m.registered = append(m.registered, "/other")
 	m.directories.owned["/other"] = true
 	m.directories.pendingRelease = map[string]bool{"/owned": true, "/other": true}
 	if !m.directories.owned["/owned"] || r.requestAcknowledged {
@@ -104,7 +104,7 @@ func TestCephFSProcessQuiescenceAcknowledgmentDirectoryReconcilesExactLostReply(
 	if err != nil || !st.Acknowledged || st.Observation.Directory != "/owned" || !st.Observation.OriginalQuiescent || !r.processQuiescenceAcknowledged || r.completed || r.requestAcknowledged || m.ops.guardDirectoryRemovalOverlap() != nil {
 		t.Fatalf("directory alternative terminal decision: %+v %v", st, err)
 	}
-	if slices.Contains(m.Directories, "/owned") || m.directories.owned["/owned"] || m.directories.pendingRelease["/owned"] || !slices.Contains(m.Directories, "/other") || !m.directories.owned["/other"] || !m.directories.pendingRelease["/other"] || m.peer.id != cephFSObserverDraftPeer {
+	if slices.Contains(m.registered, "/owned") || m.directories.owned["/owned"] || m.directories.pendingRelease["/owned"] || !slices.Contains(m.registered, "/other") || !m.directories.owned["/other"] || !m.directories.pendingRelease["/other"] || m.peer.id != cephFSObserverDraftPeer {
 		t.Fatal("acknowledgment failed exact desired-state reconciliation")
 	}
 	before := raw[0].inspects
@@ -388,7 +388,7 @@ func TestCephFSProcessQuiescenceAcknowledgmentDirectoryFinalAuthorityFailureKeep
 				s.hook = nil
 			}
 			st, err := r.AcknowledgeProcessQuiescence(ctx)
-			if err == nil || st.Acknowledged || r.processQuiescenceAcknowledged || r.completed || r.requestAcknowledged || !m.directories.owned["/owned"] || !slices.Contains(m.Directories, "/owned") || m.ops.guardDirectoryRemovalOverlap() == nil || s.removals != 1 {
+			if err == nil || st.Acknowledged || r.processQuiescenceAcknowledged || r.completed || r.requestAcknowledged || !m.directories.owned["/owned"] || !slices.Contains(m.registered, "/owned") || m.ops.guardDirectoryRemovalOverlap() == nil || s.removals != 1 {
 				t.Fatalf("failed directory proof changed desired intent: %+v %v", st, err)
 			}
 			if fault == "cancel" && !errors.Is(err, context.Canceled) {

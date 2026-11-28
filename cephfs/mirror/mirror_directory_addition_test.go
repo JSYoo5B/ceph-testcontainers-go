@@ -46,7 +46,7 @@ func TestCephFSDirectoryAdditionRetainsAppliedReplyLossAndStatusIsReadOnly(t *te
 		t.Fatalf("lost response erased or adopted intent: %v", err)
 	}
 	st, err := r.Status(t.Context())
-	if err != nil || !st.PolicyPresent || st.Registered || s.adds != 1 || m.directories.owned["/added"] || slices.Contains(m.Directories, "/added") || m.directories.generations["/added"] != 0 {
+	if err != nil || !st.PolicyPresent || st.Registered || s.adds != 1 || m.directories.owned["/added"] || slices.Contains(m.registered, "/added") || m.directories.generations["/added"] != 0 {
 		t.Fatalf("Status adopted intent: %+v %v", st, err)
 	}
 	s.addError = nil
@@ -56,7 +56,7 @@ func TestCephFSDirectoryAdditionRetainsAppliedReplyLossAndStatusIsReadOnly(t *te
 			t.Fatalf("reconcile failed or repeated add/generation: %v", err)
 		}
 	}
-	if strings.Join(m.Directories, ",") != "/owned,/added" || r.baseGeneration != 0 || r.generation != 1 {
+	if strings.Join(m.registered, ",") != "/owned,/added" || r.baseGeneration != 0 || r.generation != 1 {
 		t.Fatal("published duplicate path or rewrote base generation")
 	}
 	st, err = r.Status(t.Context())
@@ -129,8 +129,8 @@ func TestDirectoryAdditionRetiresKnownRefusalOnFreshReadback(t *testing.T) {
 			if tc.outside {
 				wantNative = append(wantNative, "/refused")
 			}
-			if !slices.Equal(s.directories, append(wantNative, "/next")) || !slices.Equal(m.Directories, []string{"/owned", "/previous", "/next"}) || m.directories.generation("/refused") != 0 {
-				t.Fatalf("native %v, owned %v", s.directories, m.Directories)
+			if !slices.Equal(s.directories, append(wantNative, "/next")) || !slices.Equal(m.registered, []string{"/owned", "/previous", "/next"}) || m.directories.generation("/refused") != 0 {
+				t.Fatalf("native %v, owned %v", s.directories, m.registered)
 			}
 		})
 	}
@@ -447,7 +447,7 @@ func TestCephFSDirectoryAdditionFinalNativePathDriftNeverPublishes(t *testing.T)
 				}
 			}
 			same, err := beginDirectoryAdditionFixture(t, m, "/added")
-			if err == nil || m.directories.owned["/added"] || m.directories.generations["/added"] != 0 || slices.Contains(m.Directories, "/added") || (r != nil && same != r) {
+			if err == nil || m.directories.owned["/added"] || m.directories.generations["/added"] != 0 || slices.Contains(m.registered, "/added") || (r != nil && same != r) {
 				t.Fatalf("final native drift published %s: %v reads=%d", phase, err, reads)
 			}
 			if phase == "preflight" && (same != nil || m.ops.directoryAddition != nil || s.adds != 0) {
@@ -475,7 +475,7 @@ func TestCephFSDirectoryAdditionCompletedReceiptCannotResurrectPolicy(t *testing
 func TestCephFSDirectoryAdditionSupersedesOldRemovalBeforeUncertainAdd(t *testing.T) {
 	m, s, _ := newDirectoryAdditionFixture(t)
 	delete(m.directories.owned, "/owned")
-	m.Directories, s.directories = nil, nil
+	m.registered, s.directories = nil, nil
 	old := &DirectoryRemoval{directory: "/owned", generation: 1, processQuiescenceAcknowledged: true}
 	m.ops.directoryRemoval = old
 	s.addError = errPeerRemovalTransport
@@ -526,7 +526,7 @@ func TestCephFSDirectoryAdditionSupersessionPrecedesLaterMutation(t *testing.T) 
 				m, s, _, _, _ = newDirectoryRemovalFixture()
 				m.ops.peerGeneration = 1
 				delete(m.directories.owned, "/owned")
-				m.Directories, s.directories = nil, nil
+				m.registered, s.directories = nil, nil
 				r, err = beginDirectoryAdditionFixture(t, m, "/owned")
 				if err != nil {
 					t.Fatal(err)
@@ -727,7 +727,7 @@ func TestCephFSDirectoryAdditionNewTypedCycleOwnsExactlyOneFreshGeneration(t *te
 	m, s, _, a, b := newDirectoryRemovalFixture()
 	m.ops.peerGeneration = 1
 	delete(m.directories.owned, "/owned")
-	m.Directories, s.directories = nil, nil
+	m.registered, s.directories = nil, nil
 	addition, err := beginDirectoryAdditionFixture(t, m, "/owned")
 	if err != nil || addition.baseGeneration != 1 || addition.generation != 2 {
 		t.Fatalf("first typed owned cycle: %v", err)

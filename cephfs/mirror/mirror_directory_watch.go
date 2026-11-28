@@ -194,19 +194,16 @@ func (p *directoryObservationPin) running(ctx context.Context) error {
 		closed := servicehook.Closed(site.cluster)
 		servicehook.Unlock(site.cluster)
 		if closed {
-			return directoryWatchEnded{servicehook.Invalid(fmt.Errorf("the %s cluster has been terminated", site.name))}
+			return directoryWatchEnded{cephFSRefusal("the " + site.name + " cluster has been terminated")}
 		}
 	}
 	return nil
 }
 
-// admit refuses a read of a terminated mirror or of a replaced policy. Every
-// refusal ends the watch.
+// admit refuses a read of a replaced policy; directoryStatus has already
+// refused a terminated mirror. Every refusal ends the watch.
 func (p *directoryObservationPin) admit(context.Context) error {
 	m := p.mirror
-	if m.closed {
-		return servicehook.Invalid(errors.New("the CephFS mirror has been terminated"))
-	}
 	if !m.directories.owns(p.directory) {
 		return cephFSObserveGuard("CephFS mirror does not own the observed directory policy")
 	}

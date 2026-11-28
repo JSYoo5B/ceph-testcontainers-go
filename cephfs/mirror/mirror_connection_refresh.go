@@ -32,12 +32,9 @@ func (mirror *Container) RefreshMonitorConfig(ctx context.Context) error {
 }
 
 func (mirror *Container) refreshMonitorConfig(ctx context.Context, refresh func(context.Context, testcontainers.Container) error) error {
-	if mirror == nil {
-		return cephFSObserveGuard("CephFS mirror fixture is unavailable")
-	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
+	if err := mirror.lock(ctx); err != nil {
 		return err
 	}
 	defer mirror.mu.Unlock()
@@ -101,12 +98,9 @@ func (mirror *Container) RefreshPeerMonitorConfig(ctx context.Context) error {
 }
 
 func (mirror *Container) refreshPeerMonitorConfig(ctx context.Context, addresses func(context.Context) (string, error)) error {
-	if mirror == nil {
-		return cephFSObserveGuard("CephFS mirror fixture is unavailable")
-	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
+	if err := mirror.lock(ctx); err != nil {
 		return err
 	}
 	defer mirror.mu.Unlock()
@@ -195,7 +189,7 @@ func writeCephFSOwnedPeerConfig(ctx context.Context, source *ceph.Container, key
 }
 
 func (mirror *Container) confirmCephFSRefreshHandle(requirePeer bool) error {
-	if mirror.closed || mirror.pair.source == nil || mirror.pair.destination == nil || mirror.pair.sourceFilesystemID <= 0 || mirror.pair.destinationFilesystemID <= 0 {
+	if mirror.pair.source == nil || mirror.pair.destination == nil || mirror.pair.sourceFilesystemID <= 0 || mirror.pair.destinationFilesystemID <= 0 {
 		return cephFSObserveGuard("CephFS mirror original filesystem identities are unavailable")
 	}
 	if requirePeer && (mirror.peer.id == "" || mirror.peer.pendingImport != nil) {

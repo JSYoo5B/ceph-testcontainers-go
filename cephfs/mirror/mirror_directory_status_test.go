@@ -124,7 +124,7 @@ func newCephFSObserverDraft() (*Container, *cephFSObserverDraftControl, *cephFSO
 		},
 		SourceFilesystem: "source", DestinationFilesystem: "destination", SourceClientEntity: "client.owned-auth", DestinationClientEntity: "client.peer",
 		peer:        cephFSMirrorPeer{id: cephFSObserverDraftPeer},
-		directories: cephFSDirectoryOwnership{owned: map[string]bool{"/owned": true}}, Directories: []string{"/owned"},
+		directories: cephFSDirectoryOwnership{owned: map[string]bool{"/owned": true}}, registered: []string{"/owned"},
 		roster: cephFSDaemonRoster{daemons: []*Daemon{{Container: a, DaemonName: "a"}, {Container: b, DaemonName: "b"}}},
 	}
 	return mirror, source, destination, a, b

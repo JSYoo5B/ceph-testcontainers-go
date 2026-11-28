@@ -181,7 +181,7 @@ func newPeerRemovalFixture() (*Container, *peerRemovalControlFake, *peerRemovalC
 	}
 	a := makeDaemon(strings.Repeat("a", 64), "172.20.0.8:0/1234")
 	b := makeDaemon(strings.Repeat("b", 64), "172.20.0.9:0/5678")
-	mirror := &Container{pair: cephFSMirrorPair{source: &ceph.Container{Container: source}, destination: &ceph.Container{Container: destination}, sourceFilesystem: "source", destinationFilesystem: "destination", sourceClient: "client.owned-auth", destinationClient: "client.peer", sourceFilesystemID: 1, destinationFilesystemID: 2, identityConfirmed: true, metadataPool: "source-metadata", sourceMetadataPoolID: 7, destinationMetadataPoolID: 9, destinationSite: "destination-site"}, SourceFilesystem: "source", DestinationFilesystem: "destination", SourceClientEntity: "client.owned-auth", DestinationClientEntity: "client.peer", peer: cephFSMirrorPeer{id: cephFSObserverDraftPeer}, Directories: []string{"/owned"}, directories: cephFSDirectoryOwnership{owned: map[string]bool{"/owned": true}}, roster: cephFSDaemonRoster{image: "unchanged", keyring: []byte("private-fixture-secret"), daemons: []*Daemon{{Container: a, DaemonName: "a"}, {Container: b, DaemonName: "b"}}}}
+	mirror := &Container{pair: cephFSMirrorPair{source: &ceph.Container{Container: source}, destination: &ceph.Container{Container: destination}, sourceFilesystem: "source", destinationFilesystem: "destination", sourceClient: "client.owned-auth", destinationClient: "client.peer", sourceFilesystemID: 1, destinationFilesystemID: 2, identityConfirmed: true, metadataPool: "source-metadata", sourceMetadataPoolID: 7, destinationMetadataPoolID: 9, destinationSite: "destination-site"}, SourceFilesystem: "source", DestinationFilesystem: "destination", SourceClientEntity: "client.owned-auth", DestinationClientEntity: "client.peer", peer: cephFSMirrorPeer{id: cephFSObserverDraftPeer}, registered: []string{"/owned"}, directories: cephFSDirectoryOwnership{owned: map[string]bool{"/owned": true}}, roster: cephFSDaemonRoster{image: "unchanged", keyring: []byte("private-fixture-secret"), daemons: []*Daemon{{Container: a, DaemonName: "a"}, {Container: b, DaemonName: "b"}}}}
 	for _, d := range mirror.roster.daemons {
 		d.owner = mirror
 		mirror.owned.AddContainer(d)
@@ -355,7 +355,7 @@ func TestCephFSPeerRemovalProductionOverlapGuardsAndLegacyContract(t *testing.T)
 			}
 		})
 	}
-	if s.removals != 1 || len(m.Directories) != 1 {
+	if s.removals != 1 || len(m.registered) != 1 {
 		t.Fatal("pending gate mutated native policy")
 	}
 	if err := m.RemovePeer(t.Context(), r.scope.peerID); err != nil || s.removals != 1 {
