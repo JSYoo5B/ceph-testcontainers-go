@@ -62,7 +62,7 @@ type PeerRemovalDaemonStatus struct {
 //
 //purpose:condition,lifetime
 func (mirror *Container) BeginPeerRemoval(ctx context.Context, id string) (*PeerRemoval, error) {
-	return mirror.beginPeerRemoval(ctx, id, mirror.peerRemovalClusterIdentities)
+	return mirror.beginPeerRemoval(ctx, id, mirror.originalClusterIdentities)
 }
 
 func (mirror *Container) beginPeerRemoval(ctx context.Context, id string, readClusters func(context.Context) ([2]string, error)) (*PeerRemoval, error) {

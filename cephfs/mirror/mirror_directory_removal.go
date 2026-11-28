@@ -104,7 +104,7 @@ func (mirror *Container) BeginDirectoryRemoval(ctx context.Context, directory st
 	if mirror == nil {
 		return nil, cephFSObserveGuard("CephFS directory removal fixture is unavailable")
 	}
-	return mirror.beginDirectoryRemoval(ctx, directory, mirror.peerRemovalClusterIdentities)
+	return mirror.beginDirectoryRemoval(ctx, directory, mirror.originalClusterIdentities)
 }
 
 func (mirror *Container) beginDirectoryRemoval(ctx context.Context, directory string, readClusters func(context.Context) ([2]string, error)) (*DirectoryRemoval, error) {

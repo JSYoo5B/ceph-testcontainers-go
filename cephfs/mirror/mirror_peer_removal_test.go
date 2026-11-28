@@ -589,12 +589,12 @@ func TestCephFSPeerRemovalProductionExactCatalogAndTimeInstant(t *testing.T) {
 	peer := "fs mirror peer status source@1 " + cephFSObserverDraftPeer
 	commands := map[string]string{"help": "help", "get_command_descriptions": "list", fs: "status", peer + "suffix": "foreign"}
 	data, _ := json.Marshal(commands)
-	if present, err := decodeCephFSRemovalCatalog(data, fs, peer); err != nil || present {
+	if present, err := decodeCephFSOriginalCatalog(data, fs, peer); err != nil || present {
 		t.Fatalf("substring command accepted: %v %v", present, err)
 	}
 	commands[peer] = "status"
 	data, _ = json.Marshal(commands)
-	if present, err := decodeCephFSRemovalCatalog(data, fs, peer); err != nil || !present {
+	if present, err := decodeCephFSOriginalCatalog(data, fs, peer); err != nil || !present {
 		t.Fatal("exact command missing")
 	}
 	r, _, _, _, a, b := beginPeerRemovalFixture(t)
@@ -620,7 +620,7 @@ func TestCephFSPeerRemovalProductionCommonOriginalAttestationOrderingAndRetry(t 
 		calls = append(calls, "native-fsid")
 		return peerRemovalSourceFSID, nil
 	}
-	id, err := readCephFSRemovalClusterIdentity(t.Context(), "source", bootstrap, quorum, native)
+	id, err := readCephFSOriginalClusterIdentity(t.Context(), "source", bootstrap, quorum, native)
 	if err != nil || id != peerRemovalSourceFSID || !slices.Equal(calls, []string{"common-original", "monmap", "native-fsid", "common-original"}) {
 		t.Fatalf("original attestation sequencing: %v %v %s", calls, err, id)
 	}
@@ -648,7 +648,7 @@ func TestCephFSPeerRemovalProductionCommonOriginalAttestationOrderingAndRetry(t 
 			if fault == "native-mismatch" {
 				n = func(context.Context) (string, error) { return peerRemovalDestinationFSID, nil }
 			}
-			id, err := readCephFSRemovalClusterIdentity(t.Context(), "destination", common, q, n)
+			id, err := readCephFSOriginalClusterIdentity(t.Context(), "destination", common, q, n)
 			if id != "" || err == nil {
 				t.Fatalf("unattested native identity adopted: %s %v", id, err)
 			}
@@ -673,7 +673,7 @@ func TestCephFSPeerRemovalProductionCommonOriginalAttestationOrderingAndRetry(t 
 	r, m, s, _, a, b := beginPeerRemovalFixture(t)
 	drainPeerRemovalDaemons(a, b)
 	r.scope.readClusters = func(ctx context.Context) ([2]string, error) {
-		_, err := readCephFSRemovalClusterIdentity(ctx, "source", func(context.Context) (string, error) { return "", errPeerRemovalTransport }, quorum, native)
+		_, err := readCephFSOriginalClusterIdentity(ctx, "source", func(context.Context) (string, error) { return "", errPeerRemovalTransport }, quorum, native)
 		return [2]string{}, err
 	}
 	status, err := r.WaitDrained(t.Context())

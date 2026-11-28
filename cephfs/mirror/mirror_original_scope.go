@@ -44,7 +44,7 @@ func (mirror *Container) captureOriginalScope(ctx context.Context, operation, pe
 	if err != nil {
 		return nil, err
 	}
-	if !validCephFSRemovalClusters(clusters) {
+	if !validCephFSOriginalClusters(clusters) {
 		return nil, cephFSObserveGuard(operation + " original cluster identities are unavailable or equal")
 	}
 	return &cephFSOriginalScope{mirror: mirror, pair: pair, peerID: peerID, generation: mirror.ops.peerGeneration, clusters: clusters, readClusters: readClusters}, nil
@@ -111,7 +111,7 @@ func (s *cephFSOriginalScope) session(ctx context.Context, daemon *Daemon) (ceph
 	if err != nil {
 		return cephFSDaemonSession{}, cephFSObserveQuery("read original CephFS filesystem session", err)
 	}
-	return decodeCephFSRemovalSession(data, s.peerID, s.pair.peerIdentity())
+	return decodeCephFSOriginalSession(data, s.peerID, s.pair.peerIdentity())
 }
 
 // catalog reports whether daemon's admin socket still lists the original
@@ -121,10 +121,10 @@ func (s *cephFSOriginalScope) catalog(ctx context.Context, daemon *Daemon) (bool
 	if err != nil {
 		return false, cephFSObserveQuery("read original CephFS command catalog", err)
 	}
-	return decodeCephFSRemovalCatalog(data, fmt.Sprintf("fs mirror status %s@%d", s.pair.sourceFilesystem, s.pair.sourceFilesystemID), fmt.Sprintf("fs mirror peer status %s@%d %s", s.pair.sourceFilesystem, s.pair.sourceFilesystemID, s.peerID))
+	return decodeCephFSOriginalCatalog(data, fmt.Sprintf("fs mirror status %s@%d", s.pair.sourceFilesystem, s.pair.sourceFilesystemID), fmt.Sprintf("fs mirror peer status %s@%d %s", s.pair.sourceFilesystem, s.pair.sourceFilesystemID, s.peerID))
 }
 
-func decodeCephFSRemovalCatalog(data []byte, fsCommand, peerCommand string) (bool, error) {
+func decodeCephFSOriginalCatalog(data []byte, fsCommand, peerCommand string) (bool, error) {
 	var raw map[string]json.RawMessage
 	if json.Unmarshal(data, &raw) != nil || raw == nil {
 		return false, cephFSObserveGuard("decode CephFS command catalog object")
@@ -144,7 +144,7 @@ func decodeCephFSRemovalCatalog(data []byte, fsCommand, peerCommand string) (boo
 	return present, nil
 }
 
-func decodeCephFSRemovalSession(data []byte, id string, expected cephFSPeerIdentity) (cephFSDaemonSession, error) {
+func decodeCephFSOriginalSession(data []byte, id string, expected cephFSPeerIdentity) (cephFSDaemonSession, error) {
 	var result cephFSDaemonSession
 	var value struct {
 		State    json.RawMessage            `json:"state"`
@@ -168,13 +168,13 @@ func decodeCephFSRemovalSession(data []byte, id string, expected cephFSPeerIdent
 		return result, cephFSObserveGuard("decode normal CephFS filesystem session")
 	}
 	result.address = *value.Address
-	present, err := decodeCephFSRemovalPeers(value.Peers, id, expected, true)
+	present, err := decodeCephFSOriginalPeers(value.Peers, id, expected, true)
 	result.peerPresent = present
 	return result, err
 }
 
 // peer_list uses site_name, while FSMap/admin session use remote.cluster_name.
-func decodeCephFSRemovalPeers(peers map[string]json.RawMessage, id string, expected cephFSPeerIdentity, remote bool) (bool, error) {
+func decodeCephFSOriginalPeers(peers map[string]json.RawMessage, id string, expected cephFSPeerIdentity, remote bool) (bool, error) {
 	if peers == nil {
 		return false, cephFSObserveGuard("decode CephFS peer object")
 	}
@@ -265,7 +265,7 @@ func (s *cephFSOriginalScope) policy(ctx context.Context) (bool, bool, error) {
 			fsPeers = value.MirrorInfo.Peers
 		}
 	}
-	fsPresent, err := decodeCephFSRemovalPeers(fsPeers, s.peerID, s.pair.peerIdentity(), true)
+	fsPresent, err := decodeCephFSOriginalPeers(fsPeers, s.peerID, s.pair.peerIdentity(), true)
 	if err != nil {
 		return false, false, err
 	}
@@ -277,11 +277,11 @@ func (s *cephFSOriginalScope) policy(ctx context.Context) (bool, bool, error) {
 	if json.Unmarshal(data, &peers) != nil {
 		return false, false, cephFSObserveGuard("decode original CephFS manager policy")
 	}
-	present, err := decodeCephFSRemovalPeers(peers, s.peerID, s.pair.peerIdentity(), false)
+	present, err := decodeCephFSOriginalPeers(peers, s.peerID, s.pair.peerIdentity(), false)
 	return present, fsPresent, errors.Join(err, ctx.Err())
 }
 
-func validCephFSRemovalClusters(values [2]string) bool {
+func validCephFSOriginalClusters(values [2]string) bool {
 	if values[0] == values[1] {
 		return false
 	}
@@ -294,7 +294,7 @@ func validCephFSRemovalClusters(values [2]string) bool {
 	return true
 }
 
-func (mirror *Container) peerRemovalClusterIdentities(ctx context.Context) ([2]string, error) {
+func (mirror *Container) originalClusterIdentities(ctx context.Context) ([2]string, error) {
 	var result [2]string
 	for i, site := range []struct {
 		cluster *ceph.Container
@@ -308,7 +308,7 @@ func (mirror *Container) peerRemovalClusterIdentities(ctx context.Context) ([2]s
 		if err != nil {
 			return result, err
 		}
-		original, err := readCephFSRemovalClusterIdentity(ctx, site.name, observer.MonitorBootstrapAddresses,
+		original, err := readCephFSOriginalClusterIdentity(ctx, site.name, observer.MonitorBootstrapAddresses,
 			func(queryCtx context.Context) (string, error) {
 				status, err := observer.QuorumStatus(queryCtx)
 				return status.MonMap.FSID, err
@@ -330,7 +330,7 @@ func (mirror *Container) peerRemovalClusterIdentities(ctx context.Context) ([2]s
 // The common API does not type query versus schema errors, so non-context
 // failures conservatively guard this observation. The retained intent survives:
 // retry Status/Wait with a fresh context after quorum availability is restored.
-func readCephFSRemovalClusterIdentity(ctx context.Context, site string, bootstrap, quorum, native func(context.Context) (string, error)) (string, error) {
+func readCephFSOriginalClusterIdentity(ctx context.Context, site string, bootstrap, quorum, native func(context.Context) (string, error)) (string, error) {
 	validate := func(phase string) error {
 		started := time.Now()
 		addresses, err := bootstrap(ctx)
