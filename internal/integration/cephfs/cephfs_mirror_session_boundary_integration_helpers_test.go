@@ -14,6 +14,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	cephfsmirror "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/mirror"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -39,7 +40,8 @@ type cephFSMirrorSessionBoundary struct {
 
 func (b *cephFSMirrorSessionBoundary) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
 	code, reader, err := b.Container.Exec(ctx, args, opts...)
-	if b.fired && len(args) == 9 && slices.Equal(args[:7], []string{"ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "peer", "status"}) {
+	command := cephFSBoundaryCommand(args)
+	if b.fired && len(command) == 9 && slices.Equal(command[:7], []string{"ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "peer", "status"}) {
 		b.replayObserved, b.replayCode, b.replayErr = true, code, err
 		if err != nil {
 			return code, reader, err
@@ -47,7 +49,7 @@ func (b *cephFSMirrorSessionBoundary) Exec(ctx context.Context, args []string, o
 		b.replayRaw, b.replayErr = io.ReadAll(reader)
 		return code, bytes.NewReader(bytes.Clone(b.replayRaw)), b.replayErr
 	}
-	if b.fired || err != nil || code != 0 || len(args) != 7 || !slices.Equal(args[:6], []string{"ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "status"}) {
+	if b.fired || err != nil || code != 0 || len(command) != 7 || !slices.Equal(command[:6], []string{"ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "status"}) {
 		return code, reader, err
 	}
 	b.fired = true
@@ -56,7 +58,7 @@ func (b *cephFSMirrorSessionBoundary) Exec(ctx context.Context, args []string, o
 		b.failure = err
 		return code, nil, err
 	}
-	b.failure = b.restartBetweenReads(ctx, args, raw)
+	b.failure = b.restartBetweenReads(ctx, command, raw)
 	if b.failure != nil {
 		return code, nil, b.failure
 	}
@@ -117,9 +119,26 @@ type cephFSBoundarySessionIdentity struct {
 	}
 }
 
+// cephFSBoundaryCommand returns the native command words of an exec: the
+// words after the fixture's process supervisor and its three limits, or args.
+func cephFSBoundaryCommand(args []string) []string {
+	if len(args) > 6 && args[0] == "python3" && args[1] == "-c" && args[2] == supervised.Script {
+		return args[6:]
+	}
+	return args
+}
+
 // cephFSBoundaryOutput decodes a copy for logging and identity checks without
-// changing the exact plain or framed bytes returned to the original caller.
+// changing the exact plain, framed or supervisor envelope bytes returned to
+// the original caller.
 func cephFSBoundaryOutput(raw []byte) ([]byte, error) {
+	var envelope struct {
+		Schema *int   `json:"schema_version"`
+		Stdout []byte `json:"stdout"`
+	}
+	if json.Unmarshal(raw, &envelope) == nil && envelope.Schema != nil {
+		return envelope.Stdout, nil
+	}
 	if json.Valid(raw) {
 		return bytes.Clone(raw), nil
 	}
