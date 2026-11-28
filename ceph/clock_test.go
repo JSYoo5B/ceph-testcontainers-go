@@ -350,3 +350,16 @@ func TestJoiningRecipeTakesThisOperationsArming(t *testing.T) {
 		t.Fatal("an armed name lost its files on a later generation")
 	}
 }
+
+func TestDaemonOptionsRefuseTwoClockArmings(t *testing.T) {
+	armed := DaemonOptions{}.WithClockInstrumentation()
+	if _, err := resolveDaemonOptions([]DaemonOptions{armed, armed}); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("two values arming: %v", err)
+	}
+	if resolved, err := resolveDaemonOptions([]DaemonOptions{armed.WithClockInstrumentation()}); err != nil || !resolved.clock {
+		t.Fatalf("one value arming twice: %+v, %v", resolved, err)
+	}
+	if resolved, err := resolveDaemonOptions([]DaemonOptions{armed, DaemonOptions{}.WithImage("other:1")}); err != nil || !resolved.clock || resolved.image != "other:1" {
+		t.Fatalf("arming with an image from another value: %+v, %v", resolved, err)
+	}
+}

@@ -65,7 +65,12 @@ func resolveDaemonOptions(configs []DaemonOptions) (DaemonOptions, error) {
 	var resolved DaemonOptions
 	clock := false
 	for i, config := range configs {
-		clock = clock || config.clock
+		if config.clock {
+			if clock {
+				return DaemonOptions{}, invalidRequest("clock instrumentation set by more than one DaemonOptions")
+			}
+			clock = true
+		}
 		if !config.imageSet {
 			continue
 		}
